@@ -21,12 +21,12 @@ include = [
 [features]
 default = ["async"]
 async = [
-    "reqx/async-tls-native",
+    "reqx/async-tls-rustls-ring",
     "reqx/strict-feature-guards",
     "dep:bytes",
     "dep:futures-core",
 ]
-blocking = ["reqx/blocking-tls-native", "reqx/strict-feature-guards"]
+blocking = ["reqx/blocking-tls-rustls-ring", "reqx/strict-feature-guards"]
 bot = ["async", "dep:tokio"]
 axum = ["bot", "dep:axum"]
 macros = ["bot", "dep:tele-macros"]
