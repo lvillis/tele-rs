@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "crates/tele",
+    "crates/tele-macros",
+]
+default-members = ["crates/tele"]
+resolver = "3"
+
+[workspace.metadata.release]
+allow-branch = ["main"]
+shared-version = true
+consolidate-commits = true
+dependent-version = "upgrade"
+tag-name = "v{{version}}"
+tag-message = "chore(release): v{{version}}"
+pre-release-commit-message = "chore(release): v{{version}}"
+push-remote = "origin"

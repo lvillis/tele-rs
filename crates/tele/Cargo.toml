@@ -1,0 +1,130 @@
+[package]
+name = "tele"
+description = "Ergonomic Telegram Bot API SDK for Rust, built on reqx"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+
+[features]
+default = ["async"]
+async = [
+    "reqx/async-tls-native",
+    "reqx/strict-feature-guards",
+    "dep:bytes",
+    "dep:futures-core",
+]
+blocking = ["reqx/blocking-tls-native", "reqx/strict-feature-guards"]
+bot = ["async", "dep:tokio"]
+axum = ["bot", "dep:axum"]
+macros = ["bot", "dep:tele-macros"]
+otel = ["reqx/otel"]
+redis-session = ["bot", "dep:redis"]
+postgres-session = ["bot", "dep:tokio-postgres"]
+
+[dependencies]
+axum = { version = "0.8.8", default-features = false, features = ["http1", "tokio"], optional = true }
+bytes = { version = "1.11.1", optional = true }
+futures-core = { version = "0.3.31", optional = true }
+http = { version = "1.4.0" }
+reqx = { version = "0.1.22", default-features = false }
+redis = { version = "1.0.4", default-features = false, features = ["tokio-comp"], optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149" }
+tele-macros = { version = "=0.1.0", path = "../tele-macros", optional = true }
+thiserror = { version = "2.0.18" }
+tokio = { version = "1.49.0", features = ["rt", "time", "sync"], optional = true }
+tokio-postgres = { version = "0.7.16", optional = true }
+url = { version = "2.5.8" }
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time", "net"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[[example]]
+name = "async_send_message"
+path = "../../examples/async_send_message.rs"
+required-features = ["async"]
+
+[[example]]
+name = "blocking_send_message"
+path = "../../examples/blocking_send_message.rs"
+required-features = ["blocking"]
+
+[[example]]
+name = "bot_long_polling"
+path = "../../examples/bot_long_polling.rs"
+required-features = ["bot"]
+
+[[example]]
+name = "bot_fallible_session"
+path = "../../examples/bot_fallible_session.rs"
+required-features = ["bot"]
+
+[[example]]
+name = "bot_typed_commands"
+path = "../../examples/bot_typed_commands.rs"
+required-features = ["macros"]
+
+[[example]]
+name = "bot_axum_webhook"
+path = "../../examples/bot_axum_webhook.rs"
+required-features = ["axum"]
+
+[[example]]
+name = "api_layers"
+path = "../../examples/api_layers.rs"
+required-features = ["async"]
+
+[[example]]
+name = "bot_engine_long_polling"
+path = "../../examples/bot_engine_long_polling.rs"
+required-features = ["bot"]
+
+[[example]]
+name = "bot_quickstart"
+path = "../../examples/bot_quickstart.rs"
+required-features = ["bot"]
+
+[[test]]
+name = "async_client"
+path = "../../tests/async_client.rs"
+required-features = ["async"]
+
+[[test]]
+name = "blocking_client"
+path = "../../tests/blocking_client.rs"
+required-features = ["blocking"]
+
+[[test]]
+name = "bot_axum"
+path = "../../tests/bot_axum.rs"
+required-features = ["axum"]
+
+[[test]]
+name = "bot_commands_derive"
+path = "../../tests/bot_commands_derive.rs"
+required-features = ["macros"]
+
+[[test]]
+name = "bot_runtime"
+path = "../../tests/bot_runtime.rs"
+required-features = ["bot"]
+
+[[test]]
+name = "error_classification"
+path = "../../tests/error_classification.rs"
+
+[[test]]
+name = "method_coverage"
+path = "../../tests/method_coverage.rs"

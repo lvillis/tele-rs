@@ -1,0 +1,5 @@
+error: command name `bad-name` contains invalid characters; use lowercase ASCII letters, digits, and `_`
+ --> tests/ui/fail/invalid_command_name.rs:6:5
+  |
+6 |     BadName,
+  |     ^^^^^^^

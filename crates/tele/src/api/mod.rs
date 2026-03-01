@@ -1,0 +1,43 @@
+//! Telegram API service modules.
+
+pub mod advanced;
+pub mod bot;
+pub mod chats;
+pub mod files;
+pub mod messages;
+pub mod payments;
+pub mod stickers;
+pub mod updates;
+
+#[cfg(feature = "async")]
+pub use advanced::AdvancedService;
+#[cfg(feature = "blocking")]
+pub use advanced::BlockingAdvancedService;
+#[cfg(feature = "blocking")]
+pub use bot::BlockingBotService;
+#[cfg(feature = "async")]
+pub use bot::BotService;
+#[cfg(feature = "blocking")]
+pub use chats::BlockingChatsService;
+#[cfg(feature = "async")]
+pub use chats::ChatsService;
+#[cfg(feature = "blocking")]
+pub use files::BlockingFilesService;
+#[cfg(feature = "async")]
+pub use files::FilesService;
+#[cfg(feature = "blocking")]
+pub use messages::BlockingMessagesService;
+#[cfg(feature = "async")]
+pub use messages::MessagesService;
+#[cfg(feature = "blocking")]
+pub use payments::BlockingPaymentsService;
+#[cfg(feature = "async")]
+pub use payments::PaymentsService;
+#[cfg(feature = "blocking")]
+pub use stickers::BlockingStickersService;
+#[cfg(feature = "async")]
+pub use stickers::StickersService;
+#[cfg(feature = "blocking")]
+pub use updates::BlockingUpdatesService;
+#[cfg(feature = "async")]
+pub use updates::UpdatesService;

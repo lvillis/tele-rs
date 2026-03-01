@@ -1,0 +1,5 @@
+error: command name `start` for variant `AnotherStart` conflicts with variant `Start`
+ --> tests/ui/fail/duplicate_command_name.rs:8:5
+  |
+8 |     AnotherStart,
+  |     ^^^^^^^^^^^^

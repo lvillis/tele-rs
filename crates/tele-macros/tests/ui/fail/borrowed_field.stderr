@@ -1,0 +1,5 @@
+error: borrowed command argument types are unsupported; use owned types like `String`
+ --> tests/ui/fail/borrowed_field.rs:6:10
+  |
+6 |     Echo(&'static str),
+  |          ^^^^^^^^^^^^

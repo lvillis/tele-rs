@@ -1,0 +1,5 @@
+error: BotCommands can only be derived for enums
+ --> tests/ui/fail/not_enum.rs:4:8
+  |
+4 | struct NotAnEnum;
+  |        ^^^^^^^^^
