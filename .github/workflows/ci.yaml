@@ -19,6 +19,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: "false"
 
       - name: Verify generated advanced API files
         run: |

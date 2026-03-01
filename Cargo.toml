@@ -16,22 +16,22 @@ homepage = "https://github.com/lvillis/tele-rs"
 
 [workspace.dependencies]
 axum = { version = "0.8.8", default-features = false, features = ["http1", "tokio"] }
-bytes = "1.11.1"
-futures-core = "0.3.31"
-http = "1.4.0"
-proc-macro-crate = "3.4.0"
-proc-macro2 = "1.0.106"
-quote = "1.0.44"
+bytes = { version = "1.11.1", default-features = false, features = ["std"] }
+futures-core = { version = "0.3.32", default-features = false }
+http = { version = "1.4.0", default-features = false, features = ["std"] }
+proc-macro-crate = { version = "3.4.0", default-features = false }
+proc-macro2 = { version = "1.0.106", default-features = false, features = ["proc-macro"] }
+quote = { version = "1.0.44", default-features = false, features = ["proc-macro"] }
 redis = { version = "1.0.4", default-features = false, features = ["tokio-comp"] }
 reqx = { version = "0.1.22", default-features = false }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-syn = { version = "2.0.117", features = ["full"] }
-thiserror = "2.0.18"
-tokio = "1.49.0"
-tokio-postgres = "0.7.16"
-trybuild = "1.0.116"
-url = "2.5.8"
+serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.149", default-features = false, features = ["std"] }
+syn = { version = "2.0.117", default-features = false, features = ["full", "derive", "parsing", "printing", "clone-impls", "proc-macro"] }
+thiserror = { version = "2.0.18", default-features = false, features = ["std"] }
+tokio = { version = "1.49.0", default-features = false }
+tokio-postgres = { version = "0.7.16", default-features = false, features = ["runtime"] }
+trybuild = { version = "1.0.116", default-features = false }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -11,6 +11,11 @@ documentation = "https://docs.rs/tele-macros"
 readme = "README.md"
 keywords = ["telegram", "bot", "macros", "proc-macro", "tele"]
 categories = ["development-tools::procedural-macro-helpers"]
+include = [
+    "src/**",
+    "tests/**",
+    "README.md",
+]
 
 [lib]
 proc-macro = true
