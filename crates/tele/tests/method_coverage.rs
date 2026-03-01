@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,13 +30,33 @@ fn telegram_bot_api_methods_are_fully_covered() {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| crate_root.clone());
 
-    let spec_path = workspace_root.join(".docs/spec/telegram_bot_api_9_4_all_methods.txt");
-    let expected_text = fs::read_to_string(&spec_path).unwrap_or_default();
+    let mut candidate_paths = Vec::new();
+    if let Ok(path) = env::var("TELE_METHOD_COVERAGE_SPEC_PATH") {
+        candidate_paths.push(PathBuf::from(path));
+    }
+    candidate_paths.push(workspace_root.join(".docs/spec/telegram_bot_api_9_4_all_methods.txt"));
+    candidate_paths.push(workspace_root.join("scripts/spec/telegram_bot_api_9_4_all_methods.txt"));
+
+    let mut expected_text = None;
+    for path in &candidate_paths {
+        if let Ok(text) = fs::read_to_string(path)
+            && !text.trim().is_empty()
+        {
+            expected_text = Some(text);
+            break;
+        }
+    }
+
+    let checked = candidate_paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     assert!(
-        !expected_text.is_empty(),
-        "failed to read method spec file `{}`",
-        spec_path.display()
+        expected_text.is_some(),
+        "failed to read method spec file; checked: {checked}"
     );
+    let expected_text = expected_text.unwrap_or_default();
 
     let expected_methods: BTreeSet<String> = expected_text
         .lines()
