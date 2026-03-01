@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Generate advanced Telegram API request models and service methods.
 
-Source of truth: `.docs/spec/telegram_bot_api_9_4_methods.json`
+Spec lookup order:
+1. `TELE_ADVANCED_SPEC_PATH` environment variable
+2. `.docs/spec/telegram_bot_api_9_4_methods.json`
+3. `scripts/spec/telegram_bot_api_9_4_methods.json`
+
 Outputs:
 - `crates/tele/src/types/advanced.rs`
 - `crates/tele/src/api/advanced.rs`
@@ -10,13 +14,35 @@ Outputs:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC_PATH = ROOT / ".docs/spec/telegram_bot_api_9_4_methods.json"
+SPEC_FILE = "telegram_bot_api_9_4_methods.json"
+DEFAULT_SPEC_PATHS = [
+    ROOT / ".docs/spec" / SPEC_FILE,
+    ROOT / "scripts/spec" / SPEC_FILE,
+]
 TYPES_OUT = ROOT / "crates/tele/src/types/advanced.rs"
 API_OUT = ROOT / "crates/tele/src/api/advanced.rs"
+
+
+def resolve_spec_path() -> Path:
+    env_value = os.environ.get("TELE_ADVANCED_SPEC_PATH")
+    candidates: list[Path] = []
+    if env_value:
+        candidates.append(Path(env_value).expanduser())
+    candidates.extend(DEFAULT_SPEC_PATHS)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    rendered = "\n".join(f"- {path}" for path in candidates)
+    raise FileNotFoundError(
+        "Could not locate Telegram API spec JSON. Checked:\n" f"{rendered}"
+    )
 
 
 def to_pascal_case(snake: str) -> str:
@@ -384,7 +410,8 @@ def generate_api(spec: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    spec = json.loads(SPEC_PATH.read_text())
+    spec_path = resolve_spec_path()
+    spec = json.loads(spec_path.read_text())
     TYPES_OUT.write_text(generate_types(spec))
     API_OUT.write_text(generate_api(spec))
 
