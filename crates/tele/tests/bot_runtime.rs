@@ -16,10 +16,16 @@ use tele::bot::{
     BotContext, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData, DispatchOutcome,
     EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
     JsonFileSessionStore, LongPollingSource, OutboxConfig, PollingConfig, Router, StateTransition,
-    TextInput, UpdateExt, WebhookRunner, apply_chat_state_transition, channel_source,
-    clear_chat_state, extract_callback_data, extract_callback_json, extract_command,
-    extract_command_args, extract_command_data, extract_message, extract_text, load_chat_state,
-    parse_command_text, save_chat_state, tokenize_command_args,
+    TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner, WriteAccessAllowedInput,
+    apply_chat_state_transition, channel_source, clear_chat_state, extract_callback_data,
+    extract_callback_json, extract_command, extract_command_args, extract_command_data,
+    extract_message, extract_text, extract_web_app_data, extract_write_access_allowed,
+    load_chat_state, parse_command_text, save_chat_state, tokenize_command_args,
+};
+use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
+use tele::types::telegram::{
+    InlineKeyboardButton, InlineQueryResult, InlineQueryResultsButton, KeyboardButton, MenuButton,
+    MenuButtonWebApp, WebAppInfo,
 };
 use tele::types::update::Update;
 
@@ -306,6 +312,77 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     );
     assert_eq!(tokenize_command_args(r#""unterminated"#), None);
 
+    let maybe_web_app_update = parse_update(serde_json::json!({
+        "update_id": 202,
+        "message": {
+            "message_id": 2,
+            "date": 1700000001,
+            "chat": {"id": 1, "type": "private"},
+            "web_app_data": {
+                "data": "{\"query_id\":\"q-1\",\"action\":\"checkout\"}",
+                "button_text": "Open Mini App"
+            }
+        }
+    }));
+    assert!(maybe_web_app_update.is_some());
+    let Some(web_app_update) = maybe_web_app_update else {
+        return Ok(());
+    };
+
+    assert_eq!(
+        extract_web_app_data(&web_app_update).map(|data| data.button_text.as_str()),
+        Some("Open Mini App")
+    );
+    assert_eq!(
+        web_app_update.web_app_data().map(|data| data.data.as_str()),
+        Some("{\"query_id\":\"q-1\",\"action\":\"checkout\"}")
+    );
+    assert!(
+        web_app_update
+            .message()
+            .and_then(|message| message.web_app_data())
+            .is_some()
+    );
+    let extracted = WebAppInput::extract(&web_app_update);
+    assert_eq!(
+        extracted.as_ref().map(|input| input.0.button_text.as_str()),
+        Some("Open Mini App")
+    );
+
+    let maybe_write_access_update = parse_update(serde_json::json!({
+        "update_id": 203,
+        "message": {
+            "message_id": 3,
+            "date": 1700000002,
+            "chat": {"id": 1, "type": "private"},
+            "write_access_allowed": {
+                "from_request": true,
+                "web_app_name": "mini_app_sample"
+            }
+        }
+    }));
+    assert!(maybe_write_access_update.is_some());
+    let Some(write_access_update) = maybe_write_access_update else {
+        return Ok(());
+    };
+    assert_eq!(
+        extract_write_access_allowed(&write_access_update).and_then(|value| value.from_request),
+        Some(true)
+    );
+    assert_eq!(
+        write_access_update
+            .write_access_allowed()
+            .and_then(|value| value.web_app_name.as_deref()),
+        Some("mini_app_sample")
+    );
+    let write_access_extracted = WriteAccessAllowedInput::extract(&write_access_update);
+    assert_eq!(
+        write_access_extracted
+            .as_ref()
+            .and_then(|input| input.0.web_app_name.as_deref()),
+        Some("mini_app_sample")
+    );
+
     let maybe_callback = parse_update(callback_update(201, 1, "btn-1"));
     assert!(maybe_callback.is_some());
     let Some(callback) = maybe_callback else {
@@ -316,6 +393,86 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert!(extract_callback_json::<serde_json::Value>(&callback).is_none());
     assert_eq!(callback.callback_data(), Some("btn-1"));
     assert!(callback.message().is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn web_app_typed_builders_serialize() -> Result<(), DynError> {
+    let article_result =
+        InlineQueryResult::article("article-1", "Article Title", "Article Message Text");
+    let article_result_json = serde_json::to_value(article_result)?;
+    assert_eq!(article_result_json["type"], "article");
+    assert_eq!(
+        article_result_json["input_message_content"]["message_text"],
+        "Article Message Text"
+    );
+
+    let inline_button = InlineKeyboardButton::new("Open Mini App")
+        .web_app(WebAppInfo::new("https://example.com/mini-app"));
+    let inline_json = serde_json::to_value(&inline_button)?;
+    assert_eq!(
+        inline_json["web_app"]["url"],
+        "https://example.com/mini-app"
+    );
+
+    let keyboard_button =
+        KeyboardButton::new("Open Mini App").web_app("https://example.com/mini-app-keyboard");
+    let keyboard_json = serde_json::to_value(&keyboard_button)?;
+    assert_eq!(
+        keyboard_json["web_app"]["url"],
+        "https://example.com/mini-app-keyboard"
+    );
+
+    let menu_button = MenuButton::web_app(
+        "Open Mini App",
+        WebAppInfo::new("https://example.com/menu-mini-app"),
+    );
+    let menu_web_app = menu_button.as_web_app();
+    assert_eq!(
+        menu_web_app.map(|value| value.text.as_str()),
+        Some("Open Mini App")
+    );
+    assert_eq!(
+        menu_web_app.map(|value| value.web_app.url.as_str()),
+        Some("https://example.com/menu-mini-app")
+    );
+
+    let menu_button_from_struct = MenuButton::from(MenuButtonWebApp::new(
+        "Open Mini App",
+        "https://example.com/menu-mini-app-struct",
+    ));
+    let menu_struct_json = serde_json::to_value(menu_button_from_struct)?;
+    assert_eq!(menu_struct_json["type"], "web_app");
+
+    let unknown_menu_button =
+        MenuButton::new(json!({ "type": "custom_menu_button", "raw_field": "raw_value" }));
+    let unknown_menu_json = serde_json::to_value(unknown_menu_button)?;
+    assert_eq!(unknown_menu_json["type"], "custom_menu_button");
+    assert_eq!(unknown_menu_json["raw_field"], "raw_value");
+
+    let request = AdvancedSetChatMenuButtonRequest::new()
+        .chat_id(10001)
+        .menu_button_web_app("Open Mini App", "https://example.com/menu");
+    let request_json = serde_json::to_value(&request)?;
+    assert_eq!(request_json["chat_id"], 10001);
+    assert_eq!(request_json["menu_button"]["type"], "web_app");
+    assert_eq!(request_json["menu_button"]["text"], "Open Mini App");
+    assert_eq!(
+        request_json["menu_button"]["web_app"]["url"],
+        "https://example.com/menu"
+    );
+
+    let inline_query_button = InlineQueryResultsButton::web_app(
+        "Open Mini App",
+        "https://example.com/inline-button-mini-app",
+    );
+    let inline_query_button_json = serde_json::to_value(inline_query_button)?;
+    assert_eq!(inline_query_button_json["text"], "Open Mini App");
+    assert_eq!(
+        inline_query_button_json["web_app"]["url"],
+        "https://example.com/inline-button-mini-app"
+    );
 
     Ok(())
 }

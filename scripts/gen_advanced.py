@@ -173,6 +173,7 @@ def response_type(method: str, return_desc: str) -> str:
         "editMessageReplyMarkup": "crate::types::message::EditMessageResult",
         "stopPoll": "crate::types::message::Poll",
         "sendSticker": "crate::types::message::Message",
+        "answerWebAppQuery": "crate::types::message::SentWebAppMessage",
         "getStickerSet": "crate::types::sticker::StickerSet",
         "getCustomEmojiStickers": "Vec<crate::types::sticker::Sticker>",
         "uploadStickerFile": "crate::types::file::File",

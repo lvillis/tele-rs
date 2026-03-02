@@ -104,6 +104,11 @@ name = "bot_quickstart"
 path = "examples/bot_quickstart.rs"
 required-features = ["bot"]
 
+[[example]]
+name = "bot_mini_app"
+path = "examples/bot_mini_app.rs"
+required-features = ["bot"]
+
 [[test]]
 name = "async_client"
 path = "tests/async_client.rs"

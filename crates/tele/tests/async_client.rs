@@ -5,9 +5,10 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
-use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
+use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
-    BotCommand, CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, LabeledPrice,
+    AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
+    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice,
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest,
 };
 use tele::{Client, Error, UploadFile};
@@ -372,6 +373,70 @@ async fn advanced_get_available_gifts_success() -> Result<(), DynError> {
         .get_available_gifts::<serde_json::Value>(&request)
         .await?;
     assert!(value.is_object());
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn answer_web_app_query_typed_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"inline_message_id":"inline-msg-1"}}"#;
+    const CHECKS: [&str; 3] = [
+        "\"web_app_query_id\":\"query-1\"",
+        "\"type\":\"article\"",
+        "\"id\":\"result-1\"",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/answerWebAppQuery", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let result = InlineQueryResult::new(serde_json::json!({
+        "type": "article",
+        "id": "result-1",
+        "title": "Mini App result",
+        "input_message_content": {
+            "message_text": "Mini App accepted"
+        }
+    }));
+    let request = AdvancedAnswerWebAppQueryRequest::new("query-1", result);
+    let sent = client
+        .advanced()
+        .answer_web_app_query_typed(&request)
+        .await?;
+    assert_eq!(sent.inline_message_id, "inline-msg-1");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn answer_inline_query_with_typed_button_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 5] = [
+        "\"inline_query_id\":\"inline-q-1\"",
+        "\"type\":\"article\"",
+        "\"id\":\"result-inline-1\"",
+        "\"button\":{\"text\":\"Open Mini App\"",
+        "\"web_app\":{\"url\":\"https://example.com/mini-app\"}",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/answerInlineQuery", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AnswerInlineQueryRequest::new(
+        "inline-q-1",
+        vec![InlineQueryResult::article(
+            "result-inline-1",
+            "Inline title",
+            "Inline message text",
+        )],
+    )
+    .button(InlineQueryResultsButton::web_app(
+        "Open Mini App",
+        "https://example.com/mini-app",
+    ));
+    let ok = client.updates().answer_inline_query(&request).await?;
+    assert!(ok);
 
     join_server(handle)?;
     Ok(())

@@ -108,7 +108,7 @@ impl AdvancedAnswerWebAppQueryRequest {
 }
 
 impl AdvancedRequest for AdvancedAnswerWebAppQueryRequest {
-    type Response = crate::types::message::Message;
+    type Response = crate::types::message::SentWebAppMessage;
     const METHOD: &'static str = "answerWebAppQuery";
 }
 

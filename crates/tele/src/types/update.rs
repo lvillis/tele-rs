@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::message::{Message, Poll};
+use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton};
 
 /// Telegram callback query object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -133,7 +134,7 @@ pub struct AnswerCallbackQueryRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AnswerInlineQueryRequest {
     pub inline_query_id: String,
-    pub results: Vec<Value>,
+    pub results: Vec<InlineQueryResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_time: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,5 +142,46 @@ pub struct AnswerInlineQueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_offset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub button: Option<Value>,
+    pub button: Option<InlineQueryResultsButton>,
+}
+
+impl AnswerInlineQueryRequest {
+    pub fn new(
+        inline_query_id: impl Into<String>,
+        results: impl IntoIterator<Item = InlineQueryResult>,
+    ) -> Self {
+        Self {
+            inline_query_id: inline_query_id.into(),
+            results: results.into_iter().collect(),
+            cache_time: None,
+            is_personal: None,
+            next_offset: None,
+            button: None,
+        }
+    }
+
+    pub fn add_result(mut self, result: impl Into<InlineQueryResult>) -> Self {
+        self.results.push(result.into());
+        self
+    }
+
+    pub fn cache_time(mut self, cache_time: u32) -> Self {
+        self.cache_time = Some(cache_time);
+        self
+    }
+
+    pub fn is_personal(mut self, is_personal: bool) -> Self {
+        self.is_personal = Some(is_personal);
+        self
+    }
+
+    pub fn next_offset(mut self, next_offset: impl Into<String>) -> Self {
+        self.next_offset = Some(next_offset.into());
+        self
+    }
+
+    pub fn button(mut self, button: InlineQueryResultsButton) -> Self {
+        self.button = Some(button);
+        self
+    }
 }

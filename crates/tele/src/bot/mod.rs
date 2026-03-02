@@ -21,7 +21,8 @@ use crate::api::{
 };
 use crate::types::command::SetMyCommandsRequest;
 use crate::types::common::ChatId;
-use crate::types::message::{Message, SendMessageRequest};
+use crate::types::message::{Message, SendMessageRequest, WriteAccessAllowed};
+use crate::types::telegram::WebAppData;
 use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
@@ -206,6 +207,46 @@ impl UpdateExtractor for CallbackInput {
 
     fn describe() -> &'static str {
         "callback data"
+    }
+}
+
+/// Mini App payload extractor payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebAppInput(pub WebAppData);
+
+impl WebAppInput {
+    pub fn into_inner(self) -> WebAppData {
+        self.0
+    }
+}
+
+impl UpdateExtractor for WebAppInput {
+    fn extract(update: &Update) -> Option<Self> {
+        extract_web_app_data(update).cloned().map(Self)
+    }
+
+    fn describe() -> &'static str {
+        "web app data"
+    }
+}
+
+/// Write-access service payload extractor.
+#[derive(Clone, Debug)]
+pub struct WriteAccessAllowedInput(pub WriteAccessAllowed);
+
+impl WriteAccessAllowedInput {
+    pub fn into_inner(self) -> WriteAccessAllowed {
+        self.0
+    }
+}
+
+impl UpdateExtractor for WriteAccessAllowedInput {
+    fn extract(update: &Update) -> Option<Self> {
+        extract_write_access_allowed(update).cloned().map(Self)
+    }
+
+    fn describe() -> &'static str {
+        "write access allowed"
     }
 }
 
@@ -1065,6 +1106,16 @@ pub fn extract_text(update: &Update) -> Option<&str> {
     extract_message(update)?.text.as_deref()
 }
 
+/// Returns Mini App payload from extracted message when available.
+pub fn extract_web_app_data(update: &Update) -> Option<&WebAppData> {
+    extract_message(update)?.web_app_data()
+}
+
+/// Returns write-access service payload from extracted message when available.
+pub fn extract_write_access_allowed(update: &Update) -> Option<&WriteAccessAllowed> {
+    extract_message(update)?.write_access_allowed()
+}
+
 /// Returns callback query data payload from update.
 pub fn extract_callback_data(update: &Update) -> Option<&str> {
     update.callback_query.as_ref()?.data.as_deref()
@@ -1131,6 +1182,12 @@ pub fn command_definitions<C: BotCommands>() -> Vec<crate::types::command::BotCo
 pub trait UpdateExt {
     fn message(&self) -> Option<&Message>;
     fn text(&self) -> Option<&str>;
+    fn web_app_data(&self) -> Option<&WebAppData> {
+        None
+    }
+    fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
+        None
+    }
     fn callback_data(&self) -> Option<&str>;
     fn callback_json<T>(&self) -> Option<T>
     where
@@ -1151,6 +1208,14 @@ impl UpdateExt for Update {
 
     fn text(&self) -> Option<&str> {
         extract_text(self)
+    }
+
+    fn web_app_data(&self) -> Option<&WebAppData> {
+        extract_web_app_data(self)
+    }
+
+    fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
+        extract_write_access_allowed(self)
     }
 
     fn callback_data(&self) -> Option<&str> {

@@ -24,8 +24,8 @@ pub use crate::bot::{
     BotApp, BotContext, BotEngine, BotOutbox, CallbackInput, ChannelUpdateSource, ChatSession,
     DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
     JsonCallback, JsonFileSessionStore, LongPollingSource, OutboxConfig, PollingConfig, Router,
-    TextInput, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink, WebhookRunner,
-    channel_source,
+    TextInput, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink, WebAppInput,
+    WebhookRunner, WriteAccessAllowedInput, channel_source,
 };
 
 #[cfg(feature = "macros")]

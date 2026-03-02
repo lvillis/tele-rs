@@ -21,7 +21,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - Updates: polling, webhook config, callback/inline query answer
 - API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.ergo()` (high-level helpers)
 - Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
-- Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
+- Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`WebAppInput`/`WriteAccessAllowedInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
 - Reliability (`feature = "bot"`): `BotOutbox` send queue with retry/backoff/429 handling, idempotency dedupe, optional on-disk queue persistence/replay, dead-letter recording, and message max-age expiration
 - Sessions (`feature = "bot"`): `InMemorySessionStore` and `JsonFileSessionStore`
 - Distributed sessions: `RedisSessionStore` (`feature = "redis-session"`), `PostgresSessionStore` (`feature = "postgres-session"`)
@@ -229,6 +229,7 @@ enum Command {
 - Long polling bot: `cargo run -p tele --example bot_long_polling --features bot`
 - Engine long polling bot: `cargo run -p tele --example bot_engine_long_polling --features bot`
 - Quickstart bot (extractors + outbox + app wrapper): `cargo run -p tele --example bot_quickstart --features bot`
+- Mini App bot (menu button + `web_app_data` + `answerWebAppQuery`): `cargo run -p tele --example bot_mini_app --features bot`
 - Fallible FSM bot: `cargo run -p tele --example bot_fallible_session --features bot`
 - Typed command bot: `cargo run -p tele --example bot_typed_commands --features macros`
 - Axum webhook bot: `cargo run -p tele --example bot_axum_webhook --features axum`
@@ -237,4 +238,4 @@ enum Command {
 Required environment variables:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID` (send message examples)
-- Optional: `TELEGRAM_TEXT`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_PATH`, `TELEGRAM_BIND`, `TELEGRAM_OUTBOX_PATH`
+- Optional: `TELEGRAM_TEXT`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_PATH`, `TELEGRAM_BIND`, `TELEGRAM_OUTBOX_PATH`, `TELEGRAM_MINI_APP_URL`

@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::Error;
 use crate::types::bot::User;
 use crate::types::common::{ChatId, MessageId, ParseMode};
-use crate::types::telegram::{LinkPreviewOptions, ReplyMarkup, ReplyParameters};
+use crate::types::telegram::{LinkPreviewOptions, ReplyMarkup, ReplyParameters, WebAppData};
 
 /// Telegram chat type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -96,6 +96,20 @@ pub struct Poll {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Telegram write access allowed service payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct WriteAccessAllowed {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_request: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_app_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_attachment_menu: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Telegram message object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -118,9 +132,23 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_app_data: Option<WebAppData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_access_allowed: Option<WriteAccessAllowed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl Message {
+    pub fn web_app_data(&self) -> Option<&WebAppData> {
+        self.web_app_data.as_ref()
+    }
+
+    pub fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
+        self.write_access_allowed.as_ref()
+    }
 }
 
 /// `sendMessage` request.
@@ -293,6 +321,13 @@ impl CopyMessagesRequest {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct MessageIdObject {
     pub message_id: MessageId,
+}
+
+/// Telegram `answerWebAppQuery` response object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct SentWebAppMessage {
+    pub inline_message_id: String,
 }
 
 /// `sendPhoto` request.

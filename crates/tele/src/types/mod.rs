@@ -43,7 +43,8 @@ pub use message::{
     PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest, SendContactRequest,
     SendDiceRequest, SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest,
     SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
-    SendVideoRequest, SendVoiceRequest, StopMessageLiveLocationRequest, StopPollRequest,
+    SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest,
+    StopPollRequest, WriteAccessAllowed,
 };
 pub use payment::{
     AnswerPreCheckoutQueryRequest, AnswerShippingQueryRequest, CreateInvoiceLinkRequest,
@@ -60,9 +61,11 @@ pub use sticker::{
 };
 pub use telegram::{
     AcceptedGiftTypes, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
-    InputChecklist, InputPaidMedia, InputStoryContent, KeyboardButton, LinkPreviewOptions,
-    MenuButton, PassportElementError, ReactionType, ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    ReplyMarkup, ReplyParameters, StoryArea, SuggestedPostParameters,
+    InlineQueryResultArticle, InlineQueryResultsButton, InputChecklist, InputPaidMedia,
+    InputStoryContent, InputTextMessageContent, KeyboardButton, LinkPreviewOptions, MenuButton,
+    MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType, ReplyKeyboardMarkup,
+    ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea, SuggestedPostParameters,
+    WebAppData, WebAppInfo,
 };
 pub use update::{
     AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChosenInlineResult,
