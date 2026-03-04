@@ -16,22 +16,26 @@ impl InlineQueryResult {
         Self(value)
     }
 
-    pub fn from_typed<T>(value: T) -> Self
+    pub fn try_from_typed<T>(value: T) -> std::result::Result<Self, serde_json::Error>
     where
         T: Serialize,
     {
-        match serde_json::to_value(value) {
-            Ok(value) => Self(value),
-            Err(_error) => Self(Value::Null),
-        }
+        serde_json::to_value(value).map(Self)
+    }
+
+    pub fn from_typed<T>(value: T) -> std::result::Result<Self, serde_json::Error>
+    where
+        T: Serialize,
+    {
+        Self::try_from_typed(value)
     }
 
     pub fn article(
         id: impl Into<String>,
         title: impl Into<String>,
         message_text: impl Into<String>,
-    ) -> Self {
-        InlineQueryResultArticle::new(id, title, message_text).into()
+    ) -> std::result::Result<Self, serde_json::Error> {
+        InlineQueryResult::try_from(InlineQueryResultArticle::new(id, title, message_text))
     }
 
     pub fn as_value(&self) -> &Value {
@@ -135,9 +139,11 @@ impl InlineQueryResultArticle {
     }
 }
 
-impl From<InlineQueryResultArticle> for InlineQueryResult {
-    fn from(value: InlineQueryResultArticle) -> Self {
-        Self::from_typed(value)
+impl TryFrom<InlineQueryResultArticle> for InlineQueryResult {
+    type Error = serde_json::Error;
+
+    fn try_from(value: InlineQueryResultArticle) -> std::result::Result<Self, Self::Error> {
+        Self::try_from_typed(value)
     }
 }
 
@@ -345,9 +351,21 @@ impl From<MenuButtonKind> for MenuButton {
 impl From<MenuButton> for Value {
     fn from(value: MenuButton) -> Self {
         match value {
-            MenuButton::Typed(known) => match serde_json::to_value(known) {
-                Ok(value) => value,
-                Err(_error) => Value::Null,
+            MenuButton::Typed(known) => match known {
+                MenuButtonKind::Commands => serde_json::json!({"type": "commands"}),
+                MenuButtonKind::Default => serde_json::json!({"type": "default"}),
+                MenuButtonKind::WebApp(mut value) => {
+                    let mut object = serde_json::Map::new();
+                    let mut web_app = serde_json::Map::new();
+                    web_app.insert("url".to_owned(), Value::String(value.web_app.url));
+                    object.insert("type".to_owned(), Value::String("web_app".to_owned()));
+                    object.insert("text".to_owned(), Value::String(value.text));
+                    object.insert("web_app".to_owned(), Value::Object(web_app));
+                    for (key, extra_value) in std::mem::take(&mut value.extra) {
+                        object.insert(key, extra_value);
+                    }
+                    Value::Object(object)
+                }
             },
             MenuButton::Other(value) => value,
         }

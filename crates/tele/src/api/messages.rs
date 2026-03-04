@@ -10,19 +10,19 @@ use crate::types::message::{
 };
 use crate::types::upload::UploadFile;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
 /// Message related methods.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct MessagesService {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl MessagesService {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -273,13 +273,13 @@ impl MessagesService {
 }
 
 /// Blocking message methods.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingMessagesService {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingMessagesService {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

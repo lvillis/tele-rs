@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::message::{Message, Poll};
-use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton};
+use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton, WebAppData};
 
 /// Telegram callback query object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,6 +92,29 @@ pub struct Update {
     pub chat_join_request: Option<Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl Update {
+    /// Returns Mini App payload from the first available message-like field.
+    pub fn web_app_data(&self) -> Option<&WebAppData> {
+        if let Some(message) = self.message.as_ref() {
+            return message.web_app_data();
+        }
+        if let Some(message) = self.edited_message.as_ref() {
+            return message.web_app_data();
+        }
+        if let Some(message) = self.channel_post.as_ref() {
+            return message.web_app_data();
+        }
+        if let Some(message) = self.edited_channel_post.as_ref() {
+            return message.web_app_data();
+        }
+
+        self.callback_query
+            .as_ref()
+            .and_then(|query| query.message.as_ref())
+            .and_then(|message| message.web_app_data())
+    }
 }
 
 /// `getUpdates` request.

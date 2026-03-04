@@ -1,4 +1,4 @@
-#![cfg(feature = "async")]
+#![cfg(feature = "_async")]
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -423,18 +423,11 @@ async fn answer_inline_query_with_typed_button_success() -> Result<(), DynError>
         spawn_server_with_checks("/bot123:abc/answerInlineQuery", 200, response, &CHECKS)?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
-    let request = AnswerInlineQueryRequest::new(
-        "inline-q-1",
-        vec![InlineQueryResult::article(
-            "result-inline-1",
-            "Inline title",
-            "Inline message text",
-        )],
-    )
-    .button(InlineQueryResultsButton::web_app(
-        "Open Mini App",
-        "https://example.com/mini-app",
-    ));
+    let inline_result =
+        InlineQueryResult::article("result-inline-1", "Inline title", "Inline message text")?;
+    let request = AnswerInlineQueryRequest::new("inline-q-1", vec![inline_result]).button(
+        InlineQueryResultsButton::web_app("Open Mini App", "https://example.com/mini-app"),
+    );
     let ok = client.updates().answer_inline_query(&request).await?;
     assert!(ok);
 

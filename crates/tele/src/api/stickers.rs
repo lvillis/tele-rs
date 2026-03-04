@@ -11,19 +11,19 @@ use crate::types::sticker::{
 };
 use crate::types::upload::UploadFile;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
 /// Sticker and sticker set methods.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct StickersService {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl StickersService {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -211,13 +211,13 @@ impl StickersService {
 }
 
 /// Blocking sticker methods.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingStickersService {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingStickersService {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

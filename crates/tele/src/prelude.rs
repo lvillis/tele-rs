@@ -1,14 +1,15 @@
 //! Common imports for building Telegram bots with `tele`.
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 pub use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 pub use crate::Client;
 pub use crate::{ClientBuilder, Error, Result};
+pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_init_data};
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
 pub use crate::types::{

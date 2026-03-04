@@ -3,12 +3,12 @@ use serde::de::DeserializeOwned;
 use crate::Result;
 use crate::types::advanced::*;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 macro_rules! define_async_methods {
     ($(($fn_name:ident, $typed_name:ident, $method:literal, $request_ty:ty)),* $(,)?) => {
         $(
@@ -29,7 +29,7 @@ macro_rules! define_async_methods {
     };
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 macro_rules! define_blocking_methods {
     ($(($fn_name:ident, $typed_name:ident, $method:literal, $request_ty:ty)),* $(,)?) => {
         $(
@@ -51,13 +51,13 @@ macro_rules! define_blocking_methods {
 }
 
 /// Additional Telegram Bot API methods with typed request models.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct AdvancedService {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl AdvancedService {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -170,13 +170,13 @@ impl AdvancedService {
 }
 
 /// Blocking additional Telegram Bot API methods with typed request models.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingAdvancedService {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingAdvancedService {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

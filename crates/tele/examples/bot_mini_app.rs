@@ -2,6 +2,7 @@ use std::env;
 
 use serde::Deserialize;
 use tele::Client;
+use tele::Error;
 use tele::bot::{BotApp, BotContext, Router, WebAppInput};
 use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedSetChatMenuButtonRequest};
 use tele::types::telegram::{InlineQueryResult, WebAppInfo};
@@ -21,7 +22,11 @@ fn read_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     env::var(name).map_err(|error| format!("missing environment variable {name}: {error}").into())
 }
 
-fn inline_article_result(id: String, title: String, message_text: String) -> InlineQueryResult {
+fn inline_article_result(
+    id: String,
+    title: String,
+    message_text: String,
+) -> Result<InlineQueryResult, serde_json::Error> {
     InlineQueryResult::article(id, title, message_text)
 }
 
@@ -73,7 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("mini-app-{}", update.update_id),
                     result_title,
                     format!("Mini App query accepted: {query_id}"),
-                );
+                )
+                .map_err(|source| Error::InvalidRequest {
+                    reason: format!("failed to serialize Mini App inline result: {source}"),
+                })?;
                 let request = AdvancedAnswerWebAppQueryRequest::new(query_id, result);
                 let _ = context
                     .advanced()

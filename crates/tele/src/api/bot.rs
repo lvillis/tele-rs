@@ -6,19 +6,19 @@ use crate::types::command::{
     SetMyCommandsRequest, SetMyDescriptionRequest, SetMyNameRequest, SetMyShortDescriptionRequest,
 };
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
 /// Bot/account related methods.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct BotService {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl BotService {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -109,13 +109,13 @@ impl BotService {
 }
 
 /// Blocking bot/account methods.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingBotService {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingBotService {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

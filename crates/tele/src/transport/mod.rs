@@ -1,6 +1,6 @@
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 pub(crate) mod async_transport;
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 pub(crate) mod blocking_transport;
 
 use std::collections::BTreeSet;
@@ -8,12 +8,12 @@ use std::io;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(any(feature = "blocking", test))]
+#[cfg(any(feature = "_blocking", test))]
 use std::io::Read;
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use bytes::Bytes;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use futures_core::Stream;
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
@@ -171,7 +171,7 @@ impl MultipartChunk {
         }
     }
 
-    #[cfg(any(feature = "blocking", test))]
+    #[cfg(any(feature = "_blocking", test))]
     fn as_slice(&self) -> &[u8] {
         match self {
             Self::Owned(bytes) => bytes,
@@ -179,7 +179,7 @@ impl MultipartChunk {
         }
     }
 
-    #[cfg(feature = "async")]
+    #[cfg(feature = "_async")]
     fn into_bytes(self) -> Bytes {
         match self {
             Self::Owned(bytes) => Bytes::from(bytes),
@@ -203,25 +203,25 @@ impl MultipartPayload {
         self.content_length
     }
 
-    #[cfg(any(feature = "blocking", test))]
+    #[cfg(any(feature = "_blocking", test))]
     pub(crate) fn into_reader(self) -> MultipartBodyReader {
         MultipartBodyReader::new(self.chunks)
     }
 
-    #[cfg(feature = "async")]
+    #[cfg(feature = "_async")]
     pub(crate) fn into_stream(self) -> MultipartBodyStream {
         MultipartBodyStream::new(self.chunks)
     }
 }
 
-#[cfg(any(feature = "blocking", test))]
+#[cfg(any(feature = "_blocking", test))]
 pub(crate) struct MultipartBodyReader {
     chunks: Vec<MultipartChunk>,
     chunk_index: usize,
     chunk_offset: usize,
 }
 
-#[cfg(any(feature = "blocking", test))]
+#[cfg(any(feature = "_blocking", test))]
 impl MultipartBodyReader {
     fn new(chunks: Vec<MultipartChunk>) -> Self {
         Self {
@@ -232,7 +232,7 @@ impl MultipartBodyReader {
     }
 }
 
-#[cfg(any(feature = "blocking", test))]
+#[cfg(any(feature = "_blocking", test))]
 impl Read for MultipartBodyReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
@@ -271,12 +271,12 @@ impl Read for MultipartBodyReader {
     }
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 pub(crate) struct MultipartBodyStream {
     chunks: std::vec::IntoIter<MultipartChunk>,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl MultipartBodyStream {
     fn new(chunks: Vec<MultipartChunk>) -> Self {
         Self {
@@ -285,7 +285,7 @@ impl MultipartBodyStream {
     }
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl Stream for MultipartBodyStream {
     type Item = Result<Bytes, io::Error>;
 

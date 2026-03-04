@@ -1,13 +1,14 @@
 #![cfg(feature = "bot")]
 
 use std::fs;
+use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use tele::Client;
@@ -32,6 +33,60 @@ use tele::types::update::Update;
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
 
+fn accept_with_timeout(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> Result<(std::net::TcpStream, std::net::SocketAddr), String> {
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, address)) => {
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|error| error.to_string())?;
+                return Ok((stream, address));
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out waiting for request after {}ms",
+                        timeout.as_millis()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+async fn wait_for_condition<F>(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut condition: F,
+) -> Result<(), DynError>
+where
+    F: FnMut() -> Result<bool, DynError>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if condition()? {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for condition after {}ms",
+                timeout.as_millis()
+            )
+            .into());
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
 fn spawn_server(
     expected_path: &'static str,
     response_status: u16,
@@ -41,7 +96,7 @@ fn spawn_server(
     let address = listener.local_addr()?;
 
     let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+        let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .map_err(|error| error.to_string())?;
@@ -83,7 +138,7 @@ fn spawn_server_with_checks(
     let address = listener.local_addr()?;
 
     let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+        let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .map_err(|error| error.to_string())?;
@@ -132,7 +187,7 @@ fn spawn_server_sequence(
 
     let handle = thread::spawn(move || {
         for (response_status, response_body) in responses {
-            let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+            let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .map_err(|error| error.to_string())?;
@@ -165,11 +220,14 @@ fn spawn_server_sequence(
     Ok((format!("http://{address}"), handle))
 }
 
-fn join_server(handle: ServerHandle) -> Result<(), DynError> {
-    match handle.join() {
-        Ok(result) => result.map_err(Into::into),
-        Err(_) => Err("server thread panicked".into()),
-    }
+async fn join_server(handle: ServerHandle) -> Result<(), DynError> {
+    tokio::task::spawn_blocking(move || match handle.join() {
+        Ok(result) => result,
+        Err(_) => Err("server thread panicked".to_owned()),
+    })
+    .await
+    .map_err(|error| format!("failed to join server task: {error}"))?
+    .map_err(Into::into)
 }
 
 fn parse_update(input: serde_json::Value) -> Option<Update> {
@@ -400,7 +458,7 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
 #[tokio::test]
 async fn web_app_typed_builders_serialize() -> Result<(), DynError> {
     let article_result =
-        InlineQueryResult::article("article-1", "Article Title", "Article Message Text");
+        InlineQueryResult::article("article-1", "Article Title", "Article Message Text")?;
     let article_result_json = serde_json::to_value(article_result)?;
     assert_eq!(article_result_json["type"], "article");
     assert_eq!(
@@ -513,7 +571,7 @@ async fn long_polling_source_dispatches_updates() -> Result<(), DynError> {
     assert_eq!(engine.source_mut().next_offset(), Some(778));
     assert_eq!(handler_hits.load(Ordering::SeqCst), 1);
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -548,7 +606,7 @@ async fn long_polling_source_loads_persisted_offset() -> Result<(), DynError> {
     assert!(outcomes.is_empty());
     assert_eq!(engine.source_mut().next_offset(), Some(501));
 
-    join_server(handle)?;
+    join_server(handle).await?;
     let _ = fs::remove_file(offset_path);
     Ok(())
 }
@@ -589,7 +647,7 @@ async fn long_polling_source_dedupes_duplicate_update_ids() -> Result<(), DynErr
     assert_eq!(handler_hits.load(Ordering::SeqCst), 1);
     assert_eq!(engine.source_mut().next_offset(), Some(991));
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -627,7 +685,7 @@ async fn long_polling_source_persists_offset_after_poll() -> Result<(), DynError
         Some(702)
     );
 
-    join_server(handle)?;
+    join_server(handle).await?;
     let _ = fs::remove_file(offset_path);
     Ok(())
 }
@@ -667,7 +725,7 @@ async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), 
     assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 888 }]);
     assert_eq!(handler_hits.load(Ordering::SeqCst), 1);
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -799,7 +857,7 @@ async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
     let handled = router.dispatch(BotContext::new(client), update).await?;
     assert!(handled);
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -822,7 +880,7 @@ async fn bot_context_answers_callback_from_update() -> Result<(), DynError> {
         .await?;
     assert!(answered);
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -981,7 +1039,7 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
     assert_eq!(handled.load(Ordering::SeqCst), 3);
     assert!(max_in_flight.load(Ordering::SeqCst) >= 2);
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -1199,7 +1257,7 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
     };
 
     assert!(router.dispatch(BotContext::new(client), update).await?);
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -1226,7 +1284,35 @@ async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
         .await?;
 
     assert_eq!(first.message_id, second.message_id);
-    join_server(handle)?;
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_fails_closed_when_persisted_queue_is_invalid() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let queue_path = std::env::temp_dir().join(format!("tele-outbox-invalid-{timestamp}.json"));
+    fs::write(&queue_path, b"{invalid-json")?;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let config = OutboxConfig::default().with_persistence_path(queue_path.clone());
+    let outbox = BotOutbox::spawn(client, config);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let error = match outbox.send_text(12_i64, "hello").await {
+        Ok(_) => return Err("expected outbox to fail closed".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("outbox worker"));
+
+    let raw = fs::read_to_string(&queue_path)?;
+    assert_eq!(raw, "{invalid-json");
+
+    let _ = fs::remove_file(queue_path);
     Ok(())
 }
 
@@ -1252,18 +1338,17 @@ async fn outbox_replays_persisted_messages_on_start() -> Result<(), DynError> {
     let config = OutboxConfig::default().with_persistence_path(path.clone());
     let _outbox = BotOutbox::spawn(client, config);
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
-    join_server(handle)?;
+    join_server(handle).await?;
 
-    let raw = fs::read(&path)?;
-    let snapshot: serde_json::Value = serde_json::from_slice(&raw)?;
-    assert_eq!(
-        snapshot
+    wait_for_condition(Duration::from_secs(2), Duration::from_millis(20), || {
+        let raw = fs::read(&path)?;
+        let snapshot: serde_json::Value = serde_json::from_slice(&raw)?;
+        Ok(snapshot
             .get("queue")
             .and_then(serde_json::Value::as_array)
-            .map(|queue| queue.len()),
-        Some(0)
-    );
+            .is_some_and(|queue| queue.is_empty()))
+    })
+    .await?;
 
     let _ = fs::remove_file(path);
     Ok(())
@@ -1302,7 +1387,7 @@ async fn outbox_writes_dead_letter_on_exhausted_failures() -> Result<(), DynErro
         Some("dead-letter-1")
     );
 
-    join_server(handle)?;
+    join_server(handle).await?;
     let _ = fs::remove_file(dead_letter_path);
     Ok(())
 }
@@ -1336,32 +1421,35 @@ async fn outbox_expires_persisted_message_and_moves_to_dead_letter() -> Result<(
         .with_max_message_age(Some(Duration::from_millis(1)));
     let _outbox = BotOutbox::spawn(client, config);
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    wait_for_condition(Duration::from_secs(2), Duration::from_millis(20), || {
+        if !queue_path.exists() || !dead_letter_path.exists() {
+            return Ok(false);
+        }
 
-    let raw_queue = fs::read(&queue_path)?;
-    let queue_snapshot: serde_json::Value = serde_json::from_slice(&raw_queue)?;
-    assert_eq!(
-        queue_snapshot
+        let raw_queue = fs::read(&queue_path)?;
+        let queue_snapshot: serde_json::Value = serde_json::from_slice(&raw_queue)?;
+        let queue_empty = queue_snapshot
             .get("queue")
             .and_then(serde_json::Value::as_array)
-            .map(|queue| queue.len()),
-        Some(0)
-    );
+            .is_some_and(|queue| queue.is_empty());
+        if !queue_empty {
+            return Ok(false);
+        }
 
-    let raw_dead_letter = fs::read(&dead_letter_path)?;
-    let dead_letter_snapshot: serde_json::Value = serde_json::from_slice(&raw_dead_letter)?;
-    let entries = dead_letter_snapshot
-        .get("entries")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(entries.len(), 1);
-    assert!(
-        entries[0]
-            .get("reason")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|reason| reason.contains("expired"))
-    );
+        let raw_dead_letter = fs::read(&dead_letter_path)?;
+        let dead_letter_snapshot: serde_json::Value = serde_json::from_slice(&raw_dead_letter)?;
+        let entries = dead_letter_snapshot
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(entries.len() == 1
+            && entries[0]
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|reason| reason.contains("expired")))
+    })
+    .await?;
 
     let _ = fs::remove_file(queue_path);
     let _ = fs::remove_file(dead_letter_path);
@@ -1484,6 +1572,6 @@ async fn long_polling_source_offset_never_moves_backward() -> Result<(), DynErro
     assert_eq!(outcomes.len(), 2);
     assert_eq!(engine.source_mut().next_offset(), Some(5002));
 
-    join_server(handle)?;
+    join_server(handle).await?;
     Ok(())
 }

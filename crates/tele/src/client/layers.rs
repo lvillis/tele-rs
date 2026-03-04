@@ -9,9 +9,9 @@ use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::UploadFile;
 use crate::{Error, Result};
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
 fn invalid_request(reason: impl Into<String>) -> Error {
@@ -46,13 +46,13 @@ fn callback_query_id(update: &Update) -> Option<String> {
 }
 
 /// Raw Telegram API calling layer for async clients.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct RawApi {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl RawApi {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -94,13 +94,13 @@ impl RawApi {
 }
 
 /// Typed Telegram API layer for async clients.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct TypedApi {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl TypedApi {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -116,13 +116,13 @@ impl TypedApi {
 }
 
 /// Ergonomic high-level helpers for common async bot workflows.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct ErgoApi {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl ErgoApi {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -196,13 +196,13 @@ impl ErgoApi {
 }
 
 /// Raw Telegram API calling layer for blocking clients.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingRawApi {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingRawApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
@@ -243,13 +243,13 @@ impl BlockingRawApi {
 }
 
 /// Typed Telegram API layer for blocking clients.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingTypedApi {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingTypedApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
@@ -265,13 +265,13 @@ impl BlockingTypedApi {
 }
 
 /// Ergonomic high-level helpers for common blocking bot workflows.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingErgoApi {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingErgoApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

@@ -19,15 +19,22 @@ include = [
 ]
 
 [features]
-default = ["async"]
-async = [
-    "reqx/async-tls-rustls-ring",
-    "reqx/strict-feature-guards",
+default = ["async-tls-rustls-ring"]
+_all-features-compat = ["reqx/_all-features-compat"]
+_async = [
     "dep:bytes",
     "dep:futures-core",
 ]
-blocking = ["reqx/blocking-tls-rustls-ring", "reqx/strict-feature-guards"]
-bot = ["async", "dep:tokio"]
+_blocking = []
+async-tls-native = ["_async", "reqx/async-tls-native", "reqx/strict-feature-guards"]
+async-tls-rustls-ring = ["_async", "reqx/async-tls-rustls-ring", "reqx/strict-feature-guards"]
+async-tls-rustls-aws-lc-rs = ["_async", "reqx/async-tls-rustls-aws-lc-rs", "reqx/strict-feature-guards"]
+blocking-tls-native = ["_blocking", "reqx/blocking-tls-native", "reqx/strict-feature-guards"]
+blocking-tls-rustls-ring = ["_blocking", "reqx/blocking-tls-rustls-ring", "reqx/strict-feature-guards"]
+blocking-tls-rustls-aws-lc-rs = ["_blocking", "reqx/blocking-tls-rustls-aws-lc-rs", "reqx/strict-feature-guards"]
+async = ["async-tls-rustls-ring"]
+blocking = ["blocking-tls-rustls-ring"]
+bot = ["_async", "dep:tokio"]
 axum = ["bot", "dep:axum"]
 macros = ["bot", "dep:tele-macros"]
 otel = ["reqx/otel"]
@@ -38,11 +45,13 @@ postgres-session = ["bot", "dep:tokio-postgres"]
 axum = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
+hmac = { workspace = true }
 http = { workspace = true }
 reqx = { workspace = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tele-macros = { version = "0.1.2", path = "../tele-macros", default-features = false, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time", "sync"], optional = true }
@@ -62,12 +71,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 [[example]]
 name = "async_send_message"
 path = "examples/async_send_message.rs"
-required-features = ["async"]
+required-features = ["_async"]
 
 [[example]]
 name = "blocking_send_message"
 path = "examples/blocking_send_message.rs"
-required-features = ["blocking"]
+required-features = ["_blocking"]
 
 [[example]]
 name = "bot_long_polling"
@@ -92,7 +101,7 @@ required-features = ["axum"]
 [[example]]
 name = "api_layers"
 path = "examples/api_layers.rs"
-required-features = ["async"]
+required-features = ["_async"]
 
 [[example]]
 name = "bot_engine_long_polling"
@@ -112,12 +121,12 @@ required-features = ["bot"]
 [[test]]
 name = "async_client"
 path = "tests/async_client.rs"
-required-features = ["async"]
+required-features = ["_async"]
 
 [[test]]
 name = "blocking_client"
 path = "tests/blocking_client.rs"
-required-features = ["blocking"]
+required-features = ["_blocking"]
 
 [[test]]
 name = "bot_axum"

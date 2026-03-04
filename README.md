@@ -4,8 +4,13 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 
 ## Features
 
-- `async` (default): async client with native-tls backend
-- `blocking`: blocking client for non-async environments
+- `async-tls-rustls-ring` (default): async client + rustls (ring provider)
+- `async-tls-rustls-aws-lc-rs`: async client + rustls (aws-lc-rs provider)
+- `async-tls-native`: async client + native-tls
+- `blocking-tls-rustls-ring`: blocking client + rustls (ring provider)
+- `blocking-tls-rustls-aws-lc-rs`: blocking client + rustls (aws-lc-rs provider)
+- `blocking-tls-native`: blocking client + native-tls
+- `async` / `blocking`: legacy aliases (map to rustls-ring variants)
 - `bot`: complete bot runtime toolkit (extractor-based router, source-agnostic engine, long polling with dedupe/offset persistence, webhook dispatch, session stores, reliable outbox with dead-letter, observability hooks, testing harness)
 - `axum`: axum webhook adapter built on top of `bot`
 - `macros`: derive macros for typed bot commands (`#[derive(tele::BotCommands)]`)
@@ -224,8 +229,9 @@ enum Command {
 
 ## Examples
 
-- Async send message: `cargo run -p tele --example async_send_message --features async`
-- Blocking send message: `cargo run -p tele --example blocking_send_message --no-default-features --features blocking`
+- Async send message (default backend): `cargo run -p tele --example async_send_message`
+- Async send message (native-tls): `cargo run -p tele --example async_send_message --no-default-features --features async-tls-native`
+- Blocking send message: `cargo run -p tele --example blocking_send_message --no-default-features --features blocking-tls-rustls-ring`
 - Long polling bot: `cargo run -p tele --example bot_long_polling --features bot`
 - Engine long polling bot: `cargo run -p tele --example bot_engine_long_polling --features bot`
 - Quickstart bot (extractors + outbox + app wrapper): `cargo run -p tele --example bot_quickstart --features bot`
@@ -233,9 +239,13 @@ enum Command {
 - Fallible FSM bot: `cargo run -p tele --example bot_fallible_session --features bot`
 - Typed command bot: `cargo run -p tele --example bot_typed_commands --features macros`
 - Axum webhook bot: `cargo run -p tele --example bot_axum_webhook --features axum`
-- API layers demo: `cargo run -p tele --example api_layers --features async`
+- API layers demo: `cargo run -p tele --example api_layers`
 
 Required environment variables:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID` (send message examples)
 - Optional: `TELEGRAM_TEXT`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_PATH`, `TELEGRAM_BIND`, `TELEGRAM_OUTBOX_PATH`, `TELEGRAM_MINI_APP_URL`
+
+Mini App backend verification helpers:
+- `tele::verify_web_app_init_data(bot_token, init_data, max_age)`
+- `tele::parse_web_app_init_data(init_data)`

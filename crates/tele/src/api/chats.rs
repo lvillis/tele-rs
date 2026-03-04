@@ -12,19 +12,19 @@ use crate::types::chat::{
 };
 use crate::types::message::Chat;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 use crate::BlockingClient;
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 use crate::Client;
 
 /// Chat management related methods.
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 #[derive(Clone)]
 pub struct ChatsService {
     client: Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "_async")]
 impl ChatsService {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
@@ -175,13 +175,13 @@ impl ChatsService {
 }
 
 /// Blocking chat management methods.
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 #[derive(Clone)]
 pub struct BlockingChatsService {
     client: BlockingClient,
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "_blocking")]
 impl BlockingChatsService {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }

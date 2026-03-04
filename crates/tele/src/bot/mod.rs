@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::future::Future;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
@@ -83,6 +84,16 @@ fn invalid_request(reason: impl Into<String>) -> Error {
     Error::InvalidRequest {
         reason: reason.into(),
     }
+}
+
+async fn run_blocking_io<T, F>(task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task)
+        .await
+        .map_err(|error| invalid_request(format!("blocking I/O task failed: {error}")))?
 }
 
 /// Parsed slash command with command name and trailing arguments.
@@ -1108,7 +1119,7 @@ pub fn extract_text(update: &Update) -> Option<&str> {
 
 /// Returns Mini App payload from extracted message when available.
 pub fn extract_web_app_data(update: &Update) -> Option<&WebAppData> {
-    extract_message(update)?.web_app_data()
+    update.web_app_data()
 }
 
 /// Returns write-access service payload from extracted message when available.
@@ -1211,7 +1222,7 @@ impl UpdateExt for Update {
     }
 
     fn web_app_data(&self) -> Option<&WebAppData> {
-        extract_web_app_data(self)
+        Update::web_app_data(self)
     }
 
     fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
@@ -1350,6 +1361,7 @@ where
 {
     path: PathBuf,
     inner: Arc<RwLock<HashMap<i64, S>>>,
+    persist_lock: Arc<Mutex<()>>,
 }
 
 impl<S> Clone for JsonFileSessionStore<S>
@@ -1360,6 +1372,7 @@ where
         Self {
             path: self.path.clone(),
             inner: Arc::clone(&self.inner),
+            persist_lock: Arc::clone(&self.persist_lock),
         }
     }
 }
@@ -1374,6 +1387,7 @@ where
         Ok(Self {
             path,
             inner: Arc::new(RwLock::new(initial)),
+            persist_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -1395,24 +1409,26 @@ where
 
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
         Box::pin(async move {
+            let _persist_guard = self.persist_lock.lock().await;
             let snapshot = {
                 let mut guard = self.inner.write().await;
                 guard.insert(chat_id, state);
                 guard.clone()
             };
-            persist_session_snapshot(self.path.as_path(), &snapshot)?;
+            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
             Ok(())
         })
     }
 
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
         Box::pin(async move {
+            let _persist_guard = self.persist_lock.lock().await;
             let snapshot = {
                 let mut guard = self.inner.write().await;
                 guard.remove(&chat_id);
                 guard.clone()
             };
-            persist_session_snapshot(self.path.as_path(), &snapshot)?;
+            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
             Ok(())
         })
     }
@@ -1443,27 +1459,92 @@ where
     })
 }
 
+fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| {
+        invalid_request(format!(
+            "failed to create directory for {subject} `{}`: {source}",
+            parent.display()
+        ))
+    })?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("snapshot");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    let process_id = std::process::id();
+
+    for attempt in 0..16 {
+        let temp_path = parent.join(format!(".{file_name}.tmp-{process_id}-{nonce}-{attempt}"));
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(mut file) => {
+                let write_result = (|| -> Result<()> {
+                    file.write_all(contents).map_err(|source| {
+                        invalid_request(format!(
+                            "failed to write temp file for {subject} `{}`: {source}",
+                            temp_path.display()
+                        ))
+                    })?;
+                    file.sync_all().map_err(|source| {
+                        invalid_request(format!(
+                            "failed to sync temp file for {subject} `{}`: {source}",
+                            temp_path.display()
+                        ))
+                    })?;
+                    Ok(())
+                })();
+                if let Err(error) = write_result {
+                    let _ = fs::remove_file(&temp_path);
+                    return Err(error);
+                }
+
+                fs::rename(&temp_path, path).map_err(|source| {
+                    let _ = fs::remove_file(&temp_path);
+                    invalid_request(format!(
+                        "failed to replace {subject} `{}` atomically: {source}",
+                        path.display()
+                    ))
+                })?;
+                return Ok(());
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(source) => {
+                return Err(invalid_request(format!(
+                    "failed to create temp file for {subject} `{}`: {source}",
+                    temp_path.display()
+                )));
+            }
+        }
+    }
+
+    Err(invalid_request(format!(
+        "failed to allocate unique temp file for {subject} `{}`",
+        path.display()
+    )))
+}
+
 fn persist_session_snapshot<S>(path: &Path, snapshot: &HashMap<i64, S>) -> Result<()>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|source| Error::InvalidRequest {
-        reason: format!(
-            "failed to create session store directory `{}`: {source}",
-            parent.display()
-        ),
-    })?;
-
     let encoded =
         serde_json::to_vec(snapshot).map_err(|source| Error::SerializeRequest { source })?;
-    fs::write(path, encoded).map_err(|source| Error::InvalidRequest {
-        reason: format!(
-            "failed to write session store `{}`: {source}",
-            path.display()
-        ),
-    })?;
+    write_file_atomic(path, encoded.as_slice(), "session store")?;
     Ok(())
+}
+
+async fn persist_session_snapshot_async<S>(path: PathBuf, snapshot: HashMap<i64, S>) -> Result<()>
+where
+    S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+{
+    run_blocking_io(move || persist_session_snapshot(path.as_path(), &snapshot)).await
 }
 
 #[cfg(feature = "redis-session")]
@@ -2023,7 +2104,7 @@ impl LongPollingSource {
     }
 
     async fn ensure_prepared(&mut self) -> Result<()> {
-        self.ensure_offset_loaded()?;
+        self.ensure_offset_loaded().await?;
 
         if self.prepared {
             return Ok(());
@@ -2051,7 +2132,7 @@ impl LongPollingSource {
         changed
     }
 
-    fn ensure_offset_loaded(&mut self) -> Result<()> {
+    async fn ensure_offset_loaded(&mut self) -> Result<()> {
         if self.offset_loaded {
             return Ok(());
         }
@@ -2059,18 +2140,18 @@ impl LongPollingSource {
         if self.next_offset.is_none()
             && let Some(path) = self.config.persist_offset_path.as_deref()
         {
-            self.next_offset = load_persisted_polling_offset(path)?;
+            self.next_offset = load_persisted_polling_offset_async(path.to_path_buf()).await?;
         }
 
         self.offset_loaded = true;
         Ok(())
     }
 
-    fn persist_offset_if_configured(&self) -> Result<()> {
+    async fn persist_offset_if_configured(&self) -> Result<()> {
         let Some(path) = self.config.persist_offset_path.as_deref() else {
             return Ok(());
         };
-        persist_polling_offset(path, self.next_offset)
+        persist_polling_offset_async(path.to_path_buf(), self.next_offset).await
     }
 
     fn is_duplicate_update(&self, update_id: i64) -> bool {
@@ -2114,7 +2195,7 @@ impl UpdateSource for LongPollingSource {
                 offset_changed |= self.advance_next_offset(update.update_id);
             }
             if offset_changed {
-                self.persist_offset_if_configured()?;
+                self.persist_offset_if_configured().await?;
             }
 
             let mut deduped = Vec::with_capacity(updates.len());
@@ -2166,27 +2247,22 @@ fn load_persisted_polling_offset(path: &Path) -> Result<Option<i64>> {
 }
 
 fn persist_polling_offset(path: &Path, next_offset: Option<i64>) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|source| {
-        invalid_request(format!(
-            "failed to create polling offset directory `{}`: {source}",
-            parent.display()
-        ))
-    })?;
-
     let snapshot = PollingOffsetSnapshot {
         version: default_polling_offset_snapshot_version(),
         next_offset,
     };
     let encoded =
         serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
-    fs::write(path, encoded).map_err(|source| {
-        invalid_request(format!(
-            "failed to write polling offset snapshot `{}`: {source}",
-            path.display()
-        ))
-    })?;
+    write_file_atomic(path, encoded.as_slice(), "polling offset snapshot")?;
     Ok(())
+}
+
+async fn load_persisted_polling_offset_async(path: PathBuf) -> Result<Option<i64>> {
+    run_blocking_io(move || load_persisted_polling_offset(path.as_path())).await
+}
+
+async fn persist_polling_offset_async(path: PathBuf, next_offset: Option<i64>) -> Result<()> {
+    run_blocking_io(move || persist_polling_offset(path.as_path(), next_offset)).await
 }
 
 /// Sink side of a channel-backed update source.
@@ -2425,16 +2501,17 @@ async fn run_outbox_worker(
     mut receiver: mpsc::Receiver<OutboxCommand>,
 ) {
     let mut dedupe: HashMap<String, (Message, Instant)> = HashMap::new();
-    let mut queue = load_outbox_queue(config.persistence_path.as_deref())
-        .unwrap_or_default()
+    let persisted_queue = match load_outbox_queue_async(config.persistence_path.clone()).await {
+        Ok(queue) => queue,
+        Err(_error) => return,
+    };
+    let mut queue = persisted_queue
         .into_iter()
         .map(|payload| QueuedOutboxCommand {
             payload,
             responder: None,
         })
         .collect::<VecDeque<_>>();
-
-    let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
 
     loop {
         while let Ok(command) = receiver.try_recv() {
@@ -2469,12 +2546,10 @@ async fn run_outbox_worker(
             });
         }
 
-        if let Err(error) = persist_outbox_queue(config.persistence_path.as_deref(), &queue) {
-            if let Some(entry) = queue.pop_front()
-                && let Some(responder) = entry.responder
-            {
-                let _ = responder.send(Err(error));
-            }
+        if let Err(_error) =
+            persist_outbox_queue_async(config.persistence_path.clone(), &queue).await
+        {
+            sleep(outbox_persistence_retry_delay(&config)).await;
             continue;
         }
 
@@ -2487,21 +2562,26 @@ async fn run_outbox_worker(
             config.max_message_age,
             unix_timestamp_millis_now(),
         ) {
-            let entry = queue.pop_front();
-            let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
-            if let Some(entry) = entry {
-                let dead_letter = to_dead_letter(
-                    &entry.payload,
-                    "message expired in outbox before delivery".to_owned(),
-                );
-                let _ = append_dead_letter(
-                    config.dead_letter_path.as_deref(),
-                    config.max_dead_letters,
-                    dead_letter,
-                );
-                if let Some(responder) = entry.responder {
-                    let _ = responder.send(Err(invalid_request("message expired in outbox queue")));
+            let entry = match commit_outbox_front(&config, &mut queue).await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => continue,
+                Err(_error) => {
+                    sleep(outbox_persistence_retry_delay(&config)).await;
+                    continue;
                 }
+            };
+            let dead_letter = to_dead_letter(
+                &entry.payload,
+                "message expired in outbox before delivery".to_owned(),
+            );
+            let _ = append_dead_letter_async(
+                config.dead_letter_path.clone(),
+                config.max_dead_letters,
+                dead_letter,
+            )
+            .await;
+            if let Some(responder) = entry.responder {
+                let _ = responder.send(Err(invalid_request("message expired in outbox queue")));
             }
             continue;
         }
@@ -2512,11 +2592,15 @@ async fn run_outbox_worker(
             && let Some((cached, expires_at)) = dedupe.get(key)
             && *expires_at > Instant::now()
         {
-            let entry = queue.pop_front();
-            let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
-            if let Some(entry) = entry
-                && let Some(responder) = entry.responder
-            {
+            let entry = match commit_outbox_front(&config, &mut queue).await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => continue,
+                Err(_error) => {
+                    sleep(outbox_persistence_retry_delay(&config)).await;
+                    continue;
+                }
+            };
+            if let Some(responder) = entry.responder {
                 let _ = responder.send(Ok(cached.clone()));
             }
             continue;
@@ -2530,11 +2614,15 @@ async fn run_outbox_worker(
                     dedupe.insert(key, (message.clone(), expires_at));
                 }
 
-                let entry = queue.pop_front();
-                let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
-                if let Some(entry) = entry
-                    && let Some(responder) = entry.responder
-                {
+                let entry = match commit_outbox_front(&config, &mut queue).await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => continue,
+                    Err(_error) => {
+                        // Message may already be delivered upstream; stop worker to avoid local duplicate sends.
+                        return;
+                    }
+                };
+                if let Some(responder) = entry.responder {
                     let _ = responder.send(Ok(message));
                 }
             }
@@ -2553,27 +2641,62 @@ async fn run_outbox_worker(
                     let delay = error.retry_after().unwrap_or_else(|| {
                         exponential_backoff(config.base_backoff, config.max_backoff, attempt)
                     });
-                    let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
+                    if let Err(_error) =
+                        persist_outbox_queue_async(config.persistence_path.clone(), &queue).await
+                    {
+                        sleep(outbox_persistence_retry_delay(&config)).await;
+                        continue;
+                    }
                     sleep(delay.min(config.max_backoff)).await;
                     continue;
                 }
 
-                let entry = queue.pop_front();
-                let _ = persist_outbox_queue(config.persistence_path.as_deref(), &queue);
-                if let Some(entry) = entry {
-                    let dead_letter = to_dead_letter(&entry.payload, error_message);
-                    let _ = append_dead_letter(
-                        config.dead_letter_path.as_deref(),
-                        config.max_dead_letters,
-                        dead_letter,
-                    );
-                    if let Some(responder) = entry.responder {
-                        let _ = responder.send(Err(error));
+                let entry = match commit_outbox_front(&config, &mut queue).await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => continue,
+                    Err(_error) => {
+                        sleep(outbox_persistence_retry_delay(&config)).await;
+                        continue;
                     }
+                };
+                let dead_letter = to_dead_letter(&entry.payload, error_message);
+                let _ = append_dead_letter_async(
+                    config.dead_letter_path.clone(),
+                    config.max_dead_letters,
+                    dead_letter,
+                )
+                .await;
+                if let Some(responder) = entry.responder {
+                    let _ = responder.send(Err(error));
                 }
             }
         }
     }
+}
+
+fn outbox_persistence_retry_delay(config: &OutboxConfig) -> Duration {
+    let delay = config.base_backoff.min(config.max_backoff);
+    if delay.is_zero() {
+        Duration::from_millis(50)
+    } else {
+        delay
+    }
+}
+
+async fn commit_outbox_front(
+    config: &OutboxConfig,
+    queue: &mut VecDeque<QueuedOutboxCommand>,
+) -> Result<Option<QueuedOutboxCommand>> {
+    let Some(entry) = queue.pop_front() else {
+        return Ok(None);
+    };
+
+    if let Err(error) = persist_outbox_queue_async(config.persistence_path.clone(), queue).await {
+        queue.push_front(entry);
+        return Err(error);
+    }
+
+    Ok(Some(entry))
 }
 
 fn prune_dedupe_cache(dedupe: &mut HashMap<String, (Message, Instant)>) {
@@ -2623,14 +2746,6 @@ fn append_dead_letter(
         return Ok(());
     };
 
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|source| {
-        invalid_request(format!(
-            "failed to create dead-letter directory `{}`: {source}",
-            parent.display()
-        ))
-    })?;
-
     let mut snapshot = load_dead_letter_snapshot(path)?;
     snapshot.entries.push(entry);
     let max_dead_letters = max_dead_letters.max(1);
@@ -2641,13 +2756,16 @@ fn append_dead_letter(
 
     let encoded =
         serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
-    fs::write(path, encoded).map_err(|source| {
-        invalid_request(format!(
-            "failed to write dead-letter snapshot `{}`: {source}",
-            path.display()
-        ))
-    })?;
+    write_file_atomic(path, encoded.as_slice(), "dead-letter snapshot")?;
     Ok(())
+}
+
+async fn append_dead_letter_async(
+    path: Option<PathBuf>,
+    max_dead_letters: usize,
+    entry: DeadLetterEntry,
+) -> Result<()> {
+    run_blocking_io(move || append_dead_letter(path.as_deref(), max_dead_letters, entry)).await
 }
 
 fn load_dead_letter_snapshot(path: &Path) -> Result<DeadLetterSnapshot> {
@@ -2703,33 +2821,34 @@ fn load_outbox_queue(path: Option<&Path>) -> Result<Vec<PersistedOutboxCommand>>
     Ok(snapshot.queue)
 }
 
-fn persist_outbox_queue(path: Option<&Path>, queue: &VecDeque<QueuedOutboxCommand>) -> Result<()> {
+fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -> Result<()> {
     let Some(path) = path else {
         return Ok(());
     };
 
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|source| {
-        invalid_request(format!(
-            "failed to create outbox directory `{}`: {source}",
-            parent.display()
-        ))
-    })?;
-
     let snapshot = OutboxSnapshot {
         version: default_outbox_snapshot_version(),
-        queue: queue.iter().map(|entry| entry.payload.clone()).collect(),
+        queue: queue.to_vec(),
     };
     let encoded =
         serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
-
-    fs::write(path, encoded).map_err(|source| {
-        invalid_request(format!(
-            "failed to persist outbox snapshot `{}`: {source}",
-            path.display()
-        ))
-    })?;
+    write_file_atomic(path, encoded.as_slice(), "outbox snapshot")?;
     Ok(())
+}
+
+async fn load_outbox_queue_async(path: Option<PathBuf>) -> Result<Vec<PersistedOutboxCommand>> {
+    run_blocking_io(move || load_outbox_queue(path.as_deref())).await
+}
+
+async fn persist_outbox_queue_async(
+    path: Option<PathBuf>,
+    queue: &VecDeque<QueuedOutboxCommand>,
+) -> Result<()> {
+    let persisted_queue = queue
+        .iter()
+        .map(|entry| entry.payload.clone())
+        .collect::<Vec<_>>();
+    run_blocking_io(move || persist_outbox_queue(path.as_deref(), &persisted_queue)).await
 }
 
 async fn send_once(client: &Client, chat_id: &ChatId, text: &str) -> Result<Message> {
@@ -3171,7 +3290,9 @@ impl WebhookRunner {
     pub fn verify_secret_token(&self, incoming_secret: Option<&str>) -> bool {
         match self.config.expected_secret_token.as_deref() {
             None => true,
-            Some(expected) => incoming_secret.is_some_and(|incoming| incoming == expected),
+            Some(expected) => {
+                incoming_secret.is_some_and(|incoming| constant_time_eq_str(incoming, expected))
+            }
         }
     }
 
@@ -3247,6 +3368,18 @@ impl WebhookRunner {
             hook(update_id, error);
         }
     }
+}
+
+fn constant_time_eq_str(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut diff = 0_u8;
+    for (lhs, rhs) in left.as_bytes().iter().zip(right.as_bytes().iter()) {
+        diff |= lhs ^ rhs;
+    }
+    diff == 0
 }
 
 /// Bot testing helpers for update fixtures and in-memory dispatch.

@@ -1,4 +1,4 @@
-#![cfg(feature = "blocking")]
+#![cfg(feature = "_blocking")]
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

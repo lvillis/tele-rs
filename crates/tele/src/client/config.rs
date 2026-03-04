@@ -237,13 +237,13 @@ impl ClientBuilder {
     }
 
     /// Builds async client.
-    #[cfg(feature = "async")]
+    #[cfg(feature = "_async")]
     pub fn build(self) -> Result<super::async_client::Client, Error> {
         super::async_client::Client::from_builder(self)
     }
 
     /// Builds blocking client.
-    #[cfg(feature = "blocking")]
+    #[cfg(feature = "_blocking")]
     pub fn build_blocking(self) -> Result<super::blocking_client::BlockingClient, Error> {
         super::blocking_client::BlockingClient::from_builder(self)
     }
