@@ -52,7 +52,7 @@ redis = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tele-macros = { version = "0.1.2", path = "../tele-macros", default-features = false, optional = true }
+tele-macros = { version = "0.1.3", path = "../tele-macros", default-features = false, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time", "sync"], optional = true }
 tokio-postgres = { workspace = true, optional = true }
