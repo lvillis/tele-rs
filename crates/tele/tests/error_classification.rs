@@ -60,3 +60,13 @@ fn classifies_protocol_and_decode_errors() {
     assert_eq!(api_with_retry.classification(), ErrorClass::RateLimited);
     assert!(api_with_retry.is_rate_limited());
 }
+
+#[test]
+fn configuration_errors_are_not_retryable() {
+    let error = Error::Configuration {
+        reason: "invalid proxy config".to_owned(),
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Configuration);
+    assert!(!error.is_retryable());
+}

@@ -7,9 +7,9 @@ use crate::Error;
 use crate::auth::{Auth, BotToken};
 use crate::util::normalize_base_url;
 
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(45);
 const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_BODY_SNIPPET_LIMIT: usize = 2048;
 
@@ -395,5 +395,21 @@ mod tests {
             vec!["localhost", ".example.com", "127.0.0.1"]
         );
         Ok(())
+    }
+
+    #[cfg(feature = "bot")]
+    #[test]
+    fn default_timeouts_leave_headroom_for_long_polling() {
+        let poll_timeout = Duration::from_secs(u64::from(
+            crate::bot::PollingConfig::default().poll_timeout_seconds,
+        ));
+        assert!(
+            DEFAULT_REQUEST_TIMEOUT > poll_timeout,
+            "request timeout must exceed long-poll timeout"
+        );
+        assert!(
+            DEFAULT_TOTAL_TIMEOUT > DEFAULT_REQUEST_TIMEOUT,
+            "total timeout must exceed request timeout"
+        );
     }
 }

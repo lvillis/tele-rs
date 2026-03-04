@@ -2177,6 +2177,19 @@ impl LongPollingSource {
             }
         }
     }
+
+    fn effective_poll_timeout_seconds(&self) -> u16 {
+        // Keep one second of headroom so transport timeout does not preempt long polling.
+        let max_poll_timeout = self
+            .client
+            .request_timeout()
+            .checked_sub(Duration::from_secs(1))
+            .map_or(0, |timeout| {
+                timeout.as_secs().min(u64::from(u16::MAX)) as u16
+            });
+
+        self.config.poll_timeout_seconds.min(max_poll_timeout)
+    }
 }
 
 impl UpdateSource for LongPollingSource {
@@ -2184,7 +2197,8 @@ impl UpdateSource for LongPollingSource {
         Box::pin(async move {
             self.ensure_prepared().await?;
 
-            let mut request = GetUpdatesRequest::with_timeout(self.config.poll_timeout_seconds);
+            let mut request =
+                GetUpdatesRequest::with_timeout(self.effective_poll_timeout_seconds());
             request.offset = self.next_offset;
             request.limit = self.config.limit;
             request.allowed_updates = self.config.allowed_updates.clone();

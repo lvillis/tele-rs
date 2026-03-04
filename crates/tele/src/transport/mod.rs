@@ -27,6 +27,22 @@ use crate::types::common::ResponseParameters;
 use crate::types::upload::UploadFile;
 use crate::util::{body_snippet, redact_token, request_id_from_headers};
 
+fn is_configuration_error_code(code: reqx::ErrorCode) -> bool {
+    matches!(
+        code,
+        reqx::ErrorCode::InvalidUri
+            | reqx::ErrorCode::InvalidNoProxyRule
+            | reqx::ErrorCode::InvalidProxyConfig
+            | reqx::ErrorCode::InvalidAdaptiveConcurrencyPolicy
+            | reqx::ErrorCode::RequestBuild
+            | reqx::ErrorCode::InvalidHeaderName
+            | reqx::ErrorCode::InvalidHeaderValue
+            | reqx::ErrorCode::TlsBackendUnavailable
+            | reqx::ErrorCode::TlsBackendInit
+            | reqx::ErrorCode::TlsConfig
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct TelegramEnvelope<T> {
     ok: bool,
@@ -88,6 +104,17 @@ where
 }
 
 pub(crate) fn map_reqx_error(method: &str, token: &str, source: reqx::Error) -> Error {
+    let code = source.code();
+    if is_configuration_error_code(code) {
+        return Error::Configuration {
+            reason: format!(
+                "while calling `{method}`: {} [{}]",
+                redact_token(&source.to_string(), token),
+                code.as_str()
+            ),
+        };
+    }
+
     let request_path = source.request_path().map(|path| redact_token(&path, token));
 
     Error::Transport {
@@ -97,6 +124,16 @@ pub(crate) fn map_reqx_error(method: &str, token: &str, source: reqx::Error) -> 
         retry_after: source.retry_after(SystemTime::now()),
         request_path,
         message: redact_token(&source.to_string(), token),
+    }
+}
+
+pub(crate) fn map_reqx_builder_error(source: reqx::Error) -> Error {
+    Error::Configuration {
+        reason: format!(
+            "failed to build HTTP client: {} [{}]",
+            source,
+            source.code().as_str()
+        ),
     }
 }
 

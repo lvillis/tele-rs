@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 
 use crate::client::RequestDefaults;
 use crate::transport::{
-    build_multipart_payload, map_reqx_error, parse_telegram_response, to_rate_limit_policy,
-    to_retry_policy,
+    build_multipart_payload, map_reqx_builder_error, map_reqx_error, parse_telegram_response,
+    to_rate_limit_policy, to_retry_policy,
 };
 use crate::types::upload::UploadFile;
 use crate::util::{build_api_path, validate_method_name};
@@ -70,12 +70,10 @@ impl AsyncTransport {
         for (name, value) in default_headers {
             builder = builder
                 .try_default_header(name, value)
-                .map_err(|source| map_reqx_error("client_builder", "", source))?;
+                .map_err(map_reqx_builder_error)?;
         }
 
-        let client = builder
-            .build()
-            .map_err(|source| map_reqx_error("client_builder", "", source))?;
+        let client = builder.build().map_err(map_reqx_builder_error)?;
 
         Ok(Self { client })
     }

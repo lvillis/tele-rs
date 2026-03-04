@@ -48,6 +48,9 @@ pub enum Error {
     #[error("invalid request: {reason}")]
     InvalidRequest { reason: String },
 
+    #[error("invalid client configuration: {reason}")]
+    Configuration { reason: String },
+
     #[error("invalid default header name `{name}`: {source}")]
     InvalidHeaderName {
         name: String,
@@ -123,7 +126,8 @@ impl Error {
             | Self::InvalidBaseUrlScheme { .. }
             | Self::InvalidMethodName { .. }
             | Self::InvalidHeaderName { .. }
-            | Self::InvalidHeaderValue { .. } => ErrorClass::Configuration,
+            | Self::InvalidHeaderValue { .. }
+            | Self::Configuration { .. } => ErrorClass::Configuration,
             Self::InvalidBotToken
             | Self::MissingBotToken
             | Self::InvalidRequest { .. }

@@ -11,7 +11,7 @@ use tele::types::{
     GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice,
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest,
 };
-use tele::{Client, Error, UploadFile};
+use tele::{Client, Error, ErrorClass, UploadFile};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -290,6 +290,23 @@ async fn transport_error_redacts_token() -> Result<(), DynError> {
 
     let text = err.to_string();
     assert!(!text.contains("123:abc"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_configuration_error_is_not_mapped_as_transport() -> Result<(), DynError> {
+    let error = match Client::builder("https://api.telegram.org")?
+        .bot_token("123:abc")?
+        .no_proxy(["example.com", "[::1]not-a-port"])
+        .build()
+    {
+        Ok(_) => return Err("expected build failure".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Configuration { .. }));
+    assert_eq!(error.classification(), ErrorClass::Configuration);
+    assert!(!error.is_retryable());
     Ok(())
 }
 

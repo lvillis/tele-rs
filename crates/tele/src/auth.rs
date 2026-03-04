@@ -47,7 +47,13 @@ pub fn parse_web_app_init_data(init_data: &str) -> Result<BTreeMap<String, Strin
 
     let mut fields = BTreeMap::new();
     for (key, value) in form_urlencoded::parse(init_data.as_bytes()) {
-        fields.insert(key.into_owned(), value.into_owned());
+        let key = key.into_owned();
+        let value = value.into_owned();
+        if fields.insert(key.clone(), value).is_some() {
+            return Err(Error::InvalidRequest {
+                reason: format!("initData contains duplicate key `{key}`"),
+            });
+        }
     }
 
     if fields.is_empty() {
@@ -383,5 +389,15 @@ mod tests {
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("initData has expired"));
         Ok(())
+    }
+
+    #[test]
+    fn rejects_duplicate_keys_in_init_data() {
+        let error = match parse_web_app_init_data("auth_date=1&auth_date=2&hash=deadbeef") {
+            Ok(_) => panic!("duplicate keys must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("duplicate key `auth_date`"));
     }
 }

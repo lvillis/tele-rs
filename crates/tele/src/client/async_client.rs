@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -145,6 +146,10 @@ impl Client {
                 &self.inner.defaults,
             )
             .await
+    }
+
+    pub(crate) fn request_timeout(&self) -> Duration {
+        self.inner.defaults.request_timeout
     }
 
     fn require_token(&self) -> Result<&str> {
