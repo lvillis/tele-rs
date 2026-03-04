@@ -3,6 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const EMBEDDED_METHOD_SPEC: &str = include_str!("fixtures/telegram_bot_api_9_4_all_methods.txt");
+
 fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -47,16 +49,16 @@ fn telegram_bot_api_methods_are_fully_covered() {
         }
     }
 
-    let checked = candidate_paths
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    assert!(
-        expected_text.is_some(),
-        "failed to read method spec file; checked: {checked}"
-    );
-    let expected_text = expected_text.unwrap_or_default();
+    let expected_text = match expected_text {
+        Some(text) => text,
+        None => {
+            assert!(
+                !EMBEDDED_METHOD_SPEC.trim().is_empty(),
+                "embedded method spec fixture is empty"
+            );
+            EMBEDDED_METHOD_SPEC.to_owned()
+        }
+    };
 
     let expected_methods: BTreeSet<String> = expected_text
         .lines()

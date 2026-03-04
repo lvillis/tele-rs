@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use http::Uri;
 use http::header::{HeaderName, HeaderValue, USER_AGENT};
 
 use crate::Error;
@@ -75,6 +76,9 @@ pub struct RequestDefaults {
     pub(crate) per_host_rate_limit: Option<RateLimitConfig>,
     pub(crate) max_in_flight: Option<usize>,
     pub(crate) max_in_flight_per_host: Option<usize>,
+    pub(crate) http_proxy: Option<Uri>,
+    pub(crate) proxy_authorization: Option<HeaderValue>,
+    pub(crate) no_proxy_rules: Vec<String>,
 }
 
 impl Default for RequestDefaults {
@@ -91,6 +95,9 @@ impl Default for RequestDefaults {
             per_host_rate_limit: None,
             max_in_flight: Some(256),
             max_in_flight_per_host: Some(64),
+            http_proxy: None,
+            proxy_authorization: None,
+            no_proxy_rules: Vec::new(),
         }
     }
 }
@@ -227,6 +234,109 @@ impl ClientBuilder {
         self.default_header(USER_AGENT.as_str(), value.as_ref())
     }
 
+    /// Sets HTTP proxy URI.
+    pub fn http_proxy(mut self, proxy_uri: impl AsRef<str>) -> Result<Self, Error> {
+        let raw = proxy_uri.as_ref().trim();
+        let parsed = raw.parse::<Uri>().map_err(|source| Error::InvalidRequest {
+            reason: format!("invalid http proxy uri `{raw}`: {source}"),
+        })?;
+        let Some(scheme) = parsed.scheme_str() else {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "invalid http proxy uri `{raw}`: proxy uri must include an explicit scheme"
+                ),
+            });
+        };
+        if !scheme.eq_ignore_ascii_case("http") {
+            return Err(Error::InvalidRequest {
+                reason: format!("invalid http proxy uri `{raw}`: proxy uri must use http scheme"),
+            });
+        }
+        if parsed.host().is_none() {
+            return Err(Error::InvalidRequest {
+                reason: format!("invalid http proxy uri `{raw}`: proxy uri must include host"),
+            });
+        }
+        if let Some(path_and_query) = parsed.path_and_query() {
+            let path = path_and_query.path();
+            if !path.is_empty() && path != "/" {
+                return Err(Error::InvalidRequest {
+                    reason: format!(
+                        "invalid http proxy uri `{raw}`: proxy uri must not include path segments"
+                    ),
+                });
+            }
+            if path_and_query.query().is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: format!(
+                        "invalid http proxy uri `{raw}`: proxy uri must not include query parameters"
+                    ),
+                });
+            }
+        }
+        self.defaults.http_proxy = Some(parsed);
+        Ok(self)
+    }
+
+    /// Sets HTTP proxy URI using a pre-parsed value.
+    pub fn http_proxy_uri(mut self, proxy_uri: Uri) -> Self {
+        self.defaults.http_proxy = Some(proxy_uri);
+        self
+    }
+
+    /// Clears configured HTTP proxy URI.
+    pub fn clear_http_proxy(mut self) -> Self {
+        self.defaults.http_proxy = None;
+        self
+    }
+
+    /// Sets proxy authorization header value.
+    pub fn proxy_authorization(mut self, value: impl AsRef<str>) -> Result<Self, Error> {
+        let mut parsed =
+            HeaderValue::from_str(value.as_ref()).map_err(|source| Error::InvalidHeaderValue {
+                name: "proxy-authorization".to_owned(),
+                source,
+            })?;
+        parsed.set_sensitive(true);
+        self.defaults.proxy_authorization = Some(parsed);
+        Ok(self)
+    }
+
+    /// Clears configured proxy authorization header.
+    pub fn clear_proxy_authorization(mut self) -> Self {
+        self.defaults.proxy_authorization = None;
+        self
+    }
+
+    /// Replaces NO_PROXY rules.
+    pub fn no_proxy<I, S>(mut self, rules: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.defaults.no_proxy_rules = rules
+            .into_iter()
+            .map(|rule| rule.as_ref().trim().to_owned())
+            .filter(|rule| !rule.is_empty())
+            .collect();
+        self
+    }
+
+    /// Appends a NO_PROXY rule.
+    pub fn add_no_proxy(mut self, rule: impl AsRef<str>) -> Self {
+        let rule = rule.as_ref().trim();
+        if !rule.is_empty() {
+            self.defaults.no_proxy_rules.push(rule.to_owned());
+        }
+        self
+    }
+
+    /// Clears all NO_PROXY rules.
+    pub fn clear_no_proxy(mut self) -> Self {
+        self.defaults.no_proxy_rules.clear();
+        self
+    }
+
     pub(crate) fn into_parts(self) -> BuilderParts {
         BuilderParts {
             base_url: self.base_url,
@@ -246,5 +356,44 @@ impl ClientBuilder {
     #[cfg(feature = "_blocking")]
     pub fn build_blocking(self) -> Result<super::blocking_client::BlockingClient, Error> {
         super::blocking_client::BlockingClient::from_builder(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_http_proxy_uri() -> Result<(), Error> {
+        let result = ClientBuilder::new("https://api.telegram.org")?.http_proxy("not-a-uri");
+        assert!(result.is_err());
+        let error = match result {
+            Ok(_) => Error::InvalidRequest {
+                reason: "expected proxy parsing error".to_owned(),
+            },
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("invalid http proxy uri"));
+        Ok(())
+    }
+
+    #[test]
+    fn stores_proxy_and_no_proxy_settings() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://127.0.0.1:8080")?
+            .proxy_authorization("Basic dXNlcjpwYXNz")?
+            .no_proxy(["localhost", ".example.com"])
+            .add_no_proxy("127.0.0.1");
+        let parts = builder.into_parts();
+
+        assert!(parts.defaults.http_proxy.is_some());
+        assert!(parts.defaults.proxy_authorization.is_some());
+        assert_eq!(
+            parts.defaults.no_proxy_rules,
+            vec!["localhost", ".example.com", "127.0.0.1"]
+        );
+        Ok(())
     }
 }

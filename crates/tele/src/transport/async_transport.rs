@@ -55,6 +55,18 @@ impl AsyncTransport {
             builder = builder.allow_non_idempotent_retries(true);
         }
 
+        if let Some(http_proxy) = defaults.http_proxy.clone() {
+            builder = builder.http_proxy(http_proxy);
+        }
+
+        if let Some(proxy_authorization) = defaults.proxy_authorization.clone() {
+            builder = builder.proxy_authorization(proxy_authorization);
+        }
+
+        if !defaults.no_proxy_rules.is_empty() {
+            builder = builder.no_proxy(defaults.no_proxy_rules.iter().map(String::as_str));
+        }
+
         for (name, value) in default_headers {
             builder = builder
                 .try_default_header(name, value)
