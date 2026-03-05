@@ -604,7 +604,7 @@ async fn long_polling_source_uses_default_poll_timeout() -> Result<(), DynError>
 async fn long_polling_source_clamps_timeout_when_request_timeout_is_too_small()
 -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":[]}"#;
-    const CHECKS: [&str; 1] = ["\"timeout\":0"];
+    const CHECKS: [&str; 1] = ["\"timeout\":1"];
     let (base_url, handle) =
         spawn_server_with_checks("/bot123:abc/getUpdates", 200, response, &CHECKS)?;
 
@@ -612,6 +612,36 @@ async fn long_polling_source_clamps_timeout_when_request_timeout_is_too_small()
         .bot_token("123:abc")?
         .request_timeout(Duration::from_millis(900))
         .total_timeout(Some(Duration::from_secs(3)))
+        .build()?;
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: false,
+        ..EngineConfig::default()
+    });
+
+    let outcomes = engine.poll_once().await?;
+    assert!(outcomes.is_empty());
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn long_polling_source_clamps_timeout_when_total_timeout_is_too_small() -> Result<(), DynError>
+{
+    let response = r#"{"ok":true,"result":[]}"#;
+    const CHECKS: [&str; 1] = ["\"timeout\":4"];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/getUpdates", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_secs(40))
+        .total_timeout(Some(Duration::from_secs(5)))
         .build()?;
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         disable_webhook_on_start: false,

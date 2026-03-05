@@ -392,12 +392,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_keys_in_init_data() {
+    fn rejects_duplicate_keys_in_init_data() -> std::result::Result<(), Box<dyn StdError>> {
         let error = match parse_web_app_init_data("auth_date=1&auth_date=2&hash=deadbeef") {
-            Ok(_) => panic!("duplicate keys must be rejected"),
+            Ok(_) => return Err("duplicate keys must be rejected".into()),
             Err(error) => error,
         };
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("duplicate key `auth_date`"));
+        Ok(())
     }
 }

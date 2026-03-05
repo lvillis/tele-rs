@@ -2179,14 +2179,24 @@ impl LongPollingSource {
     }
 
     fn effective_poll_timeout_seconds(&self) -> u16 {
-        // Keep one second of headroom so transport timeout does not preempt long polling.
-        let max_poll_timeout = self
+        let request_budget = self
             .client
-            .request_timeout()
+            .total_timeout()
+            .map_or(self.client.request_timeout(), |total_timeout| {
+                total_timeout.min(self.client.request_timeout())
+            });
+
+        // Keep one second of headroom so transport timeout does not preempt long polling.
+        let mut max_poll_timeout = request_budget
             .checked_sub(Duration::from_secs(1))
             .map_or(0, |timeout| {
                 timeout.as_secs().min(u64::from(u16::MAX)) as u16
             });
+
+        // Avoid accidental high-frequency short polling when the timeout budget is very small.
+        if self.config.poll_timeout_seconds > 0 && max_poll_timeout == 0 {
+            max_poll_timeout = 1;
+        }
 
         self.config.poll_timeout_seconds.min(max_poll_timeout)
     }

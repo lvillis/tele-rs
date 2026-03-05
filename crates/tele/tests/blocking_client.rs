@@ -5,9 +5,9 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
-use tele::BlockingClient;
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
 use tele::types::{CreateInvoiceLinkRequest, GetChatMemberCountRequest, LabeledPrice};
+use tele::{BlockingClient, Error, ErrorClass};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -179,5 +179,22 @@ async fn blocking_create_invoice_link_success() -> Result<(), DynError> {
     assert_eq!(link, "https://t.me/$5678");
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_build_configuration_error_is_not_mapped_as_transport() -> Result<(), DynError> {
+    let error = match BlockingClient::builder("https://api.telegram.org")?
+        .bot_token("123:abc")?
+        .no_proxy(["example.com", "[::1]not-a-port"])
+        .build_blocking()
+    {
+        Ok(_) => return Err("expected build failure".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Configuration { .. }));
+    assert_eq!(error.classification(), ErrorClass::Configuration);
+    assert!(!error.is_retryable());
     Ok(())
 }

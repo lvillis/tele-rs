@@ -152,6 +152,10 @@ impl Client {
         self.inner.defaults.request_timeout
     }
 
+    pub(crate) fn total_timeout(&self) -> Option<Duration> {
+        self.inner.defaults.total_timeout
+    }
+
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
     }
