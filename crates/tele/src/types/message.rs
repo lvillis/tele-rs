@@ -110,6 +110,19 @@ pub struct WriteAccessAllowed {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Classified message payload kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[non_exhaustive]
+pub enum MessageKind {
+    WriteAccessAllowed,
+    WebAppData,
+    Poll,
+    Photo,
+    Text,
+    Caption,
+    Unknown,
+}
+
 /// Telegram message object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -141,6 +154,47 @@ pub struct Message {
     pub extra: BTreeMap<String, Value>,
 }
 
+fn is_unmodeled_message_content_key(key: &str) -> bool {
+    matches!(
+        key,
+        "animation"
+            | "audio"
+            | "document"
+            | "sticker"
+            | "story"
+            | "video"
+            | "video_note"
+            | "voice"
+            | "contact"
+            | "dice"
+            | "game"
+            | "invoice"
+            | "location"
+            | "venue"
+            | "new_chat_members"
+            | "left_chat_member"
+            | "new_chat_title"
+            | "new_chat_photo"
+            | "delete_chat_photo"
+            | "group_chat_created"
+            | "supergroup_chat_created"
+            | "channel_chat_created"
+            | "message_auto_delete_timer_changed"
+            | "migrate_to_chat_id"
+            | "migrate_from_chat_id"
+            | "pinned_message"
+            | "successful_payment"
+            | "users_shared"
+            | "chat_shared"
+            | "forum_topic_created"
+            | "forum_topic_edited"
+            | "forum_topic_closed"
+            | "forum_topic_reopened"
+            | "general_forum_topic_hidden"
+            | "general_forum_topic_unhidden"
+    )
+}
+
 impl Message {
     pub fn web_app_data(&self) -> Option<&WebAppData> {
         self.web_app_data.as_ref()
@@ -148,6 +202,69 @@ impl Message {
 
     pub fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
         self.write_access_allowed.as_ref()
+    }
+
+    /// Returns the primary message kind using stable precedence.
+    pub fn kind(&self) -> MessageKind {
+        if self.write_access_allowed.is_some() {
+            return MessageKind::WriteAccessAllowed;
+        }
+        if self.web_app_data.is_some() {
+            return MessageKind::WebAppData;
+        }
+        if self.poll.is_some() {
+            return MessageKind::Poll;
+        }
+        if self.photo.is_some() {
+            return MessageKind::Photo;
+        }
+        if self.text.is_some() {
+            return MessageKind::Text;
+        }
+        if self.caption.is_some() {
+            return MessageKind::Caption;
+        }
+        MessageKind::Unknown
+    }
+
+    /// Returns all detected kinds for this message.
+    pub fn kinds(&self) -> Vec<MessageKind> {
+        let mut kinds = Vec::new();
+
+        if self.write_access_allowed.is_some() {
+            kinds.push(MessageKind::WriteAccessAllowed);
+        }
+        if self.web_app_data.is_some() {
+            kinds.push(MessageKind::WebAppData);
+        }
+        if self.poll.is_some() {
+            kinds.push(MessageKind::Poll);
+        }
+        if self.photo.is_some() {
+            kinds.push(MessageKind::Photo);
+        }
+        if self.text.is_some() {
+            kinds.push(MessageKind::Text);
+        }
+        if self.caption.is_some() {
+            kinds.push(MessageKind::Caption);
+        }
+
+        if self
+            .extra
+            .keys()
+            .any(|key| is_unmodeled_message_content_key(key))
+            || kinds.is_empty()
+        {
+            kinds.push(MessageKind::Unknown);
+        }
+
+        kinds
+    }
+
+    /// Returns whether this message contains the given kind.
+    pub fn has_kind(&self, kind: MessageKind) -> bool {
+        self.kinds().contains(&kind)
     }
 }
 
@@ -1439,3 +1556,66 @@ impl_reply_parameters_setter!(
 );
 
 impl_link_preview_setter!(SendMessageRequest, EditMessageTextRequest);
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as StdError;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn detects_primary_text_message_kind() -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1700000000,
+            "chat": {"id": 1, "type": "private"},
+            "text": "hello"
+        }))?;
+
+        assert_eq!(message.kind(), MessageKind::Text);
+        assert_eq!(message.kinds(), vec![MessageKind::Text]);
+        assert!(message.has_kind(MessageKind::Text));
+        Ok(())
+    }
+
+    #[test]
+    fn includes_secondary_caption_kind() -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 2,
+            "date": 1700000001,
+            "chat": {"id": 1, "type": "private"},
+            "photo": [{
+                "file_id": "p1",
+                "file_unique_id": "u1",
+                "width": 16,
+                "height": 16
+            }],
+            "caption": "preview"
+        }))?;
+
+        assert_eq!(message.kind(), MessageKind::Photo);
+        assert_eq!(
+            message.kinds(),
+            vec![MessageKind::Photo, MessageKind::Caption]
+        );
+        assert!(message.has_kind(MessageKind::Caption));
+        Ok(())
+    }
+
+    #[test]
+    fn marks_unmodeled_content_as_unknown() -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 3,
+            "date": 1700000002,
+            "chat": {"id": 1, "type": "private"},
+            "sticker": {"file_id": "s1"}
+        }))?;
+
+        assert_eq!(message.kind(), MessageKind::Unknown);
+        assert_eq!(message.kinds(), vec![MessageKind::Unknown]);
+        assert!(message.has_kind(MessageKind::Unknown));
+        Ok(())
+    }
+}

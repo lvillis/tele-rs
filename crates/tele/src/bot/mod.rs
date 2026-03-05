@@ -22,9 +22,9 @@ use crate::api::{
 };
 use crate::types::command::SetMyCommandsRequest;
 use crate::types::common::ChatId;
-use crate::types::message::{Message, SendMessageRequest, WriteAccessAllowed};
+use crate::types::message::{Message, MessageKind, SendMessageRequest, WriteAccessAllowed};
 use crate::types::telegram::WebAppData;
-use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update};
+use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
 
@@ -729,6 +729,27 @@ impl Router {
         self.route(|update| update.message.is_some(), handler)
     }
 
+    /// Routes updates whose extracted message contains the given message kind.
+    pub fn on_message_kind<H, Fut>(&mut self, kind: MessageKind, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route(
+            move |update| extract_message(update).is_some_and(|message| message.has_kind(kind)),
+            handler,
+        )
+    }
+
+    /// Routes updates by top-level update kind.
+    pub fn on_update_kind<H, Fut>(&mut self, kind: UpdateKind, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route(move |update| update.has_kind(kind), handler)
+    }
+
     pub fn on_message_fallible<H, Fut>(&mut self, handler: H) -> &mut Self
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
@@ -1112,6 +1133,11 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
         .and_then(|query| query.message.as_ref())
 }
 
+/// Returns primary kind of extracted message.
+pub fn extract_message_kind(update: &Update) -> Option<MessageKind> {
+    Some(extract_message(update)?.kind())
+}
+
 /// Returns plain text from extracted message when available.
 pub fn extract_text(update: &Update) -> Option<&str> {
     extract_message(update)?.text.as_deref()
@@ -1192,6 +1218,12 @@ pub fn command_definitions<C: BotCommands>() -> Vec<crate::types::command::BotCo
 /// Convenience extractor trait for update handlers.
 pub trait UpdateExt {
     fn message(&self) -> Option<&Message>;
+    fn message_kind(&self) -> Option<MessageKind> {
+        self.message().map(Message::kind)
+    }
+    fn update_kind(&self) -> UpdateKind {
+        UpdateKind::Unknown
+    }
     fn text(&self) -> Option<&str>;
     fn web_app_data(&self) -> Option<&WebAppData> {
         None
@@ -1215,6 +1247,14 @@ pub trait UpdateExt {
 impl UpdateExt for Update {
     fn message(&self) -> Option<&Message> {
         extract_message(self)
+    }
+
+    fn message_kind(&self) -> Option<MessageKind> {
+        extract_message_kind(self)
+    }
+
+    fn update_kind(&self) -> UpdateKind {
+        Update::kind(self)
     }
 
     fn text(&self) -> Option<&str> {

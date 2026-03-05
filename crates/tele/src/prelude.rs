@@ -13,7 +13,8 @@ pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
 pub use crate::types::{
-    BotCommand, ChatId, Message, MessageId, ParseMode, ReplyMarkup, ReplyParameters, Update,
+    BotCommand, ChatId, Message, MessageId, MessageKind, ParseMode, ReplyMarkup, ReplyParameters,
+    Update, UpdateKind,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]

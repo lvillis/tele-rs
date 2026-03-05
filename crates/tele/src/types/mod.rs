@@ -39,12 +39,12 @@ pub use message::{
     DeleteMessagesRequest, DiceEmoji, EditMessageCaptionRequest, EditMessageLiveLocationRequest,
     EditMessageReplyMarkupRequest, EditMessageResult, EditMessageTextRequest,
     ForwardMessageRequest, InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument,
-    InputMediaPhoto, InputMediaVideo, Message, MessageEntity, MessageIdObject, PhotoSize, Poll,
-    PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest, SendContactRequest,
-    SendDiceRequest, SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest,
-    SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
-    SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest,
-    StopPollRequest, WriteAccessAllowed,
+    InputMediaPhoto, InputMediaVideo, Message, MessageEntity, MessageIdObject, MessageKind,
+    PhotoSize, Poll, PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest,
+    SendContactRequest, SendDiceRequest, SendDocumentRequest, SendLocationRequest,
+    SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest,
+    SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest, SentWebAppMessage,
+    StopMessageLiveLocationRequest, StopPollRequest, WriteAccessAllowed,
 };
 pub use payment::{
     AnswerPreCheckoutQueryRequest, AnswerShippingQueryRequest, CreateInvoiceLinkRequest,
@@ -69,7 +69,7 @@ pub use telegram::{
 };
 pub use update::{
     AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChosenInlineResult,
-    GetUpdatesRequest, InlineQuery, PollAnswer, Update,
+    GetUpdatesRequest, InlineQuery, PollAnswer, Update, UpdateKind,
 };
 pub use upload::UploadFile;
 pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo};

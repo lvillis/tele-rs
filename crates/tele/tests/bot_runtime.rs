@@ -29,6 +29,7 @@ use tele::types::telegram::{
     MenuButtonWebApp, WebAppInfo,
 };
 use tele::types::update::Update;
+use tele::types::{MessageKind, UpdateKind};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -342,6 +343,8 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     );
 
     assert!(extract_message(&update).is_some());
+    assert_eq!(update.update_kind(), UpdateKind::Message);
+    assert_eq!(update.message_kind(), Some(MessageKind::Text));
     assert_eq!(extract_text(&update), Some("/echo hello world"));
     assert_eq!(extract_command(&update), Some("echo"));
     assert_eq!(extract_command_args(&update), Some("hello world"));
@@ -391,6 +394,8 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         extract_web_app_data(&web_app_update).map(|data| data.button_text.as_str()),
         Some("Open Mini App")
     );
+    assert_eq!(web_app_update.update_kind(), UpdateKind::Message);
+    assert_eq!(web_app_update.message_kind(), Some(MessageKind::WebAppData));
     assert_eq!(
         web_app_update.web_app_data().map(|data| data.data.as_str()),
         Some("{\"query_id\":\"q-1\",\"action\":\"checkout\"}")
@@ -428,6 +433,10 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         Some(true)
     );
     assert_eq!(
+        write_access_update.message_kind(),
+        Some(MessageKind::WriteAccessAllowed)
+    );
+    assert_eq!(
         write_access_update
             .write_access_allowed()
             .and_then(|value| value.web_app_name.as_deref()),
@@ -448,9 +457,89 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     };
 
     assert_eq!(extract_callback_data(&callback), Some("btn-1"));
+    assert_eq!(callback.update_kind(), UpdateKind::CallbackQuery);
+    assert_eq!(callback.message_kind(), Some(MessageKind::Text));
     assert!(extract_callback_json::<serde_json::Value>(&callback).is_none());
     assert_eq!(callback.callback_data(), Some("btn-1"));
     assert!(callback.message().is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let photo_hits = Arc::new(AtomicUsize::new(0));
+    let callback_hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let photo_hits = Arc::clone(&photo_hits);
+        router.on_message_kind(
+            MessageKind::Photo,
+            move |_context: BotContext, _update: Update| {
+                let photo_hits = Arc::clone(&photo_hits);
+                async move {
+                    photo_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let callback_hits = Arc::clone(&callback_hits);
+        router.on_update_kind(
+            UpdateKind::CallbackQuery,
+            move |_context: BotContext, _update: Update| {
+                let callback_hits = Arc::clone(&callback_hits);
+                async move {
+                    callback_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let maybe_photo = parse_update(serde_json::json!({
+        "update_id": 320,
+        "message": {
+            "message_id": 320,
+            "date": 1700000320,
+            "chat": {"id": 1, "type": "private"},
+            "photo": [{
+                "file_id": "p-1",
+                "file_unique_id": "u-1",
+                "width": 16,
+                "height": 16
+            }],
+            "caption": "preview"
+        }
+    }));
+    assert!(maybe_photo.is_some());
+    let Some(photo_update) = maybe_photo else {
+        return Ok(());
+    };
+
+    let maybe_callback = parse_update(callback_update(321, 1, "btn-1"));
+    assert!(maybe_callback.is_some());
+    let Some(callback_update) = maybe_callback else {
+        return Ok(());
+    };
+
+    assert!(
+        router
+            .dispatch(BotContext::new(client.clone()), photo_update)
+            .await?
+    );
+    assert!(
+        router
+            .dispatch(BotContext::new(client), callback_update)
+            .await?
+    );
+    assert_eq!(photo_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(callback_hits.load(Ordering::SeqCst), 1);
 
     Ok(())
 }
