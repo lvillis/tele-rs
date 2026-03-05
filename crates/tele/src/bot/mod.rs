@@ -1976,6 +1976,12 @@ where
 /// Long-polling source configuration.
 #[derive(Clone, Debug)]
 pub struct PollingConfig {
+    /// Polling timeout passed to `getUpdates` in seconds.
+    ///
+    /// When greater than zero, runtime requires at least one second of timeout
+    /// budget headroom from `min(client.request_timeout, client.total_timeout)`.
+    /// If budget is smaller, polling returns `Error::Configuration`.
+    /// Set this value to `0` for explicit short polling.
     pub poll_timeout_seconds: u16,
     pub limit: Option<u8>,
     pub allowed_updates: Option<Vec<String>>,
@@ -2178,7 +2184,7 @@ impl LongPollingSource {
         }
     }
 
-    fn effective_poll_timeout_seconds(&self) -> u16 {
+    fn effective_poll_timeout_seconds(&self) -> Result<u16> {
         let request_budget = self
             .client
             .total_timeout()
@@ -2187,18 +2193,26 @@ impl LongPollingSource {
             });
 
         // Keep one second of headroom so transport timeout does not preempt long polling.
-        let mut max_poll_timeout = request_budget
+        let max_poll_timeout = request_budget
             .checked_sub(Duration::from_secs(1))
             .map_or(0, |timeout| {
                 timeout.as_secs().min(u64::from(u16::MAX)) as u16
             });
 
-        // Avoid accidental high-frequency short polling when the timeout budget is very small.
         if self.config.poll_timeout_seconds > 0 && max_poll_timeout == 0 {
-            max_poll_timeout = 1;
+            return Err(Error::Configuration {
+                reason: format!(
+                    "poll_timeout_seconds={} requires at least 1s timeout budget headroom, got request_timeout={}ms and total_timeout={}ms; increase timeouts or set poll_timeout_seconds=0 for short polling",
+                    self.config.poll_timeout_seconds,
+                    self.client.request_timeout().as_millis(),
+                    self.client
+                        .total_timeout()
+                        .map_or(0_u128, |value| value.as_millis())
+                ),
+            });
         }
 
-        self.config.poll_timeout_seconds.min(max_poll_timeout)
+        Ok(self.config.poll_timeout_seconds.min(max_poll_timeout))
     }
 }
 
@@ -2208,7 +2222,7 @@ impl UpdateSource for LongPollingSource {
             self.ensure_prepared().await?;
 
             let mut request =
-                GetUpdatesRequest::with_timeout(self.effective_poll_timeout_seconds());
+                GetUpdatesRequest::with_timeout(self.effective_poll_timeout_seconds()?);
             request.offset = self.next_offset;
             request.limit = self.config.limit;
             request.allowed_updates = self.config.allowed_updates.clone();
