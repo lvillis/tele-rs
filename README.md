@@ -27,6 +27,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.ergo()` (high-level helpers)
 - Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
 - Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`WebAppInput`/`WriteAccessAllowedInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
+- Kind routing (`feature = "bot"`): `UpdateKind` / `MessageKind` classification, `on_update_kind` / `on_message_kind` / `on_any_message_kind`, `UnknownKindsDetected` runtime event. Guide: [`crates/tele/docs/kind-routing.md`](crates/tele/docs/kind-routing.md)
 - Reliability (`feature = "bot"`): `BotOutbox` send queue with retry/backoff/429 handling, idempotency dedupe, optional on-disk queue persistence/replay, dead-letter recording, and message max-age expiration
 - Sessions (`feature = "bot"`): `InMemorySessionStore` and `JsonFileSessionStore`
 - Distributed sessions: `RedisSessionStore` (`feature = "redis-session"`), `PostgresSessionStore` (`feature = "postgres-session"`)

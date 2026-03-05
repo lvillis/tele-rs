@@ -123,6 +123,15 @@ pub enum MessageKind {
     Unknown,
 }
 
+const KNOWN_MESSAGE_KINDS: [MessageKind; 6] = [
+    MessageKind::WriteAccessAllowed,
+    MessageKind::WebAppData,
+    MessageKind::Poll,
+    MessageKind::Photo,
+    MessageKind::Text,
+    MessageKind::Caption,
+];
+
 /// Telegram message object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -196,6 +205,21 @@ fn is_unmodeled_message_content_key(key: &str) -> bool {
 }
 
 impl Message {
+    fn has_modeled_kind(&self) -> bool {
+        self.write_access_allowed.is_some()
+            || self.web_app_data.is_some()
+            || self.poll.is_some()
+            || self.photo.is_some()
+            || self.text.is_some()
+            || self.caption.is_some()
+    }
+
+    fn has_unmodeled_content(&self) -> bool {
+        self.extra
+            .keys()
+            .any(|key| is_unmodeled_message_content_key(key))
+    }
+
     pub fn web_app_data(&self) -> Option<&WebAppData> {
         self.web_app_data.as_ref()
     }
@@ -206,56 +230,25 @@ impl Message {
 
     /// Returns the primary message kind using stable precedence.
     pub fn kind(&self) -> MessageKind {
-        if self.write_access_allowed.is_some() {
-            return MessageKind::WriteAccessAllowed;
+        for kind in KNOWN_MESSAGE_KINDS {
+            if self.has_kind(kind) {
+                return kind;
+            }
         }
-        if self.web_app_data.is_some() {
-            return MessageKind::WebAppData;
-        }
-        if self.poll.is_some() {
-            return MessageKind::Poll;
-        }
-        if self.photo.is_some() {
-            return MessageKind::Photo;
-        }
-        if self.text.is_some() {
-            return MessageKind::Text;
-        }
-        if self.caption.is_some() {
-            return MessageKind::Caption;
-        }
+
         MessageKind::Unknown
     }
 
     /// Returns all detected kinds for this message.
     pub fn kinds(&self) -> Vec<MessageKind> {
-        let mut kinds = Vec::new();
-
-        if self.write_access_allowed.is_some() {
-            kinds.push(MessageKind::WriteAccessAllowed);
-        }
-        if self.web_app_data.is_some() {
-            kinds.push(MessageKind::WebAppData);
-        }
-        if self.poll.is_some() {
-            kinds.push(MessageKind::Poll);
-        }
-        if self.photo.is_some() {
-            kinds.push(MessageKind::Photo);
-        }
-        if self.text.is_some() {
-            kinds.push(MessageKind::Text);
-        }
-        if self.caption.is_some() {
-            kinds.push(MessageKind::Caption);
+        let mut kinds = Vec::with_capacity(KNOWN_MESSAGE_KINDS.len() + 1);
+        for kind in KNOWN_MESSAGE_KINDS {
+            if self.has_kind(kind) {
+                kinds.push(kind);
+            }
         }
 
-        if self
-            .extra
-            .keys()
-            .any(|key| is_unmodeled_message_content_key(key))
-            || kinds.is_empty()
-        {
+        if self.has_kind(MessageKind::Unknown) {
             kinds.push(MessageKind::Unknown);
         }
 
@@ -264,7 +257,15 @@ impl Message {
 
     /// Returns whether this message contains the given kind.
     pub fn has_kind(&self, kind: MessageKind) -> bool {
-        self.kinds().contains(&kind)
+        match kind {
+            MessageKind::WriteAccessAllowed => self.write_access_allowed.is_some(),
+            MessageKind::WebAppData => self.web_app_data.is_some(),
+            MessageKind::Poll => self.poll.is_some(),
+            MessageKind::Photo => self.photo.is_some(),
+            MessageKind::Text => self.text.is_some(),
+            MessageKind::Caption => self.caption.is_some(),
+            MessageKind::Unknown => self.has_unmodeled_content() || !self.has_modeled_kind(),
+        }
     }
 }
 
@@ -1561,7 +1562,7 @@ impl_link_preview_setter!(SendMessageRequest, EditMessageTextRequest);
 mod tests {
     use std::error::Error as StdError;
 
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -1616,6 +1617,113 @@ mod tests {
         assert_eq!(message.kind(), MessageKind::Unknown);
         assert_eq!(message.kinds(), vec![MessageKind::Unknown]);
         assert!(message.has_kind(MessageKind::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn keeps_unknown_alongside_modeled_kind() -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 4,
+            "date": 1700000003,
+            "chat": {"id": 1, "type": "private"},
+            "text": "hello",
+            "sticker": {"file_id": "s1"}
+        }))?;
+
+        assert_eq!(message.kind(), MessageKind::Text);
+        assert_eq!(
+            message.kinds(),
+            vec![MessageKind::Text, MessageKind::Unknown]
+        );
+        assert!(message.has_kind(MessageKind::Unknown));
+        Ok(())
+    }
+
+    fn base_message_payload() -> serde_json::Map<String, Value> {
+        let mut object = serde_json::Map::new();
+        object.insert("message_id".to_owned(), json!(99));
+        object.insert("date".to_owned(), json!(1700000999));
+        object.insert("chat".to_owned(), json!({"id": 1, "type": "private"}));
+        object
+    }
+
+    fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn StdError>> {
+        let mut object = base_message_payload();
+        match kind {
+            MessageKind::WriteAccessAllowed => {
+                object.insert(
+                    "write_access_allowed".to_owned(),
+                    json!({"from_request": true}),
+                );
+            }
+            MessageKind::WebAppData => {
+                object.insert(
+                    "web_app_data".to_owned(),
+                    json!({"data": "payload", "button_text": "open"}),
+                );
+            }
+            MessageKind::Poll => {
+                object.insert(
+                    "poll".to_owned(),
+                    json!({
+                        "id": "poll-1",
+                        "question": "q?",
+                        "options": [{"text": "a", "voter_count": 1}],
+                        "total_voter_count": 1,
+                        "is_closed": false,
+                        "is_anonymous": false,
+                        "type": "regular",
+                        "allows_multiple_answers": false
+                    }),
+                );
+            }
+            MessageKind::Photo => {
+                object.insert(
+                    "photo".to_owned(),
+                    json!([{
+                        "file_id": "p-1",
+                        "file_unique_id": "u-1",
+                        "width": 16,
+                        "height": 16
+                    }]),
+                );
+            }
+            MessageKind::Text => {
+                object.insert("text".to_owned(), json!("hello"));
+            }
+            MessageKind::Caption => {
+                object.insert("caption".to_owned(), json!("preview"));
+            }
+            MessageKind::Unknown => {
+                object.insert("sticker".to_owned(), json!({"file_id": "s-1"}));
+            }
+        }
+
+        Ok(serde_json::from_value(Value::Object(object))?)
+    }
+
+    #[test]
+    fn message_kind_matrix_stays_in_sync() -> std::result::Result<(), Box<dyn StdError>> {
+        for kind in KNOWN_MESSAGE_KINDS {
+            let message = message_for_kind(kind)?;
+            assert!(
+                message.has_kind(kind),
+                "missing has_kind mapping for {kind:?}"
+            );
+            assert!(
+                message.kinds().contains(&kind),
+                "missing kinds mapping for {kind:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_kind_matrix_stays_in_sync() -> std::result::Result<(), Box<dyn StdError>> {
+        let message = message_for_kind(MessageKind::Unknown)?;
+        assert_eq!(message.kind(), MessageKind::Unknown);
+        assert!(message.has_kind(MessageKind::Unknown));
+        assert_eq!(message.kinds(), vec![MessageKind::Unknown]);
         Ok(())
     }
 }

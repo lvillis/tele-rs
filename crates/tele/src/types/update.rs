@@ -26,6 +26,21 @@ pub enum UpdateKind {
     Unknown,
 }
 
+const KNOWN_UPDATE_KINDS: [UpdateKind; 12] = [
+    UpdateKind::Message,
+    UpdateKind::EditedMessage,
+    UpdateKind::ChannelPost,
+    UpdateKind::EditedChannelPost,
+    UpdateKind::CallbackQuery,
+    UpdateKind::InlineQuery,
+    UpdateKind::ChosenInlineResult,
+    UpdateKind::Poll,
+    UpdateKind::PollAnswer,
+    UpdateKind::MyChatMember,
+    UpdateKind::ChatMember,
+    UpdateKind::ChatJoinRequest,
+];
+
 /// Telegram callback query object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -114,88 +129,46 @@ pub struct Update {
 }
 
 impl Update {
+    fn has_modeled_kind(&self) -> bool {
+        self.message.is_some()
+            || self.edited_message.is_some()
+            || self.channel_post.is_some()
+            || self.edited_channel_post.is_some()
+            || self.callback_query.is_some()
+            || self.inline_query.is_some()
+            || self.chosen_inline_result.is_some()
+            || self.poll.is_some()
+            || self.poll_answer.is_some()
+            || self.my_chat_member.is_some()
+            || self.chat_member.is_some()
+            || self.chat_join_request.is_some()
+    }
+
+    fn has_unmodeled_kind(&self) -> bool {
+        !self.extra.is_empty()
+    }
+
     /// Returns the primary update kind using stable precedence.
     pub fn kind(&self) -> UpdateKind {
-        if self.message.is_some() {
-            return UpdateKind::Message;
+        for kind in KNOWN_UPDATE_KINDS {
+            if self.has_kind(kind) {
+                return kind;
+            }
         }
-        if self.edited_message.is_some() {
-            return UpdateKind::EditedMessage;
-        }
-        if self.channel_post.is_some() {
-            return UpdateKind::ChannelPost;
-        }
-        if self.edited_channel_post.is_some() {
-            return UpdateKind::EditedChannelPost;
-        }
-        if self.callback_query.is_some() {
-            return UpdateKind::CallbackQuery;
-        }
-        if self.inline_query.is_some() {
-            return UpdateKind::InlineQuery;
-        }
-        if self.chosen_inline_result.is_some() {
-            return UpdateKind::ChosenInlineResult;
-        }
-        if self.poll.is_some() {
-            return UpdateKind::Poll;
-        }
-        if self.poll_answer.is_some() {
-            return UpdateKind::PollAnswer;
-        }
-        if self.my_chat_member.is_some() {
-            return UpdateKind::MyChatMember;
-        }
-        if self.chat_member.is_some() {
-            return UpdateKind::ChatMember;
-        }
-        if self.chat_join_request.is_some() {
-            return UpdateKind::ChatJoinRequest;
-        }
+
         UpdateKind::Unknown
     }
 
     /// Returns all detected update kinds.
     pub fn kinds(&self) -> Vec<UpdateKind> {
-        let mut kinds = Vec::new();
-        if self.message.is_some() {
-            kinds.push(UpdateKind::Message);
-        }
-        if self.edited_message.is_some() {
-            kinds.push(UpdateKind::EditedMessage);
-        }
-        if self.channel_post.is_some() {
-            kinds.push(UpdateKind::ChannelPost);
-        }
-        if self.edited_channel_post.is_some() {
-            kinds.push(UpdateKind::EditedChannelPost);
-        }
-        if self.callback_query.is_some() {
-            kinds.push(UpdateKind::CallbackQuery);
-        }
-        if self.inline_query.is_some() {
-            kinds.push(UpdateKind::InlineQuery);
-        }
-        if self.chosen_inline_result.is_some() {
-            kinds.push(UpdateKind::ChosenInlineResult);
-        }
-        if self.poll.is_some() {
-            kinds.push(UpdateKind::Poll);
-        }
-        if self.poll_answer.is_some() {
-            kinds.push(UpdateKind::PollAnswer);
-        }
-        if self.my_chat_member.is_some() {
-            kinds.push(UpdateKind::MyChatMember);
-        }
-        if self.chat_member.is_some() {
-            kinds.push(UpdateKind::ChatMember);
-        }
-        if self.chat_join_request.is_some() {
-            kinds.push(UpdateKind::ChatJoinRequest);
+        let mut kinds = Vec::with_capacity(KNOWN_UPDATE_KINDS.len() + 1);
+        for kind in KNOWN_UPDATE_KINDS {
+            if self.has_kind(kind) {
+                kinds.push(kind);
+            }
         }
 
-        if kinds.is_empty() {
+        if self.has_kind(UpdateKind::Unknown) {
             kinds.push(UpdateKind::Unknown);
         }
 
@@ -204,7 +177,21 @@ impl Update {
 
     /// Returns whether this update contains the given kind.
     pub fn has_kind(&self, kind: UpdateKind) -> bool {
-        self.kinds().contains(&kind)
+        match kind {
+            UpdateKind::Message => self.message.is_some(),
+            UpdateKind::EditedMessage => self.edited_message.is_some(),
+            UpdateKind::ChannelPost => self.channel_post.is_some(),
+            UpdateKind::EditedChannelPost => self.edited_channel_post.is_some(),
+            UpdateKind::CallbackQuery => self.callback_query.is_some(),
+            UpdateKind::InlineQuery => self.inline_query.is_some(),
+            UpdateKind::ChosenInlineResult => self.chosen_inline_result.is_some(),
+            UpdateKind::Poll => self.poll.is_some(),
+            UpdateKind::PollAnswer => self.poll_answer.is_some(),
+            UpdateKind::MyChatMember => self.my_chat_member.is_some(),
+            UpdateKind::ChatMember => self.chat_member.is_some(),
+            UpdateKind::ChatJoinRequest => self.chat_join_request.is_some(),
+            UpdateKind::Unknown => self.has_unmodeled_kind() || !self.has_modeled_kind(),
+        }
     }
 
     /// Returns Mini App payload from the first available message-like field.
@@ -387,6 +374,159 @@ mod tests {
         assert_eq!(update.kind(), UpdateKind::Unknown);
         assert_eq!(update.kinds(), vec![UpdateKind::Unknown]);
         assert!(update.has_kind(UpdateKind::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn keeps_unknown_alongside_modeled_kind() -> std::result::Result<(), Box<dyn StdError>> {
+        let update: Update = serde_json::from_value(json!({
+            "update_id": 4,
+            "message": {
+                "message_id": 12,
+                "date": 1700000004,
+                "chat": {"id": 1, "type": "private"},
+                "text": "hello"
+            },
+            "new_kind_payload": {"foo": "bar"}
+        }))?;
+
+        assert_eq!(update.kind(), UpdateKind::Message);
+        assert_eq!(
+            update.kinds(),
+            vec![UpdateKind::Message, UpdateKind::Unknown]
+        );
+        assert!(update.has_kind(UpdateKind::Unknown));
+        Ok(())
+    }
+
+    fn update_for_kind(kind: UpdateKind) -> std::result::Result<Update, Box<dyn StdError>> {
+        let payload = match kind {
+            UpdateKind::Message => json!({
+                "update_id": 100,
+                "message": {
+                    "message_id": 10,
+                    "date": 1700000100,
+                    "chat": {"id": 1, "type": "private"},
+                    "text": "hello"
+                }
+            }),
+            UpdateKind::EditedMessage => json!({
+                "update_id": 101,
+                "edited_message": {
+                    "message_id": 10,
+                    "date": 1700000101,
+                    "chat": {"id": 1, "type": "private"},
+                    "text": "hello"
+                }
+            }),
+            UpdateKind::ChannelPost => json!({
+                "update_id": 102,
+                "channel_post": {
+                    "message_id": 10,
+                    "date": 1700000102,
+                    "chat": {"id": -1001, "type": "channel"},
+                    "text": "post"
+                }
+            }),
+            UpdateKind::EditedChannelPost => json!({
+                "update_id": 103,
+                "edited_channel_post": {
+                    "message_id": 10,
+                    "date": 1700000103,
+                    "chat": {"id": -1001, "type": "channel"},
+                    "text": "post"
+                }
+            }),
+            UpdateKind::CallbackQuery => json!({
+                "update_id": 104,
+                "callback_query": {
+                    "id": "cb-104",
+                    "from": {"id": 1, "is_bot": false, "first_name": "tester"},
+                    "chat_instance": "ci",
+                    "data": "payload"
+                }
+            }),
+            UpdateKind::InlineQuery => json!({
+                "update_id": 105,
+                "inline_query": {
+                    "id": "iq-105",
+                    "from": {"id": 1, "is_bot": false, "first_name": "tester"},
+                    "query": "search",
+                    "offset": ""
+                }
+            }),
+            UpdateKind::ChosenInlineResult => json!({
+                "update_id": 106,
+                "chosen_inline_result": {
+                    "result_id": "res-106",
+                    "from": {"id": 1, "is_bot": false, "first_name": "tester"},
+                    "query": "search"
+                }
+            }),
+            UpdateKind::Poll => json!({
+                "update_id": 107,
+                "poll": {
+                    "id": "poll-107",
+                    "question": "q?",
+                    "options": [{"text": "a", "voter_count": 1}],
+                    "total_voter_count": 1,
+                    "is_closed": false,
+                    "is_anonymous": false,
+                    "type": "regular",
+                    "allows_multiple_answers": false
+                }
+            }),
+            UpdateKind::PollAnswer => json!({
+                "update_id": 108,
+                "poll_answer": {
+                    "poll_id": "poll-107",
+                    "user": {"id": 1, "is_bot": false, "first_name": "tester"},
+                    "option_ids": [0]
+                }
+            }),
+            UpdateKind::MyChatMember => json!({
+                "update_id": 109,
+                "my_chat_member": {"dummy": true}
+            }),
+            UpdateKind::ChatMember => json!({
+                "update_id": 110,
+                "chat_member": {"dummy": true}
+            }),
+            UpdateKind::ChatJoinRequest => json!({
+                "update_id": 111,
+                "chat_join_request": {"dummy": true}
+            }),
+            UpdateKind::Unknown => json!({
+                "update_id": 112,
+                "new_kind_payload": {"foo": "bar"}
+            }),
+        };
+
+        Ok(serde_json::from_value(payload)?)
+    }
+
+    #[test]
+    fn update_kind_matrix_stays_in_sync() -> std::result::Result<(), Box<dyn StdError>> {
+        for kind in KNOWN_UPDATE_KINDS {
+            let update = update_for_kind(kind)?;
+            assert!(
+                update.has_kind(kind),
+                "missing has_kind mapping for {kind:?}"
+            );
+            assert!(
+                update.kinds().contains(&kind),
+                "missing kinds mapping for {kind:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_update_kind_matrix_stays_in_sync() -> std::result::Result<(), Box<dyn StdError>> {
+        let update = update_for_kind(UpdateKind::Unknown)?;
+        assert_eq!(update.kind(), UpdateKind::Unknown);
+        assert!(update.has_kind(UpdateKind::Unknown));
+        assert_eq!(update.kinds(), vec![UpdateKind::Unknown]);
         Ok(())
     }
 }

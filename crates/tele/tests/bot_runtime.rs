@@ -545,6 +545,60 @@ async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn router_distinguishes_incoming_and_any_message_kind() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let incoming_text_hits = Arc::new(AtomicUsize::new(0));
+    let any_text_hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+
+    {
+        let incoming_text_hits = Arc::clone(&incoming_text_hits);
+        router.on_message_kind(
+            MessageKind::Text,
+            move |_context: BotContext, _update: Update| {
+                let incoming_text_hits = Arc::clone(&incoming_text_hits);
+                async move {
+                    incoming_text_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let any_text_hits = Arc::clone(&any_text_hits);
+        router.on_any_message_kind(
+            MessageKind::Text,
+            move |_context: BotContext, _update: Update| {
+                let any_text_hits = Arc::clone(&any_text_hits);
+                async move {
+                    any_text_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let maybe_callback = parse_update(callback_update(322, 1, "btn-1"));
+    assert!(maybe_callback.is_some());
+    let Some(callback_update) = maybe_callback else {
+        return Ok(());
+    };
+
+    assert!(
+        router
+            .dispatch(BotContext::new(client), callback_update)
+            .await?
+    );
+    assert_eq!(incoming_text_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(any_text_hits.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn web_app_typed_builders_serialize() -> Result<(), DynError> {
     let article_result =
         InlineQueryResult::article("article-1", "Article Title", "Article Message Text")?;
@@ -1721,6 +1775,54 @@ async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), 
     assert!(captured.contains(&EngineEvent::DispatchStarted { update_id: 4302 }));
     assert!(captured.contains(&EngineEvent::DispatchCompleted {
         outcome: DispatchOutcome::Handled { update_id: 4302 }
+    }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut router = Router::new();
+    router.on_message(|_context: BotContext, _update: Update| async move { Ok(()) });
+
+    let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
+    let (sink, source) = channel_source(2);
+    let mut engine = BotEngine::new(client, source, router).on_event({
+        let events = Arc::clone(&events);
+        move |event| {
+            if let Ok(mut guard) = events.lock() {
+                guard.push(event.clone());
+            }
+        }
+    });
+
+    let maybe_update = parse_update(json!({
+        "update_id": 4303,
+        "message": {
+            "message_id": 4303,
+            "date": 1700004303,
+            "chat": {"id": 1, "type": "private"},
+            "sticker": {"file_id": "s-4303"}
+        }
+    }));
+    assert!(maybe_update.is_some());
+    let Some(update) = maybe_update else {
+        return Ok(());
+    };
+
+    sink.send(update).await?;
+    let outcomes = engine.poll_once().await?;
+    assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 4303 }]);
+
+    let captured = events.lock().map_err(|error| error.to_string())?;
+    assert!(captured.contains(&EngineEvent::UnknownKindsDetected {
+        update_id: 4303,
+        update_kind: UpdateKind::Message,
+        message_kind: Some(MessageKind::Unknown),
     }));
 
     Ok(())

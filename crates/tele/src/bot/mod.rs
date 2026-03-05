@@ -63,6 +63,11 @@ pub enum EngineEvent {
     DispatchStarted {
         update_id: i64,
     },
+    UnknownKindsDetected {
+        update_id: i64,
+        update_kind: UpdateKind,
+        message_kind: Option<MessageKind>,
+    },
     DispatchCompleted {
         outcome: DispatchOutcome,
     },
@@ -721,7 +726,17 @@ impl Router {
         })
     }
 
+    /// Routes only incoming `update.message` updates.
     pub fn on_message<H, Fut>(&mut self, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.on_incoming_message(handler)
+    }
+
+    /// Routes only incoming `update.message` updates.
+    pub fn on_incoming_message<H, Fut>(&mut self, handler: H) -> &mut Self
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
@@ -729,8 +744,49 @@ impl Router {
         self.route(|update| update.message.is_some(), handler)
     }
 
-    /// Routes updates whose extracted message contains the given message kind.
+    /// Routes any update variant that contains a message-like payload.
+    ///
+    /// This includes `message`, `edited_message`, `channel_post`,
+    /// `edited_channel_post`, and `callback_query.message`.
+    pub fn on_any_message<H, Fut>(&mut self, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route(|update| extract_message(update).is_some(), handler)
+    }
+
+    /// Routes incoming `update.message` by message kind.
     pub fn on_message_kind<H, Fut>(&mut self, kind: MessageKind, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.on_incoming_message_kind(kind, handler)
+    }
+
+    /// Routes incoming `update.message` by message kind.
+    pub fn on_incoming_message_kind<H, Fut>(&mut self, kind: MessageKind, handler: H) -> &mut Self
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route(
+            move |update| {
+                update
+                    .message
+                    .as_ref()
+                    .is_some_and(|message| message.has_kind(kind))
+            },
+            handler,
+        )
+    }
+
+    /// Routes any extracted message-like payload by message kind.
+    ///
+    /// This includes `message`, `edited_message`, `channel_post`,
+    /// `edited_channel_post`, and `callback_query.message`.
+    pub fn on_any_message_kind<H, Fut>(&mut self, kind: MessageKind, handler: H) -> &mut Self
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
@@ -3074,6 +3130,7 @@ where
 
         for update in updates {
             let update_id = update.update_id;
+            self.notify_unknown_kinds(&update);
             let context = BotContext::new(self.client.clone());
             self.notify_event(EngineEvent::DispatchStarted { update_id });
             match self.router.dispatch(context, update).await {
@@ -3116,6 +3173,7 @@ where
 
         for update in updates {
             let update_id = update.update_id;
+            self.notify_unknown_kinds(&update);
             self.notify_event(EngineEvent::DispatchStarted { update_id });
 
             let permit = semaphore
@@ -3210,6 +3268,20 @@ where
         if let Some(hook) = self.on_handler_error.as_ref() {
             hook(update_id, error);
         }
+    }
+
+    fn notify_unknown_kinds(&self, update: &Update) {
+        let update_kind = update.kind();
+        let message_kind = extract_message_kind(update);
+        if update_kind != UpdateKind::Unknown && message_kind != Some(MessageKind::Unknown) {
+            return;
+        }
+
+        self.notify_event(EngineEvent::UnknownKindsDetected {
+            update_id: update.update_id,
+            update_kind,
+            message_kind,
+        });
     }
 
     fn notify_event(&self, event: EngineEvent) {
