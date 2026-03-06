@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(any(feature = "_blocking", test))]
 use std::io::Read;
@@ -16,17 +16,22 @@ use std::io::Read;
 use bytes::Bytes;
 #[cfg(feature = "_async")]
 use futures_core::Stream;
+use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
 use http::{HeaderMap, StatusCode};
+use reqx::advanced::RateLimitPolicy;
+use reqx::prelude::{RedirectPolicy, RetryPolicy, StatusPolicy};
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::Error;
-use crate::client::{RateLimitConfig, RetryConfig};
+use crate::client::{RateLimitConfig, RequestDefaults, RetryConfig};
 use crate::types::common::ResponseParameters;
 use crate::types::upload::UploadFile;
-use crate::util::{body_snippet, redact_token, request_id_from_headers};
+use crate::util::{
+    body_snippet, build_api_path, redact_token, request_id_from_headers, validate_method_name,
+};
 
 static LOCAL_REQUEST_ID_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -158,19 +163,331 @@ pub(crate) fn map_reqx_builder_error(source: reqx::Error) -> Error {
     }
 }
 
-pub(crate) fn to_retry_policy(retry: &RetryConfig) -> reqx::RetryPolicy {
-    reqx::RetryPolicy::standard()
+pub(crate) fn to_retry_policy(retry: &RetryConfig) -> RetryPolicy {
+    RetryPolicy::standard()
         .max_attempts(retry.max_attempts)
         .base_backoff(retry.base_backoff)
         .max_backoff(retry.max_backoff)
         .jitter_ratio(retry.jitter_ratio)
 }
 
-pub(crate) fn to_rate_limit_policy(config: &RateLimitConfig) -> reqx::RateLimitPolicy {
-    reqx::RateLimitPolicy::standard()
+pub(crate) fn to_rate_limit_policy(config: &RateLimitConfig) -> RateLimitPolicy {
+    RateLimitPolicy::standard()
         .requests_per_second(config.requests_per_second)
         .burst(config.burst)
         .max_throttle_delay(config.max_throttle_delay)
+}
+
+trait TransportClientBuilder: Sized {
+    type Client;
+
+    fn request_timeout(self, timeout: Duration) -> Self;
+    fn connect_timeout(self, timeout: Duration) -> Self;
+    fn max_response_body_bytes(self, max_response_body_bytes: usize) -> Self;
+    fn default_status_policy(self, default_status_policy: StatusPolicy) -> Self;
+    fn redirect_policy(self, redirect_policy: RedirectPolicy) -> Self;
+    fn retry_policy(self, retry_policy: RetryPolicy) -> Self;
+    fn client_name(self, client_name: &'static str) -> Self;
+    fn total_timeout(self, total_timeout: Duration) -> Self;
+    fn max_in_flight(self, max_in_flight: usize) -> Self;
+    fn max_in_flight_per_host(self, max_in_flight_per_host: usize) -> Self;
+    fn global_rate_limit_policy(self, global_rate_limit_policy: RateLimitPolicy) -> Self;
+    fn per_host_rate_limit_policy(self, per_host_rate_limit_policy: RateLimitPolicy) -> Self;
+    fn allow_non_idempotent_retries(self, enabled: bool) -> Self;
+    fn http_proxy(self, proxy_uri: http::Uri) -> Self;
+    fn proxy_authorization(self, proxy_authorization: HeaderValue) -> Self;
+    fn try_add_no_proxy(self, rule: &str) -> reqx::Result<Self>;
+    fn try_default_header(self, name: &str, value: &str) -> reqx::Result<Self>;
+    fn build(self) -> reqx::Result<Self::Client>;
+}
+
+#[cfg(feature = "_async")]
+impl TransportClientBuilder for reqx::ClientBuilder {
+    type Client = reqx::Client;
+
+    fn request_timeout(self, timeout: Duration) -> Self {
+        reqx::ClientBuilder::request_timeout(self, timeout)
+    }
+
+    fn connect_timeout(self, timeout: Duration) -> Self {
+        reqx::ClientBuilder::connect_timeout(self, timeout)
+    }
+
+    fn max_response_body_bytes(self, max_response_body_bytes: usize) -> Self {
+        reqx::ClientBuilder::max_response_body_bytes(self, max_response_body_bytes)
+    }
+
+    fn default_status_policy(self, default_status_policy: StatusPolicy) -> Self {
+        reqx::ClientBuilder::default_status_policy(self, default_status_policy)
+    }
+
+    fn redirect_policy(self, redirect_policy: RedirectPolicy) -> Self {
+        reqx::ClientBuilder::redirect_policy(self, redirect_policy)
+    }
+
+    fn retry_policy(self, retry_policy: RetryPolicy) -> Self {
+        reqx::ClientBuilder::retry_policy(self, retry_policy)
+    }
+
+    fn client_name(self, client_name: &'static str) -> Self {
+        reqx::ClientBuilder::client_name(self, client_name)
+    }
+
+    fn total_timeout(self, total_timeout: Duration) -> Self {
+        reqx::ClientBuilder::total_timeout(self, total_timeout)
+    }
+
+    fn max_in_flight(self, max_in_flight: usize) -> Self {
+        reqx::ClientBuilder::max_in_flight(self, max_in_flight)
+    }
+
+    fn max_in_flight_per_host(self, max_in_flight_per_host: usize) -> Self {
+        reqx::ClientBuilder::max_in_flight_per_host(self, max_in_flight_per_host)
+    }
+
+    fn global_rate_limit_policy(self, global_rate_limit_policy: RateLimitPolicy) -> Self {
+        reqx::ClientBuilder::global_rate_limit_policy(self, global_rate_limit_policy)
+    }
+
+    fn per_host_rate_limit_policy(self, per_host_rate_limit_policy: RateLimitPolicy) -> Self {
+        reqx::ClientBuilder::per_host_rate_limit_policy(self, per_host_rate_limit_policy)
+    }
+
+    fn allow_non_idempotent_retries(self, enabled: bool) -> Self {
+        reqx::ClientBuilder::allow_non_idempotent_retries(self, enabled)
+    }
+
+    fn http_proxy(self, proxy_uri: http::Uri) -> Self {
+        reqx::ClientBuilder::http_proxy(self, proxy_uri)
+    }
+
+    fn proxy_authorization(self, proxy_authorization: HeaderValue) -> Self {
+        reqx::ClientBuilder::proxy_authorization(self, proxy_authorization)
+    }
+
+    fn try_add_no_proxy(self, rule: &str) -> reqx::Result<Self> {
+        reqx::ClientBuilder::try_add_no_proxy(self, rule)
+    }
+
+    fn try_default_header(self, name: &str, value: &str) -> reqx::Result<Self> {
+        reqx::ClientBuilder::try_default_header(self, name, value)
+    }
+
+    fn build(self) -> reqx::Result<Self::Client> {
+        reqx::ClientBuilder::build(self)
+    }
+}
+
+#[cfg(feature = "_blocking")]
+impl TransportClientBuilder for reqx::blocking::ClientBuilder {
+    type Client = reqx::blocking::Client;
+
+    fn request_timeout(self, timeout: Duration) -> Self {
+        reqx::blocking::ClientBuilder::request_timeout(self, timeout)
+    }
+
+    fn connect_timeout(self, timeout: Duration) -> Self {
+        reqx::blocking::ClientBuilder::connect_timeout(self, timeout)
+    }
+
+    fn max_response_body_bytes(self, max_response_body_bytes: usize) -> Self {
+        reqx::blocking::ClientBuilder::max_response_body_bytes(self, max_response_body_bytes)
+    }
+
+    fn default_status_policy(self, default_status_policy: StatusPolicy) -> Self {
+        reqx::blocking::ClientBuilder::default_status_policy(self, default_status_policy)
+    }
+
+    fn redirect_policy(self, redirect_policy: RedirectPolicy) -> Self {
+        reqx::blocking::ClientBuilder::redirect_policy(self, redirect_policy)
+    }
+
+    fn retry_policy(self, retry_policy: RetryPolicy) -> Self {
+        reqx::blocking::ClientBuilder::retry_policy(self, retry_policy)
+    }
+
+    fn client_name(self, client_name: &'static str) -> Self {
+        reqx::blocking::ClientBuilder::client_name(self, client_name)
+    }
+
+    fn total_timeout(self, total_timeout: Duration) -> Self {
+        reqx::blocking::ClientBuilder::total_timeout(self, total_timeout)
+    }
+
+    fn max_in_flight(self, max_in_flight: usize) -> Self {
+        reqx::blocking::ClientBuilder::max_in_flight(self, max_in_flight)
+    }
+
+    fn max_in_flight_per_host(self, max_in_flight_per_host: usize) -> Self {
+        reqx::blocking::ClientBuilder::max_in_flight_per_host(self, max_in_flight_per_host)
+    }
+
+    fn global_rate_limit_policy(self, global_rate_limit_policy: RateLimitPolicy) -> Self {
+        reqx::blocking::ClientBuilder::global_rate_limit_policy(self, global_rate_limit_policy)
+    }
+
+    fn per_host_rate_limit_policy(self, per_host_rate_limit_policy: RateLimitPolicy) -> Self {
+        reqx::blocking::ClientBuilder::per_host_rate_limit_policy(self, per_host_rate_limit_policy)
+    }
+
+    fn allow_non_idempotent_retries(self, enabled: bool) -> Self {
+        reqx::blocking::ClientBuilder::allow_non_idempotent_retries(self, enabled)
+    }
+
+    fn http_proxy(self, proxy_uri: http::Uri) -> Self {
+        reqx::blocking::ClientBuilder::http_proxy(self, proxy_uri)
+    }
+
+    fn proxy_authorization(self, proxy_authorization: HeaderValue) -> Self {
+        reqx::blocking::ClientBuilder::proxy_authorization(self, proxy_authorization)
+    }
+
+    fn try_add_no_proxy(self, rule: &str) -> reqx::Result<Self> {
+        reqx::blocking::ClientBuilder::try_add_no_proxy(self, rule)
+    }
+
+    fn try_default_header(self, name: &str, value: &str) -> reqx::Result<Self> {
+        reqx::blocking::ClientBuilder::try_default_header(self, name, value)
+    }
+
+    fn build(self) -> reqx::Result<Self::Client> {
+        reqx::blocking::ClientBuilder::build(self)
+    }
+}
+
+fn build_transport_client<B>(
+    builder: B,
+    defaults: &RequestDefaults,
+    default_headers: &[(String, String)],
+) -> Result<B::Client, Error>
+where
+    B: TransportClientBuilder,
+{
+    let mut builder = builder
+        .request_timeout(defaults.request_timeout)
+        .connect_timeout(defaults.connect_timeout)
+        .max_response_body_bytes(defaults.max_response_body_bytes)
+        .default_status_policy(StatusPolicy::Response)
+        .redirect_policy(RedirectPolicy::none())
+        .retry_policy(to_retry_policy(&defaults.retry))
+        .client_name("tele");
+
+    if let Some(total_timeout) = defaults.total_timeout {
+        builder = builder.total_timeout(total_timeout);
+    }
+
+    if let Some(max_in_flight) = defaults.max_in_flight {
+        builder = builder.max_in_flight(max_in_flight);
+    }
+
+    if let Some(max_in_flight_per_host) = defaults.max_in_flight_per_host {
+        builder = builder.max_in_flight_per_host(max_in_flight_per_host);
+    }
+
+    if let Some(global_rate_limit) = defaults.global_rate_limit.as_ref() {
+        builder = builder.global_rate_limit_policy(to_rate_limit_policy(global_rate_limit));
+    }
+
+    if let Some(per_host_rate_limit) = defaults.per_host_rate_limit.as_ref() {
+        builder = builder.per_host_rate_limit_policy(to_rate_limit_policy(per_host_rate_limit));
+    }
+
+    if defaults.retry.allow_non_idempotent_retries {
+        builder = builder.allow_non_idempotent_retries(true);
+    }
+
+    if let Some(http_proxy) = defaults.http_proxy.clone() {
+        builder = builder.http_proxy(http_proxy);
+    }
+
+    if let Some(proxy_authorization) = defaults.proxy_authorization.clone() {
+        builder = builder.proxy_authorization(proxy_authorization);
+    }
+
+    for rule in &defaults.no_proxy_rules {
+        builder = builder
+            .try_add_no_proxy(rule)
+            .map_err(map_reqx_builder_error)?;
+    }
+
+    for (name, value) in default_headers {
+        builder = builder
+            .try_default_header(name, value)
+            .map_err(map_reqx_builder_error)?;
+    }
+
+    builder.build().map_err(map_reqx_builder_error)
+}
+
+pub(crate) struct PreparedTelegramCall<'a> {
+    method: &'a str,
+    token: &'a str,
+    path: String,
+    fallback_request_id: String,
+}
+
+impl<'a> PreparedTelegramCall<'a> {
+    pub(crate) fn new(method: &'a str, token: &'a str) -> Result<Self, Error> {
+        validate_method_name(method)?;
+
+        Ok(Self {
+            method,
+            token,
+            path: build_api_path(token, method),
+            fallback_request_id: local_transport_request_id(method),
+        })
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) fn map_transport_error(&self, source: reqx::Error) -> Error {
+        map_reqx_error(
+            self.method,
+            self.token,
+            source,
+            Some(self.fallback_request_id.clone()),
+        )
+    }
+
+    pub(crate) fn parse_response<R>(
+        &self,
+        response: reqx::Response,
+        defaults: &RequestDefaults,
+    ) -> Result<R, Error>
+    where
+        R: DeserializeOwned,
+    {
+        parse_telegram_response(
+            self.method,
+            response.status(),
+            response.headers(),
+            response.body(),
+            defaults.capture_body_snippet,
+            defaults.body_snippet_limit,
+        )
+    }
+}
+
+pub(crate) fn multipart_header_values(
+    payload: &MultipartPayload,
+) -> Result<(HeaderValue, HeaderValue), Error> {
+    let content_type = HeaderValue::from_str(payload.content_type()).map_err(|source| {
+        Error::InvalidHeaderValue {
+            name: CONTENT_TYPE.as_str().to_owned(),
+            source,
+        }
+    })?;
+    let content_length =
+        HeaderValue::from_str(&payload.content_length().to_string()).map_err(|source| {
+            Error::InvalidHeaderValue {
+                name: CONTENT_LENGTH.as_str().to_owned(),
+                source,
+            }
+        })?;
+
+    Ok((content_type, content_length))
 }
 
 pub(crate) fn serialize_multipart_fields<P>(
