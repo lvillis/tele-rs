@@ -21,14 +21,16 @@ use tele::bot::{
     OutboxConfig, PollingConfig, Router, StateTransition, TextInput, UpdateExt, UpdateExtractor,
     WebAppInput, WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition,
     channel_source, clear_chat_state, extract_callback_data, extract_callback_json,
-    extract_command, extract_command_args, extract_command_data, extract_message, extract_text,
-    extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
-    parse_command_text, parse_command_text_for_bot, save_chat_state, tokenize_command_args,
+    extract_command, extract_command_args, extract_command_data, extract_compact_callback,
+    extract_message, extract_text, extract_typed_callback, extract_web_app_data,
+    extract_write_access_allowed, load_chat_state, parse_command_text, parse_command_text_for_bot,
+    save_chat_state, tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
-    InlineKeyboardButton, InlineQueryResult, InlineQueryResultsButton, KeyboardButton, MenuButton,
-    MenuButtonWebApp, WebAppInfo,
+    CompactCallbackDecoder, CompactCallbackEncoder, CompactCallbackPayload, InlineKeyboardButton,
+    InlineQueryResult, InlineQueryResultsButton, KeyboardButton, MenuButton, MenuButtonWebApp,
+    WebAppInfo,
 };
 use tele::types::update::Update;
 use tele::types::{ChatMember, ChatMemberPermission, MessageKind, UpdateKind};
@@ -41,6 +43,24 @@ type ServerHandle = thread::JoinHandle<Result<(), String>>;
 struct DemoCallbackPayload {
     action: String,
     target: i64,
+}
+
+impl CompactCallbackPayload for DemoCallbackPayload {
+    fn encode_compact(&self, encoder: &mut CompactCallbackEncoder) -> tele::Result<()> {
+        encoder
+            .tag("demo")?
+            .push(self.action.as_str())?
+            .push_display(self.target)?;
+        Ok(())
+    }
+
+    fn decode_compact(decoder: &mut CompactCallbackDecoder) -> tele::Result<Self> {
+        decoder.expect_tag("demo")?;
+        Ok(Self {
+            action: decoder.next_string("action")?,
+            target: decoder.next_parse("target")?,
+        })
+    }
 }
 
 fn accept_with_timeout(
@@ -655,6 +675,65 @@ async fn typed_callback_button_and_route_round_trip() -> Result<(), DynError> {
                 }
             },
         );
+    }
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn compact_callback_button_and_route_round_trip() -> Result<(), DynError> {
+    let payload = DemoCallbackPayload {
+        action: "confirm".to_owned(),
+        target: 7,
+    };
+    let json_button = InlineKeyboardButton::typed_callback("Confirm", &payload)?;
+    let compact_button = InlineKeyboardButton::compact_callback("Confirm", &payload)?;
+    assert!(
+        compact_button.callback_data().unwrap_or_default().len()
+            < json_button.callback_data().unwrap_or_default().len()
+    );
+    assert_eq!(
+        compact_button.decode_compact_callback::<DemoCallbackPayload>()?,
+        Some(payload.clone())
+    );
+
+    let Some(update) = parse_update(callback_update(
+        206,
+        1,
+        compact_button.callback_data().unwrap_or_default(),
+    )) else {
+        return Ok(());
+    };
+    assert_eq!(
+        extract_compact_callback::<DemoCallbackPayload>(&update),
+        Some(payload.clone())
+    );
+    assert_eq!(
+        update.compact_callback::<DemoCallbackPayload>(),
+        Some(payload.clone())
+    );
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        let expected = payload.clone();
+        router
+            .compact_callback_route::<DemoCallbackPayload>()
+            .handle(move |_context: BotContext, _update: Update, callback| {
+                let hits = Arc::clone(&hits);
+                let expected = expected.clone();
+                async move {
+                    assert_eq!(callback.payload, expected);
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     assert!(router.dispatch(BotContext::new(client), update).await?);
@@ -1601,7 +1680,7 @@ async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
     let mut router = Router::new();
     router
         .message_route()
-        .handle_fallible(|_context: BotContext, _update: Update| async move {
+        .handle(|_context: BotContext, _update: Update| async move {
             Err(HandlerError::user("invalid input"))
         });
 
@@ -1994,14 +2073,14 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
             fallback_message: "temporary failure".to_owned(),
         },
         |_context: BotContext, _update: Update| async move {
-            Err(Error::Transport {
+            Err(HandlerError::internal(Error::Transport {
                 method: "sendMessage".to_owned(),
                 status: Some(502),
                 request_id: None,
                 retry_after: None,
                 request_path: None,
                 message: "upstream unavailable".into(),
-            })
+            }))
         },
     );
 

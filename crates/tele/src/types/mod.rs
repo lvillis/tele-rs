@@ -60,12 +60,14 @@ pub use sticker::{
     StickerType, UploadStickerFileRequest,
 };
 pub use telegram::{
-    AcceptedGiftTypes, CallbackPayload, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup,
-    InlineQueryResult, InlineQueryResultArticle, InlineQueryResultsButton, InputChecklist,
-    InputPaidMedia, InputStoryContent, InputTextMessageContent, KeyboardButton, LinkPreviewOptions,
-    MenuButton, MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType,
-    ReplyKeyboardMarkup, ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea,
-    SuggestedPostParameters, WebAppData, WebAppInfo,
+    AcceptedGiftTypes, CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
+    CompactCallbackDecoder, CompactCallbackEncoder, CompactCallbackPayload, ForceReply,
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultArticle,
+    InlineQueryResultsButton, InputChecklist, InputPaidMedia, InputStoryContent,
+    InputTextMessageContent, JsonCallbackCodec, KeyboardButton, LinkPreviewOptions, MenuButton,
+    MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType, ReplyKeyboardMarkup,
+    ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea, SuggestedPostParameters,
+    WebAppData, WebAppInfo,
 };
 pub use update::{
     AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChosenInlineResult,

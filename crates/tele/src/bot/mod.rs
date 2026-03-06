@@ -29,7 +29,10 @@ use crate::types::common::{ChatId, UserId};
 use crate::types::message::{
     Chat, Message, MessageKind, SendMessageRequest, SentWebAppMessage, WriteAccessAllowed,
 };
-use crate::types::telegram::{CallbackPayload, InlineQueryResult, WebAppData};
+use crate::types::telegram::{
+    CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
+    CompactCallbackPayload, InlineQueryResult, WebAppData,
+};
 use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};

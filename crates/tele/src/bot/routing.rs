@@ -206,25 +206,51 @@ impl CallbackInput {
     }
 }
 
-/// Strongly-typed callback extractor payload with both decoded payload and raw data.
+/// Codec-aware callback extractor payload with both decoded payload and raw data.
 #[derive(Clone, Debug)]
-pub struct TypedCallbackInput<T> {
+pub struct CodedCallbackInput<T, C = CallbackPayloadCodec> {
     pub payload: T,
     pub raw: String,
+    _codec: std::marker::PhantomData<C>,
 }
 
-impl<T> UpdateExtractor for TypedCallbackInput<T>
+impl<T, C> CodedCallbackInput<T, C>
 where
-    T: CallbackPayload,
+    C: CallbackCodec<T>,
+{
+    pub fn from_raw(raw: impl Into<String>) -> Result<Self> {
+        let raw = raw.into();
+        let payload = C::decode_callback_data(raw.as_str())?;
+        Ok(Self {
+            payload,
+            raw,
+            _codec: std::marker::PhantomData,
+        })
+    }
+}
+
+/// Default typed callback extractor payload using [`CallbackPayload`].
+pub type TypedCallbackInput<T> = CodedCallbackInput<T, CallbackPayloadCodec>;
+
+/// Compact callback extractor payload using [`CompactCallbackCodec`].
+pub type CompactCallbackInput<T> = CodedCallbackInput<T, CompactCallbackCodec>;
+
+impl<T, C> UpdateExtractor for CodedCallbackInput<T, C>
+where
+    C: CallbackCodec<T>,
 {
     fn extract(update: &Update) -> Option<Self> {
         let raw = extract_callback_data(update)?.to_owned();
-        let payload = T::decode_callback_data(raw.as_str()).ok()?;
-        Some(Self { payload, raw })
+        let payload = C::decode_callback_data(raw.as_str()).ok()?;
+        Some(Self {
+            payload,
+            raw,
+            _codec: std::marker::PhantomData,
+        })
     }
 
     fn describe() -> &'static str {
-        "typed callback payload"
+        "callback payload"
     }
 }
 
@@ -392,6 +418,36 @@ async fn resolve_error_with_policy(
             let message = user_message_for_error(&error, &fallback_message);
             let _ = context.reply_text(&update, message).await?;
             Ok(())
+        }
+    }
+}
+
+async fn resolve_handler_result(
+    context: BotContext,
+    update: Update,
+    outcome: HandlerResult,
+) -> Result<()> {
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(error) => context.resolve_handler_error(&update, error).await,
+    }
+}
+
+async fn resolve_handler_result_with_policy(
+    context: BotContext,
+    update: Update,
+    policy: ErrorPolicy,
+    outcome: HandlerResult,
+) -> Result<()> {
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(HandlerError::UserFacing { message }) => {
+            context
+                .resolve_handler_error(&update, HandlerError::user(message))
+                .await
+        }
+        Err(HandlerError::Internal(error)) => {
+            resolve_error_with_policy(context, update, policy, error).await
         }
     }
 }
@@ -1265,11 +1321,26 @@ impl Router {
         TypedCommandRouteBuilder::new(self)
     }
 
+    pub fn callback_route_with_codec<T, C>(&mut self) -> CallbackRouteBuilder<'_, T, C>
+    where
+        T: Send + Sync + 'static,
+        C: CallbackCodec<T>,
+    {
+        CallbackRouteBuilder::new(self)
+    }
+
     pub fn typed_callback_route<T>(&mut self) -> TypedCallbackRouteBuilder<'_, T>
     where
         T: CallbackPayload + Send + Sync + 'static,
     {
-        TypedCallbackRouteBuilder::new(self)
+        self.callback_route_with_codec::<T, CallbackPayloadCodec>()
+    }
+
+    pub fn compact_callback_route<T>(&mut self) -> CompactCallbackRouteBuilder<'_, T>
+    where
+        T: CompactCallbackPayload + Send + Sync + 'static,
+    {
+        self.callback_route_with_codec::<T, CompactCallbackCodec>()
     }
 
     fn command_target_snapshot(&self) -> CommandTargetConfig {
@@ -1452,7 +1523,7 @@ impl Router {
     where
         P: Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static,
         H: Fn(BotContext, Update, DispatchState) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let handler = Arc::new(handler);
         self.route_with_state(predicate, move |context, update, state| {
@@ -1461,20 +1532,14 @@ impl Router {
             let update_for_policy = update.clone();
             let policy = policy.clone();
             async move {
-                match handler(context, update, state).await {
-                    Ok(()) => Ok(()),
-                    Err(error) => match policy {
-                        ErrorPolicy::Propagate => Err(error),
-                        ErrorPolicy::Ignore => Ok(()),
-                        ErrorPolicy::ReplyUser { fallback_message } => {
-                            let message = user_message_for_error(&error, &fallback_message);
-                            let _ = context_for_policy
-                                .reply_text(&update_for_policy, message)
-                                .await?;
-                            Ok(())
-                        }
-                    },
-                }
+                let outcome = handler(context, update, state).await;
+                resolve_handler_result_with_policy(
+                    context_for_policy,
+                    update_for_policy,
+                    policy,
+                    outcome,
+                )
+                .await
             }
         })
     }
@@ -1491,14 +1556,8 @@ impl Router {
             let context_for_error = context.clone();
             let update_for_error = update.clone();
             async move {
-                match handler(context, update, state).await {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        context_for_error
-                            .resolve_handler_error(&update_for_error, error)
-                            .await
-                    }
-                }
+                let outcome = handler(context, update, state).await;
+                resolve_handler_result(context_for_error, update_for_error, outcome).await
             }
         })
     }
@@ -1507,9 +1566,9 @@ impl Router {
     where
         P: Fn(&Update) -> bool + Send + Sync + 'static,
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
-        self.route_with_state(
+        self.route_fallible_with_state(
             move |update, _state| predicate(update),
             move |context, update, _state| handler(context, update),
         )
@@ -1525,7 +1584,7 @@ impl Router {
     where
         P: Fn(&Update) -> bool + Send + Sync + 'static,
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         self.route_with_policy_state(
             move |update, _state| predicate(update),
@@ -1541,18 +1600,24 @@ impl Router {
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
-        self.route_fallible_with_state(
-            move |update, _state| predicate(update),
-            move |context, update, _state| handler(context, update),
-        )
+        self.route(predicate, handler)
     }
 
     pub fn fallback<H, Fut>(&mut self, handler: H) -> &mut Self
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
-        self.fallback = Some(to_handler_fn(handler));
+        let handler = Arc::new(handler);
+        self.fallback = Some(Arc::new(move |context: BotContext, update: Update| {
+            let handler = Arc::clone(&handler);
+            let context_for_error = context.clone();
+            let update_for_error = update.clone();
+            Box::pin(async move {
+                let outcome = handler(context, update).await;
+                resolve_handler_result(context_for_error, update_for_error, outcome).await
+            })
+        }));
         self
     }
 
@@ -1640,27 +1705,6 @@ impl<'a> UpdateRouteBuilder<'a> {
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
-    {
-        let filter = Arc::clone(&self.filter);
-        let guards = Arc::new(self.config.guards);
-        let handler = Arc::new(handler);
-        self.router.route_fallible_with_state(
-            move |update, state| filter(update, state),
-            move |context, update, _state| {
-                let guards = Arc::clone(&guards);
-                let handler = Arc::clone(&handler);
-                async move {
-                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
-                    handler(context, update).await.map_err(HandlerError::from)
-                }
-            },
-        )
-    }
-
-    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
-    where
-        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let filter = Arc::clone(&self.filter);
@@ -1679,10 +1723,18 @@ impl<'a> UpdateRouteBuilder<'a> {
         )
     }
 
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
     pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let filter = Arc::clone(&self.filter);
         let guards = Arc::new(self.config.guards);
@@ -1701,18 +1753,14 @@ impl<'a> UpdateRouteBuilder<'a> {
                     }
                     let context_for_policy = context.clone();
                     let update_for_policy = update.clone();
-                    match handler(context, update).await {
-                        Ok(()) => Ok(()),
-                        Err(error) => {
-                            resolve_error_with_policy(
-                                context_for_policy,
-                                update_for_policy,
-                                policy,
-                                error,
-                            )
-                            .await
-                        }
-                    }
+                    let outcome = handler(context, update).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -1778,45 +1826,6 @@ where
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, E) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
-    {
-        let filters = Arc::new(self.filters);
-        let extracted_guards = Arc::new(self.extracted_guards);
-        let guards = Arc::new(self.config.guards);
-        let handler = Arc::new(handler);
-        self.router.route_fallible_with_state(
-            {
-                let filters = Arc::clone(&filters);
-                move |update, _state| extracted_route_matches::<E>(update, filters.as_ref())
-            },
-            move |context, update, _state| {
-                let filters = Arc::clone(&filters);
-                let extracted_guards = Arc::clone(&extracted_guards);
-                let guards = Arc::clone(&guards);
-                let handler = Arc::clone(&handler);
-                async move {
-                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
-                    let Some(extracted) = E::extract(&update) else {
-                        return Err(HandlerError::internal(invalid_request(format!(
-                            "update does not contain {}",
-                            E::describe()
-                        ))));
-                    };
-                    if !filters.iter().all(|filter| filter(&extracted, &update)) {
-                        return Ok(());
-                    }
-                    run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)?;
-                    handler(context, update, extracted)
-                        .await
-                        .map_err(HandlerError::from)
-                }
-            },
-        )
-    }
-
-    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
-    where
-        H: Fn(BotContext, Update, E) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let filters = Arc::new(self.filters);
@@ -1851,10 +1860,18 @@ where
         )
     }
 
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, E) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
     pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, E) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let filters = Arc::new(self.filters);
         let extracted_guards = Arc::new(self.extracted_guards);
@@ -1893,18 +1910,14 @@ where
                     }
                     let context_for_policy = context.clone();
                     let update_for_policy = update.clone();
-                    match handler(context, update, extracted).await {
-                        Ok(()) => Ok(()),
-                        Err(error) => {
-                            resolve_error_with_policy(
-                                context_for_policy,
-                                update_for_policy,
-                                policy,
-                                error,
-                            )
-                            .await
-                        }
-                    }
+                    let outcome = handler(context, update, extracted).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -1931,7 +1944,7 @@ where
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let filters = Arc::new(self.filters);
         let extracted_guards = Arc::new(self.extracted_guards);
@@ -1971,9 +1984,82 @@ where
                     let Some(mapped) = mapper(extracted, &update) else {
                         return Ok(());
                     };
-                    handler(context, update, mapped)
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, mapped).await
+                }
+            },
+        )
+    }
+
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
+    pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let filters = Arc::new(self.filters);
+        let extracted_guards = Arc::new(self.extracted_guards);
+        let guards = Arc::new(self.config.guards);
+        let mapper = Arc::clone(&self.mapper);
+        let handler = Arc::new(handler);
+        self.router.route_with_state(
+            {
+                let filters = Arc::clone(&filters);
+                let mapper = Arc::clone(&mapper);
+                move |update, _state| {
+                    let Some(extracted) = E::extract(update) else {
+                        return false;
+                    };
+                    filters.iter().all(|filter| filter(&extracted, update))
+                        && mapper(extracted, update).is_some()
+                }
+            },
+            move |context, update, _state| {
+                let filters = Arc::clone(&filters);
+                let extracted_guards = Arc::clone(&extracted_guards);
+                let guards = Arc::clone(&guards);
+                let mapper = Arc::clone(&mapper);
+                let handler = Arc::clone(&handler);
+                let policy = policy.clone();
+                async move {
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(extracted) = E::extract(&update) else {
+                        return Err(invalid_request(format!(
+                            "update does not contain {}",
+                            E::describe()
+                        )));
+                    };
+                    if !filters.iter().all(|filter| filter(&extracted, &update)) {
+                        return Ok(());
+                    }
+                    if let Err(error) =
+                        run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(mapped) = mapper(extracted, &update) else {
+                        return Ok(());
+                    };
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome = handler(context, update, mapped).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -1999,7 +2085,7 @@ impl<'a> CommandInputRouteBuilder<'a> {
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, CommandData) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
@@ -2020,9 +2106,57 @@ impl<'a> CommandInputRouteBuilder<'a> {
                             "update does not contain a valid command",
                         )));
                     };
-                    handler(context, update, command)
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, command).await
+                }
+            },
+        )
+    }
+
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, CommandData) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
+    pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, CommandData) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.has_command_routes = true;
+        self.router.route_with_state(
+            move |update, state| {
+                extract_command_data_for_bot(update, state.command_target.as_deref()).is_some()
+            },
+            move |context, update, state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                let policy = policy.clone();
+                async move {
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(command) =
+                        extract_command_data_for_bot(&update, state.command_target.as_deref())
+                    else {
+                        return Err(invalid_request("update does not contain a valid command"));
+                    };
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome = handler(context, update, command).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -2063,31 +2197,6 @@ impl<'a> CommandRouteBuilder<'a> {
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
-    {
-        let expected = self.command;
-        let guards = Arc::new(self.config.guards);
-        let handler = Arc::new(handler);
-        self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
-            move |update, state| {
-                extract_command_for_bot(update, state.command_target.as_deref())
-                    .is_some_and(|command| command == expected)
-            },
-            move |context, update, _state| {
-                let guards = Arc::clone(&guards);
-                let handler = Arc::clone(&handler);
-                async move {
-                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
-                    handler(context, update).await.map_err(HandlerError::from)
-                }
-            },
-        )
-    }
-
-    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
-    where
-        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let expected = self.command;
@@ -2110,10 +2219,18 @@ impl<'a> CommandRouteBuilder<'a> {
         )
     }
 
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
     pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let expected = self.command;
         let guards = Arc::new(self.config.guards);
@@ -2136,18 +2253,14 @@ impl<'a> CommandRouteBuilder<'a> {
                     }
                     let context_for_policy = context.clone();
                     let update_for_policy = update.clone();
-                    match handler(context, update).await {
-                        Ok(()) => Ok(()),
-                        Err(error) => {
-                            resolve_error_with_policy(
-                                context_for_policy,
-                                update_for_policy,
-                                policy,
-                                error,
-                            )
-                            .await
-                        }
-                    }
+                    let outcome = handler(context, update).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -2171,7 +2284,7 @@ where
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let expected = self.command;
         let guards = Arc::new(self.config.guards);
@@ -2195,9 +2308,64 @@ where
                         )));
                     };
                     let parsed = T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
-                    handler(context, update, parsed)
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, parsed).await
+                }
+            },
+        )
+    }
+
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
+    pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let expected = self.command;
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.has_command_routes = true;
+        self.router.route_with_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
+                    .is_some_and(|command| command == expected)
+            },
+            move |context, update, state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                let policy = policy.clone();
+                async move {
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(command) =
+                        extract_command_data_for_bot(&update, state.command_target.as_deref())
+                    else {
+                        return Err(invalid_request("update does not contain a valid command"));
+                    };
+                    let parsed = T::parse(command.args_trimmed()).map_err(HandlerError::user);
+                    let parsed = match parsed {
+                        Ok(parsed) => parsed,
+                        Err(error) => return context.resolve_handler_error(&update, error).await,
+                    };
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome = handler(context, update, parsed).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
@@ -2228,7 +2396,7 @@ where
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, C) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
@@ -2249,9 +2417,7 @@ where
                             "update does not contain a valid typed command",
                         )));
                     };
-                    handler(context, update, command)
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, command).await
                 }
             },
         )
@@ -2260,7 +2426,7 @@ where
     pub fn handle_input<H, Fut>(self, handler: H) -> &'a mut Router
     where
         H: Fn(BotContext, Update, TypedCommandInput<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
@@ -2290,12 +2456,18 @@ where
                             "update does not contain a valid command",
                         )));
                     };
-                    handler(context, update, TypedCommandInput { command, raw })
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, TypedCommandInput { command, raw }).await
                 }
             },
         )
+    }
+
+    pub fn handle_input_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, TypedCommandInput<C>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle_input(handler)
     }
 
     pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
@@ -2303,48 +2475,128 @@ where
         H: Fn(BotContext, Update, C) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
+        self.handle(handler)
+    }
+
+    pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, C) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
+        self.router.route_with_state(
             move |update, state| {
                 parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
             },
             move |context, update, state| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
+                let policy = policy.clone();
                 async move {
-                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
                     let Some(command) =
                         parse_typed_command_for_bot::<C>(&update, state.command_target.as_deref())
                     else {
-                        return Err(HandlerError::internal(invalid_request(
+                        return Err(invalid_request(
                             "update does not contain a valid typed command",
-                        )));
+                        ));
                     };
-                    handler(context, update, command).await
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome = handler(context, update, command).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
+                }
+            },
+        )
+    }
+
+    pub fn handle_input_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, TypedCommandInput<C>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.has_command_routes = true;
+        self.router.route_with_state(
+            move |update, state| {
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
+                    && extract_command_data_for_bot(update, state.command_target.as_deref())
+                        .is_some()
+            },
+            move |context, update, state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                let policy = policy.clone();
+                async move {
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(command) =
+                        parse_typed_command_for_bot::<C>(&update, state.command_target.as_deref())
+                    else {
+                        return Err(invalid_request(
+                            "update does not contain a valid typed command",
+                        ));
+                    };
+                    let Some(raw) =
+                        extract_command_data_for_bot(&update, state.command_target.as_deref())
+                    else {
+                        return Err(invalid_request("update does not contain a valid command"));
+                    };
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome =
+                        handler(context, update, TypedCommandInput { command, raw }).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
                 }
             },
         )
     }
 }
 
-/// Chainable DSL for strongly-typed callback routes.
-pub struct TypedCallbackRouteBuilder<'a, T> {
+/// Chainable DSL for codec-aware callback routes.
+pub struct CallbackRouteBuilder<'a, T, C = CallbackPayloadCodec> {
     router: &'a mut Router,
     config: RouteDslConfig,
     _payload: std::marker::PhantomData<T>,
+    _codec: std::marker::PhantomData<C>,
 }
 
-impl<'a, T> TypedCallbackRouteBuilder<'a, T>
+pub type TypedCallbackRouteBuilder<'a, T> = CallbackRouteBuilder<'a, T, CallbackPayloadCodec>;
+pub type CompactCallbackRouteBuilder<'a, T> = CallbackRouteBuilder<'a, T, CompactCallbackCodec>;
+
+impl<'a, T, C> CallbackRouteBuilder<'a, T, C>
 where
-    T: CallbackPayload + Send + Sync + 'static,
+    T: Send + Sync + 'static,
+    C: CallbackCodec<T>,
 {
     fn new(router: &'a mut Router) -> Self {
         Self {
             router,
             config: RouteDslConfig::new(format!("callback:{}", std::any::type_name::<T>())),
             _payload: std::marker::PhantomData,
+            _codec: std::marker::PhantomData,
         }
     }
 
@@ -2352,39 +2604,77 @@ where
 
     pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
     where
-        H: Fn(BotContext, Update, TypedCallbackInput<T>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        H: Fn(BotContext, Update, CodedCallbackInput<T, C>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.route_fallible(
-            |update| TypedCallbackInput::<T>::extract(update).is_some(),
+            |update| CodedCallbackInput::<T, C>::extract(update).is_some(),
             move |context, update| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let payload = TypedCallbackInput::<T>::extract(&update);
+                let payload = CodedCallbackInput::<T, C>::extract(&update);
                 async move {
                     run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
                     let Some(payload) = payload else {
                         return Err(HandlerError::internal(invalid_request(
-                            "update does not contain a valid typed callback payload",
+                            "update does not contain a valid callback payload",
                         )));
                     };
-                    handler(context, update, payload)
-                        .await
-                        .map_err(HandlerError::from)
+                    handler(context, update, payload).await
                 }
             },
         )
     }
-}
 
-fn to_handler_fn<H, Fut>(handler: H) -> HandlerFn
-where
-    H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
-{
-    Arc::new(move |context, update| Box::pin(handler(context, update)))
+    pub fn handle_fallible<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, CodedCallbackInput<T, C>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.handle(handler)
+    }
+
+    pub fn handle_with_policy<H, Fut>(self, policy: ErrorPolicy, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, CodedCallbackInput<T, C>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.route_with_state(
+            |update, _state| CodedCallbackInput::<T, C>::extract(update).is_some(),
+            move |context, update, _state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                let policy = policy.clone();
+                let payload = CodedCallbackInput::<T, C>::extract(&update);
+                async move {
+                    if let Err(error) =
+                        run_route_guards(guards.as_ref(), context.clone(), update.clone()).await
+                    {
+                        return context.resolve_handler_error(&update, error).await;
+                    }
+                    let Some(payload) = payload else {
+                        return Err(invalid_request(
+                            "update does not contain a valid callback payload",
+                        ));
+                    };
+                    let context_for_policy = context.clone();
+                    let update_for_policy = update.clone();
+                    let outcome = handler(context, update, payload).await;
+                    resolve_handler_result_with_policy(
+                        context_for_policy,
+                        update_for_policy,
+                        policy,
+                        outcome,
+                    )
+                    .await
+                }
+            },
+        )
+    }
 }
 
 fn to_route_handler_fn<H, Fut>(handler: H) -> RouteHandlerFn
@@ -2628,8 +2918,24 @@ pub fn extract_typed_callback<T>(update: &Update) -> Option<T>
 where
     T: CallbackPayload,
 {
+    extract_callback_with_codec::<T, CallbackPayloadCodec>(update)
+}
+
+/// Returns a decoded callback payload from update callback data with an explicit codec.
+pub fn extract_callback_with_codec<T, C>(update: &Update) -> Option<T>
+where
+    C: CallbackCodec<T>,
+{
     let payload = extract_callback_data(update)?;
-    T::decode_callback_data(payload).ok()
+    C::decode_callback_data(payload).ok()
+}
+
+/// Returns a decoded compact callback payload from update callback data.
+pub fn extract_compact_callback<T>(update: &Update) -> Option<T>
+where
+    T: CompactCallbackPayload,
+{
+    extract_callback_with_codec::<T, CompactCallbackCodec>(update)
 }
 
 /// Returns command name from canonical message text.
@@ -2766,6 +3072,12 @@ pub trait UpdateExt {
     fn typed_callback<T>(&self) -> Option<T>
     where
         T: CallbackPayload;
+    fn typed_callback_with_codec<T, C>(&self) -> Option<T>
+    where
+        C: CallbackCodec<T>;
+    fn compact_callback<T>(&self) -> Option<T>
+    where
+        T: CompactCallbackPayload;
     fn command(&self) -> Option<&str>;
     fn command_args(&self) -> Option<&str>;
     fn command_data(&self) -> Option<CommandData>;
@@ -2824,6 +3136,20 @@ impl UpdateExt for Update {
         T: CallbackPayload,
     {
         extract_typed_callback(self)
+    }
+
+    fn typed_callback_with_codec<T, C>(&self) -> Option<T>
+    where
+        C: CallbackCodec<T>,
+    {
+        extract_callback_with_codec::<T, C>(self)
+    }
+
+    fn compact_callback<T>(&self) -> Option<T>
+    where
+        T: CompactCallbackPayload,
+    {
+        extract_compact_callback(self)
     }
 
     fn command(&self) -> Option<&str> {

@@ -11,7 +11,7 @@ use tele::bot::axum::{
     TELEGRAM_SECRET_HEADER, dispatch_webhook, dispatch_webhook_status, telegram_secret_token,
     webhook_handler,
 };
-use tele::bot::{BotContext, DispatchOutcome, Router, WebhookRunner};
+use tele::bot::{BotContext, DispatchOutcome, HandlerError, Router, WebhookRunner};
 use tele::types::update::Update;
 use tele::{Client, Error};
 
@@ -101,9 +101,9 @@ async fn dispatch_webhook_status_maps_handler_error_to_500() -> Result<(), DynEr
     router
         .message_route()
         .handle(|_context: BotContext, _update: Update| async move {
-            Err(Error::InvalidRequest {
+            Err(HandlerError::internal(Error::InvalidRequest {
                 reason: "handler failed".to_owned(),
-            })
+            }))
         });
 
     let runner = WebhookRunner::new(client, router);

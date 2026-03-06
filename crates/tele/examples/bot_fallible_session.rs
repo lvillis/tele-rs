@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let session = session.clone();
         router
             .message_route()
-            .handle_fallible(move |context: BotContext, update| {
+            .handle(move |context: BotContext, update| {
                 let session = session.clone();
                 async move {
                     let Some(text) = update.text() else {

@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::fmt::{Display, Write as _};
+use std::str::FromStr;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,251 @@ fn validate_callback_data(data: impl Into<String>) -> Result<String> {
     Ok(data)
 }
 
+fn is_compact_callback_safe(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~'
+    )
+}
+
+fn encode_compact_callback_segment(segment: &str) -> String {
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.as_bytes() {
+        if is_compact_callback_safe(*byte) {
+            encoded.push(*byte as char);
+        } else {
+            let _ = write!(&mut encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+fn decode_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_compact_callback_segment(segment: &str) -> Result<String> {
+    let mut bytes = Vec::with_capacity(segment.len());
+    let raw = segment.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%' {
+            let hi = *raw
+                .get(index + 1)
+                .ok_or_else(|| invalid_request("compact callback segment has truncated escape"))?;
+            let lo = *raw
+                .get(index + 2)
+                .ok_or_else(|| invalid_request("compact callback segment has truncated escape"))?;
+            let hi = decode_hex_digit(hi).ok_or_else(|| {
+                invalid_request("compact callback segment contains invalid escape")
+            })?;
+            let lo = decode_hex_digit(lo).ok_or_else(|| {
+                invalid_request("compact callback segment contains invalid escape")
+            })?;
+            bytes.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            bytes.push(raw[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(bytes)
+        .map_err(|_| invalid_request("compact callback segment is not valid UTF-8"))
+}
+
+/// Pluggable callback payload codec for inline keyboard buttons and callback routers.
+pub trait CallbackCodec<T>: Send + Sync + 'static {
+    fn encode_callback_data(payload: &T) -> Result<String>;
+    fn decode_callback_data(data: &str) -> Result<T>;
+}
+
+/// Adapter codec for payload types that implement [`CallbackPayload`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CallbackPayloadCodec;
+
+impl<T> CallbackCodec<T> for CallbackPayloadCodec
+where
+    T: CallbackPayload,
+{
+    fn encode_callback_data(payload: &T) -> Result<String> {
+        payload.encode_callback_data()
+    }
+
+    fn decode_callback_data(data: &str) -> Result<T> {
+        T::decode_callback_data(data)
+    }
+}
+
+/// JSON callback codec for serde-serializable payloads.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JsonCallbackCodec;
+
+impl<T> CallbackCodec<T> for JsonCallbackCodec
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn encode_callback_data(payload: &T) -> Result<String> {
+        let encoded =
+            serde_json::to_string(payload).map_err(|source| Error::SerializeRequest { source })?;
+        validate_callback_data(encoded)
+    }
+
+    fn decode_callback_data(data: &str) -> Result<T> {
+        serde_json::from_str(data).map_err(|source| {
+            invalid_request(format!("failed to decode callback payload: {source}"))
+        })
+    }
+}
+
+/// Builder for compact callback payload strings.
+#[derive(Clone, Debug, Default)]
+pub struct CompactCallbackEncoder {
+    segments: Vec<String>,
+}
+
+impl CompactCallbackEncoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn tag(&mut self, tag: impl AsRef<str>) -> Result<&mut Self> {
+        let tag = tag.as_ref().trim();
+        if tag.is_empty() {
+            return Err(invalid_request("compact callback tag cannot be empty"));
+        }
+        self.segments.push(encode_compact_callback_segment(tag));
+        Ok(self)
+    }
+
+    pub fn push(&mut self, value: impl AsRef<str>) -> Result<&mut Self> {
+        self.segments
+            .push(encode_compact_callback_segment(value.as_ref()));
+        Ok(self)
+    }
+
+    pub fn push_display(&mut self, value: impl Display) -> Result<&mut Self> {
+        self.push(value.to_string())
+    }
+
+    pub fn finish(self) -> Result<String> {
+        if self.segments.is_empty() {
+            return Err(invalid_request("compact callback payload cannot be empty"));
+        }
+        validate_callback_data(self.segments.join(":"))
+    }
+}
+
+/// Decoder for compact callback payload strings.
+#[derive(Clone, Debug)]
+pub struct CompactCallbackDecoder {
+    segments: Vec<String>,
+    index: usize,
+}
+
+impl CompactCallbackDecoder {
+    pub fn new(data: &str) -> Result<Self> {
+        if data.is_empty() {
+            return Err(invalid_request("compact callback payload cannot be empty"));
+        }
+        let segments = data
+            .split(':')
+            .map(decode_compact_callback_segment)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { segments, index: 0 })
+    }
+
+    pub fn expect_tag(&mut self, expected: &str) -> Result<&mut Self> {
+        let actual = self.next_string("callback tag")?;
+        if actual == expected {
+            Ok(self)
+        } else {
+            Err(invalid_request(format!(
+                "unexpected compact callback tag `{actual}`, expected `{expected}`"
+            )))
+        }
+    }
+
+    pub fn next_string(&mut self, field: &str) -> Result<String> {
+        let value = self.segments.get(self.index).cloned().ok_or_else(|| {
+            invalid_request(format!(
+                "compact callback payload is missing required field `{field}`"
+            ))
+        })?;
+        self.index += 1;
+        Ok(value)
+    }
+
+    pub fn next_parse<T>(&mut self, field: &str) -> Result<T>
+    where
+        T: FromStr,
+        T::Err: Display,
+    {
+        let raw = self.next_string(field)?;
+        raw.parse().map_err(|source| {
+            invalid_request(format!(
+                "failed to parse compact callback field `{field}`: {source}"
+            ))
+        })
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.segments.len().saturating_sub(self.index)
+    }
+
+    pub fn finish(self) -> Result<()> {
+        if self.remaining() == 0 {
+            Ok(())
+        } else {
+            Err(invalid_request(format!(
+                "compact callback payload has {} unexpected trailing field(s)",
+                self.remaining()
+            )))
+        }
+    }
+}
+
+/// Manual compact callback payload contract for 64-byte-friendly callback data.
+pub trait CompactCallbackPayload: Sized {
+    fn encode_compact(&self, encoder: &mut CompactCallbackEncoder) -> Result<()>;
+    fn decode_compact(decoder: &mut CompactCallbackDecoder) -> Result<Self>;
+
+    fn encode_compact_data(&self) -> Result<String> {
+        let mut encoder = CompactCallbackEncoder::new();
+        self.encode_compact(&mut encoder)?;
+        encoder.finish()
+    }
+
+    fn decode_compact_data(data: &str) -> Result<Self> {
+        let mut decoder = CompactCallbackDecoder::new(data)?;
+        let payload = Self::decode_compact(&mut decoder)?;
+        decoder.finish()?;
+        Ok(payload)
+    }
+}
+
+/// Compact callback codec backed by [`CompactCallbackPayload`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CompactCallbackCodec;
+
+impl<T> CallbackCodec<T> for CompactCallbackCodec
+where
+    T: CompactCallbackPayload,
+{
+    fn encode_callback_data(payload: &T) -> Result<String> {
+        payload.encode_compact_data()
+    }
+
+    fn decode_callback_data(data: &str) -> Result<T> {
+        T::decode_compact_data(data)
+    }
+}
+
 /// Strongly-typed callback payload codec for inline keyboard buttons.
 pub trait CallbackPayload: Sized {
     fn encode_callback_data(&self) -> Result<String>;
@@ -41,15 +288,11 @@ where
     T: Serialize + DeserializeOwned,
 {
     fn encode_callback_data(&self) -> Result<String> {
-        let encoded =
-            serde_json::to_string(self).map_err(|source| Error::SerializeRequest { source })?;
-        validate_callback_data(encoded)
+        JsonCallbackCodec::encode_callback_data(self)
     }
 
     fn decode_callback_data(data: &str) -> Result<Self> {
-        serde_json::from_str(data).map_err(|source| {
-            invalid_request(format!("failed to decode callback payload: {source}"))
-        })
+        JsonCallbackCodec::decode_callback_data(data)
     }
 }
 
@@ -642,6 +885,20 @@ impl InlineKeyboardButton {
         Self::new(text).with_typed_callback(payload)
     }
 
+    pub fn typed_callback_with_codec<T, C>(text: impl Into<String>, payload: &T) -> Result<Self>
+    where
+        C: CallbackCodec<T>,
+    {
+        Self::new(text).with_typed_callback_with_codec::<T, C>(payload)
+    }
+
+    pub fn compact_callback<T>(text: impl Into<String>, payload: &T) -> Result<Self>
+    where
+        T: CompactCallbackPayload,
+    {
+        Self::typed_callback_with_codec::<T, CompactCallbackCodec>(text, payload)
+    }
+
     pub fn web_app(mut self, web_app: impl Into<WebAppInfo>) -> Self {
         self.web_app = Some(web_app.into());
         self
@@ -662,6 +919,20 @@ impl InlineKeyboardButton {
         self.with_callback_data(payload.encode_callback_data()?)
     }
 
+    pub fn with_typed_callback_with_codec<T, C>(self, payload: &T) -> Result<Self>
+    where
+        C: CallbackCodec<T>,
+    {
+        self.with_callback_data(C::encode_callback_data(payload)?)
+    }
+
+    pub fn with_compact_callback<T>(self, payload: &T) -> Result<Self>
+    where
+        T: CompactCallbackPayload,
+    {
+        self.with_typed_callback_with_codec::<T, CompactCallbackCodec>(payload)
+    }
+
     pub fn callback_data(&self) -> Option<&str> {
         self.extra.get("callback_data").and_then(Value::as_str)
     }
@@ -673,6 +944,22 @@ impl InlineKeyboardButton {
         self.callback_data()
             .map(T::decode_callback_data)
             .transpose()
+    }
+
+    pub fn decode_callback_with_codec<T, C>(&self) -> Result<Option<T>>
+    where
+        C: CallbackCodec<T>,
+    {
+        self.callback_data()
+            .map(C::decode_callback_data)
+            .transpose()
+    }
+
+    pub fn decode_compact_callback<T>(&self) -> Result<Option<T>>
+    where
+        T: CompactCallbackPayload,
+    {
+        self.decode_callback_with_codec::<T, CompactCallbackCodec>()
     }
 }
 
