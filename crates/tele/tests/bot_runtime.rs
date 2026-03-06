@@ -15,7 +15,7 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotContext, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData,
+    BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData,
     CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome, EngineConfig, EngineEvent,
     ErrorPolicy, HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
     OutboxConfig, PollingConfig, Router, StateTransition, TextInput, UpdateExt, UpdateExtractor,
@@ -978,7 +978,7 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
         r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
     )?;
     let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
-    let context = BotContext::new(client.clone());
+    let control = BotControl::new(client.clone());
 
     let hits = Arc::new(AtomicUsize::new(0));
     let mut router = Router::new();
@@ -995,7 +995,7 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
             });
     }
 
-    let report = context
+    let report = control
         .bootstrap_router(
             &router,
             &tele::BootstrapPlan {

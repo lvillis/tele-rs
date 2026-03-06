@@ -25,7 +25,7 @@ pub use crate::bot::PostgresSessionStore;
 pub use crate::bot::RedisSessionStore;
 #[cfg(feature = "bot")]
 pub use crate::bot::{
-    BotApp, BotContext, BotEngine, BotOutbox, CallbackInput, CallbackRouteBuilder,
+    BotApp, BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, CallbackRouteBuilder,
     ChannelUpdateSource, ChatSession, CommandArgs, CommandRouteBuilder, CompactCallbackInput,
     CompactCallbackRouteBuilder, CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome,
     EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore, JsonCallback,

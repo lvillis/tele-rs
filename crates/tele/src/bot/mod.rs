@@ -131,6 +131,7 @@ where
 }
 
 mod app;
+mod context;
 mod outbox;
 mod routing;
 mod runtime;
@@ -138,6 +139,7 @@ mod session;
 pub mod testing;
 
 pub use app::*;
+pub use context::*;
 pub use outbox::*;
 pub use routing::*;
 pub use runtime::*;

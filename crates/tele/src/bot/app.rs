@@ -59,7 +59,7 @@ where
 
     /// Runs startup bootstrap and prepares router runtime state.
     pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
-        BotContext::new(self.client.clone())
+        BotControl::new(self.client.clone())
             .bootstrap_router(&self.router, plan)
             .await
     }
@@ -70,7 +70,7 @@ where
         plan: &BootstrapPlan,
         policy: BootstrapRetryPolicy,
     ) -> Result<BootstrapReport> {
-        BotContext::new(self.client.clone())
+        BotControl::new(self.client.clone())
             .bootstrap_router_with_retry(&self.router, plan, policy)
             .await
     }
@@ -612,7 +612,7 @@ impl WebhookRunner {
 
     /// Runs startup bootstrap and prepares webhook router state.
     pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
-        BotContext::new(self.client.clone())
+        BotControl::new(self.client.clone())
             .bootstrap_router(&self.router, plan)
             .await
     }
@@ -623,7 +623,7 @@ impl WebhookRunner {
         plan: &BootstrapPlan,
         policy: BootstrapRetryPolicy,
     ) -> Result<BootstrapReport> {
-        BotContext::new(self.client.clone())
+        BotControl::new(self.client.clone())
             .bootstrap_router_with_retry(&self.router, plan, policy)
             .await
     }
