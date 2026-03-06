@@ -385,13 +385,15 @@ async fn command_router_runs_with_middleware() -> Result<(), DynError> {
 
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let maybe_update = parse_update(serde_json::json!({
@@ -579,20 +581,22 @@ async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError
     });
     {
         let hits = Arc::clone(&hits);
-        router.on_message(move |context: BotContext, _update: Update| {
-            let hits = Arc::clone(&hits);
-            async move {
-                assert_eq!(
-                    context
-                        .get_extension::<TraceId>()
-                        .as_deref()
-                        .map(|value| value.0),
-                    Some(42)
-                );
-                hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .message_route()
+            .handle(move |context: BotContext, _update: Update| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    assert_eq!(
+                        context
+                            .get_extension::<TraceId>()
+                            .as_deref()
+                            .map(|value| value.0),
+                        Some(42)
+                    );
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let Some(update) = parse_update(message_update(204, 1, "hello")) else {
@@ -736,10 +740,9 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
 
     let mut disabled_auto_router = Router::new();
     let _ = disabled_auto_router.disable_auto_command_target();
-    disabled_auto_router.on_command(
-        "start",
-        |_context: BotContext, _update: Update| async move { Ok(()) },
-    );
+    disabled_auto_router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(targeted_this_bot_without_auto) =
         parse_update(message_update(205, 1, "/start@ThisBot hi"))
     else {
@@ -763,10 +766,9 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
     let auto_client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
 
     let mut auto_router = Router::new();
-    auto_router.on_command(
-        "start",
-        |_context: BotContext, _update: Update| async move { Ok(()) },
-    );
+    auto_router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(unprepared_targeted_this_bot) =
         parse_update(message_update(206, 1, "/start@ThisBot hi"))
     else {
@@ -810,10 +812,9 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
         .bot_token("123:abc")?
         .build()?;
     let mut harness_router = Router::new();
-    harness_router.on_command(
-        "start",
-        |_context: BotContext, _update: Update| async move { Ok(()) },
-    );
+    harness_router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let harness = BotHarness::with_client(harness_client, harness_router);
     let Some(harness_update) = parse_update(message_update(209, 1, "/start@ThisBot hi")) else {
         return Ok(());
@@ -826,10 +827,9 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
 
     let mut targeted_router = Router::new();
     let _ = targeted_router.set_command_target("ThisBot")?;
-    targeted_router.on_command(
-        "start",
-        |_context: BotContext, _update: Update| async move { Ok(()) },
-    );
+    targeted_router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(targeted_this_bot) = parse_update(message_update(210, 1, "/start@ThisBot hi")) else {
         return Ok(());
     };
@@ -875,10 +875,9 @@ async fn router_dispatch_prepared_handles_command_mentions() -> Result<(), DynEr
     let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
 
     let mut router = Router::new();
-    router.on_command(
-        "start",
-        |_context: BotContext, _update: Update| async move { Ok(()) },
-    );
+    router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(update) = parse_update(message_update(212, 1, "/start@ThisBot hi")) else {
         return Ok(());
     };
@@ -906,13 +905,15 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
     let mut router = Router::new();
     {
         let hits = Arc::clone(&hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let hits = Arc::clone(&hits);
-            async move {
-                hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let report = context
@@ -968,8 +969,7 @@ async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
     let mut router = Router::new();
     {
         let photo_hits = Arc::clone(&photo_hits);
-        router.on_message_kind(
-            MessageKind::Photo,
+        router.message_kind_route(MessageKind::Photo).handle(
             move |_context: BotContext, _update: Update| {
                 let photo_hits = Arc::clone(&photo_hits);
                 async move {
@@ -981,8 +981,7 @@ async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
     }
     {
         let callback_hits = Arc::clone(&callback_hits);
-        router.on_update_kind(
-            UpdateKind::CallbackQuery,
+        router.update_kind_route(UpdateKind::CallbackQuery).handle(
             move |_context: BotContext, _update: Update| {
                 let callback_hits = Arc::clone(&callback_hits);
                 async move {
@@ -1047,8 +1046,7 @@ async fn router_distinguishes_incoming_and_any_message_kind() -> Result<(), DynE
 
     {
         let incoming_text_hits = Arc::clone(&incoming_text_hits);
-        router.on_message_kind(
-            MessageKind::Text,
+        router.message_kind_route(MessageKind::Text).handle(
             move |_context: BotContext, _update: Update| {
                 let incoming_text_hits = Arc::clone(&incoming_text_hits);
                 async move {
@@ -1060,8 +1058,7 @@ async fn router_distinguishes_incoming_and_any_message_kind() -> Result<(), DynE
     }
     {
         let any_text_hits = Arc::clone(&any_text_hits);
-        router.on_any_message_kind(
-            MessageKind::Text,
+        router.message_like_kind_route(MessageKind::Text).handle(
             move |_context: BotContext, _update: Update| {
                 let any_text_hits = Arc::clone(&any_text_hits);
                 async move {
@@ -1180,13 +1177,15 @@ async fn long_polling_source_dispatches_updates() -> Result<(), DynError> {
     let mut router = Router::new();
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
@@ -1369,13 +1368,15 @@ async fn long_polling_source_dedupes_duplicate_update_ids() -> Result<(), DynErr
     let mut router = Router::new();
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
@@ -1449,13 +1450,15 @@ async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), 
     let mut router = Router::new();
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
@@ -1487,13 +1490,15 @@ async fn bot_engine_channel_source_dispatches_updates() -> Result<(), DynError> 
     let mut router = Router::new();
     {
         let hits = Arc::clone(&hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let hits = Arc::clone(&hits);
-            async move {
-                hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let (sink, source) = channel_source(8);
@@ -1554,13 +1559,15 @@ async fn webhook_runner_validates_secret_and_dispatches_json() -> Result<(), Dyn
     let mut router = Router::new();
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let runner = WebhookRunner::new(client, router).expected_secret_token("secret-token");
@@ -1592,9 +1599,11 @@ async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
 
     let mut router = Router::new();
-    router.on_message_fallible(|_context: BotContext, _update: Update| async move {
-        Err(HandlerError::user("invalid input"))
-    });
+    router
+        .message_route()
+        .handle_fallible(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::user("invalid input"))
+        });
 
     let maybe_update = parse_update(message_update(902, 10, "bad request"));
     assert!(maybe_update.is_some());
@@ -1741,32 +1750,34 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
         let in_flight = Arc::clone(&in_flight);
         let max_in_flight = Arc::clone(&max_in_flight);
         let handled = Arc::clone(&handled);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let in_flight = Arc::clone(&in_flight);
-            let max_in_flight = Arc::clone(&max_in_flight);
-            let handled = Arc::clone(&handled);
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let in_flight = Arc::clone(&in_flight);
+                let max_in_flight = Arc::clone(&max_in_flight);
+                let handled = Arc::clone(&handled);
 
-            async move {
-                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                loop {
-                    let observed = max_in_flight.load(Ordering::SeqCst);
-                    if now <= observed {
-                        break;
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    loop {
+                        let observed = max_in_flight.load(Ordering::SeqCst);
+                        if now <= observed {
+                            break;
+                        }
+                        if max_in_flight
+                            .compare_exchange(observed, now, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            break;
+                        }
                     }
-                    if max_in_flight
-                        .compare_exchange(observed, now, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_ok()
-                    {
-                        break;
-                    }
+
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    handled.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
                 }
-
-                tokio::time::sleep(Duration::from_millis(40)).await;
-                in_flight.fetch_sub(1, Ordering::SeqCst);
-                handled.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+            });
     }
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
@@ -1803,7 +1814,7 @@ async fn extractor_routes_dispatch_text_and_callback_inputs() -> Result<(), DynE
     let mut router = Router::new();
     {
         let callback_hits = Arc::clone(&callback_hits);
-        router.on_extracted::<CallbackInput, _, _>(
+        router.extracted_route::<CallbackInput>().handle(
             move |_context: BotContext, _update: Update, callback| {
                 let callback_hits = Arc::clone(&callback_hits);
                 async move {
@@ -1817,7 +1828,7 @@ async fn extractor_routes_dispatch_text_and_callback_inputs() -> Result<(), DynE
     }
     {
         let text_hits = Arc::clone(&text_hits);
-        router.on_extracted::<TextInput, _, _>(
+        router.extracted_route::<TextInput>().handle(
             move |_context: BotContext, _update: Update, text| {
                 let text_hits = Arc::clone(&text_hits);
                 async move {
@@ -1863,16 +1874,16 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
     let mut filter_router = Router::new();
     {
         let filter_hits = Arc::clone(&filter_hits);
-        filter_router.on_extracted_filter::<TextInput, _, _, _>(
-            |text, _update| text.0.starts_with("allow"),
-            move |_context: BotContext, _update: Update, _text| {
+        filter_router
+            .extracted_route::<TextInput>()
+            .filter(|text, _update| text.0.starts_with("allow"))
+            .handle(move |_context: BotContext, _update: Update, _text| {
                 let filter_hits = Arc::clone(&filter_hits);
                 async move {
                     filter_hits.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 }
-            },
-        );
+            });
     }
     let Some(filter_skip) = parse_update(message_update(4401, 1, "deny text")) else {
         return Ok(());
@@ -1896,21 +1907,23 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
     let mut map_router = Router::new();
     {
         let map_hits = Arc::clone(&map_hits);
-        map_router.on_extracted_map::<CallbackInput, String, _, _, _>(
-            |callback, _update| {
+        map_router
+            .extracted_route::<CallbackInput>()
+            .map(|callback, _update| {
                 let value: serde_json::Value = serde_json::from_str(&callback.0).ok()?;
                 Some(value.get("action")?.as_str()?.to_owned())
-            },
-            move |_context: BotContext, _update: Update, action: String| {
-                let map_hits = Arc::clone(&map_hits);
-                async move {
-                    if action == "confirm" {
-                        map_hits.fetch_add(1, Ordering::SeqCst);
+            })
+            .handle(
+                move |_context: BotContext, _update: Update, action: String| {
+                    let map_hits = Arc::clone(&map_hits);
+                    async move {
+                        if action == "confirm" {
+                            map_hits.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Ok(())
                     }
-                    Ok(())
-                }
-            },
-        );
+                },
+            );
     }
     let Some(map_skip) = parse_update(callback_update(4403, 1, "not-json")) else {
         return Ok(());
@@ -1934,16 +1947,16 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
     let mut guard_router = Router::new();
     {
         let guard_hits = Arc::clone(&guard_hits);
-        guard_router.on_extracted_guard::<TextInput, _, _, _>(
-            reject_blocked_text,
-            move |_context: BotContext, _update: Update, _text| {
+        guard_router
+            .extracted_route::<TextInput>()
+            .guard(reject_blocked_text)
+            .handle(move |_context: BotContext, _update: Update, _text| {
                 let guard_hits = Arc::clone(&guard_hits);
                 async move {
                     guard_hits.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 }
-            },
-        );
+            });
     }
     let Some(guard_hit) = parse_update(message_update(4405, 1, "allowed")) else {
         return Ok(());
@@ -1976,8 +1989,7 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
-    router.on_command_with_policy(
-        "start",
+    router.command_route("start").handle_with_policy(
         ErrorPolicy::ReplyUser {
             fallback_message: "temporary failure".to_owned(),
         },
@@ -2224,7 +2236,9 @@ async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), 
         .build()?;
 
     let mut router = Router::new();
-    router.on_message(|_context: BotContext, _update: Update| async move { Ok(()) });
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let harness = tele::bot::testing::BotHarness::new(router.clone())?;
     let fixture = tele::bot::testing::message_update(4301, 1, "hello")?;
@@ -2271,7 +2285,9 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
         .build()?;
 
     let mut router = Router::new();
-    router.on_message(|_context: BotContext, _update: Update| async move { Ok(()) });
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
     let (sink, source) = channel_source(2);

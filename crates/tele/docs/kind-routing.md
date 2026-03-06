@@ -24,19 +24,17 @@ Both `Update::kind()` and `Message::kind()` use stable precedence and return one
 
 Incoming-message only:
 
-- `router.on_message(...)`
-- `router.on_message_kind(...)`
-- `router.on_incoming_message(...)`
-- `router.on_incoming_message_kind(...)`
+- `router.message_route().handle(...)`
+- `router.message_kind_route(...).handle(...)`
 
 Message-like variants (includes edited/channel/callback message):
 
-- `router.on_any_message(...)`
-- `router.on_any_message_kind(...)`
+- `router.message_like_route().handle(...)`
+- `router.message_like_kind_route(...).handle(...)`
 
 Top-level update routing:
 
-- `router.on_update_kind(...)`
+- `router.update_kind_route(...).handle(...)`
 
 ## Observability for Unknown kinds
 

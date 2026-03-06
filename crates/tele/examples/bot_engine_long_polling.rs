@@ -19,19 +19,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let mut router = Router::new();
-    router.on_message(|context: BotContext, update: Update| async move {
-        let Some(text) = update.text() else {
-            return Ok(());
-        };
+    router
+        .message_route()
+        .handle(|context: BotContext, update: Update| async move {
+            let Some(text) = update.text() else {
+                return Ok(());
+            };
 
-        let reply = match update.command() {
-            Some("start") => "bot engine is running".to_owned(),
-            Some("ping") => "pong".to_owned(),
-            _ => format!("echo: {text}"),
-        };
-        let _ = context.reply_text(&update, reply).await?;
-        Ok(())
-    });
+            let reply = match update.command() {
+                Some("start") => "bot engine is running".to_owned(),
+                Some("ping") => "pong".to_owned(),
+                _ => format!("echo: {text}"),
+            };
+            let _ = context.reply_text(&update, reply).await?;
+            Ok(())
+        });
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         poll_timeout_seconds: 20,

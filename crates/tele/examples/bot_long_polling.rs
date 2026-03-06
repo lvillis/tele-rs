@@ -20,21 +20,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let mut router = Router::new();
-    router.on_message(|context: BotContext, update: Update| async move {
-        let Some(text) = update.text() else {
-            return Ok(());
-        };
+    router
+        .message_route()
+        .handle(|context: BotContext, update: Update| async move {
+            let Some(text) = update.text() else {
+                return Ok(());
+            };
 
-        let reply_text = match update.command() {
-            Some("start") => "tele bot is running".to_owned(),
-            Some("ping") => "pong".to_owned(),
-            Some("echo") => format!("echo: {}", update.command_args().unwrap_or_default()),
-            _ => format!("echo: {text}"),
-        };
+            let reply_text = match update.command() {
+                Some("start") => "tele bot is running".to_owned(),
+                Some("ping") => "pong".to_owned(),
+                Some("echo") => format!("echo: {}", update.command_args().unwrap_or_default()),
+                _ => format!("echo: {text}"),
+            };
 
-        let _sent = context.reply_text(&update, reply_text).await?;
-        Ok(())
-    });
+            let _sent = context.reply_text(&update, reply_text).await?;
+            Ok(())
+        });
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         poll_timeout_seconds: 20,

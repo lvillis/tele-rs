@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let mut router = Router::new();
-    router.on_typed_command::<Command, _, _>(
+    router.typed_command_route::<Command>().handle(
         |context: BotContext, update: Update, command: Command| async move {
             let reply = match command {
                 Command::Start => "typed command bot is running".to_owned(),

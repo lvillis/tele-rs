@@ -24,13 +24,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let mut router = BotRouter::new();
-    router.on_message(|context: BotContext, update: Update| async move {
-        let text = update.text().unwrap_or("non-text message");
-        let _sent = context
-            .reply_text(&update, format!("webhook echo: {text}"))
-            .await?;
-        Ok(())
-    });
+    router
+        .message_route()
+        .handle(|context: BotContext, update: Update| async move {
+            let text = update.text().unwrap_or("non-text message");
+            let _sent = context
+                .reply_text(&update, format!("webhook echo: {text}"))
+                .await?;
+            Ok(())
+        });
 
     let mut runner = WebhookRunner::new(client.clone(), router);
     if let Some(secret) = webhook_secret {

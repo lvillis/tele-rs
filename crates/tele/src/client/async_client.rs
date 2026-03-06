@@ -1,4 +1,5 @@
 use std::sync::Arc;
+#[cfg(feature = "bot")]
 use std::time::Duration;
 
 use serde::Serialize;
@@ -148,10 +149,12 @@ impl Client {
             .await
     }
 
+    #[cfg(feature = "bot")]
     pub(crate) fn request_timeout(&self) -> Duration {
         self.inner.defaults.request_timeout
     }
 
+    #[cfg(feature = "bot")]
     pub(crate) fn total_timeout(&self) -> Option<Duration> {
         self.inner.defaults.total_timeout
     }

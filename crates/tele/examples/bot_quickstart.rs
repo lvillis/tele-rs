@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use tele::Client;
 use tele::bot::{
-    BotApp, BotContext, EngineConfig, EngineEvent, ErrorPolicy, OutboxConfig, Router, TextInput,
-    UpdateExt,
+    BotApp, BotContext, EngineConfig, EngineEvent, ErrorPolicy, OutboxConfig, Router, UpdateExt,
 };
 use tele::types::update::Update;
 
@@ -27,8 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outbox = BotContext::new(client.clone()).spawn_outbox(outbox_config);
 
     let mut router = Router::new();
-    router.on_command_with_policy(
-        "start",
+    router.command_route("start").handle_with_policy(
         ErrorPolicy::ReplyUser {
             fallback_message: "failed to process /start".to_owned(),
         },
@@ -40,9 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    router.on_extracted_filter::<TextInput, _, _, _>(
-        |text, _update| !text.0.starts_with('/'),
-        move |_context: BotContext, update: Update, text| {
+    router
+        .text_route()
+        .filter(|text, _update| !text.0.starts_with('/'))
+        .handle(move |_context: BotContext, update: Update, text| {
             let outbox = outbox.clone();
             async move {
                 let Some(chat_id) = update.chat_id() else {
@@ -58,8 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await?;
                 Ok(())
             }
-        },
-    );
+        });
 
     let mut app = BotApp::long_polling(client, router)
         .with_engine_config(EngineConfig {

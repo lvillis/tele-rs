@@ -54,13 +54,15 @@ async fn dispatch_webhook_runs_router_handler() -> Result<(), DynError> {
     let mut router = Router::new();
     {
         let handler_hits = Arc::clone(&handler_hits);
-        router.on_command("start", move |_context: BotContext, _update: Update| {
-            let handler_hits = Arc::clone(&handler_hits);
-            async move {
-                handler_hits.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        });
+        router
+            .command_route("start")
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
     }
 
     let runner = WebhookRunner::new(client, router).expected_secret_token("secret");
@@ -96,11 +98,13 @@ async fn dispatch_webhook_status_maps_secret_and_json_errors() -> Result<(), Dyn
 async fn dispatch_webhook_status_maps_handler_error_to_500() -> Result<(), DynError> {
     let client = build_client()?;
     let mut router = Router::new();
-    router.on_message(|_context: BotContext, _update: Update| async move {
-        Err(Error::InvalidRequest {
-            reason: "handler failed".to_owned(),
-        })
-    });
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(Error::InvalidRequest {
+                reason: "handler failed".to_owned(),
+            })
+        });
 
     let runner = WebhookRunner::new(client, router);
     let payload = update_payload("hello")?;
@@ -116,7 +120,9 @@ async fn dispatch_webhook_status_maps_handler_error_to_500() -> Result<(), DynEr
 async fn webhook_handler_works_with_axum_state() -> Result<(), DynError> {
     let client = build_client()?;
     let mut router = Router::new();
-    router.on_message(|_context: BotContext, _update: Update| async move { Ok(()) });
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let runner = Arc::new(WebhookRunner::new(client, router));
     let payload = update_payload("hello")?;

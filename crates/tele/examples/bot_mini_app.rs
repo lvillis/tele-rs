@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let mut router = Router::new();
-    router.on_extracted::<WebAppInput, _, _>(
+    router.extracted_route::<WebAppInput>().handle(
         |context: BotContext, update: Update, web_app| async move {
             let web_app_data = web_app.into_inner();
 

@@ -24,42 +24,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let session = session.clone();
-        router.on_message_fallible(move |context: BotContext, update| {
-            let session = session.clone();
-            async move {
-                let Some(text) = update.text() else {
-                    return Ok(());
-                };
+        router
+            .message_route()
+            .handle_fallible(move |context: BotContext, update| {
+                let session = session.clone();
+                async move {
+                    let Some(text) = update.text() else {
+                        return Ok(());
+                    };
 
-                if text == "/cancel" {
-                    session.clear(&update).await?;
-                    let _ = context.reply_text(&update, "dialog cancelled").await?;
-                    return Ok(());
-                }
-
-                match session.load(&update).await?.as_deref() {
-                    None => {
-                        session.save(&update, "awaiting_name".to_owned()).await?;
-                        let _ = context
-                            .reply_text(&update, "What is your name? Send /cancel to reset.")
-                            .await?;
-                    }
-                    Some("awaiting_name") => {
-                        let _ = context
-                            .reply_text(&update, format!("Nice to meet you, {text}!"))
-                            .await?;
+                    if text == "/cancel" {
                         session.clear(&update).await?;
+                        let _ = context.reply_text(&update, "dialog cancelled").await?;
+                        return Ok(());
                     }
-                    Some(other) => {
-                        return Err(HandlerError::user(format!(
-                            "unexpected dialog state `{other}`, send /cancel"
-                        )));
-                    }
-                }
 
-                Ok(())
-            }
-        });
+                    match session.load(&update).await?.as_deref() {
+                        None => {
+                            session.save(&update, "awaiting_name".to_owned()).await?;
+                            let _ = context
+                                .reply_text(&update, "What is your name? Send /cancel to reset.")
+                                .await?;
+                        }
+                        Some("awaiting_name") => {
+                            let _ = context
+                                .reply_text(&update, format!("Nice to meet you, {text}!"))
+                                .await?;
+                            session.clear(&update).await?;
+                        }
+                        Some(other) => {
+                            return Err(HandlerError::user(format!(
+                                "unexpected dialog state `{other}`, send /cancel"
+                            )));
+                        }
+                    }
+
+                    Ok(())
+                }
+            });
     }
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {

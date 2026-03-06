@@ -95,7 +95,7 @@ async fn typed_command_router_dispatches() -> Result<(), DynError> {
     let mut router = Router::new();
     {
         let hits = Arc::clone(&hits);
-        router.on_typed_command::<DemoCommand, _, _>(
+        router.typed_command_route::<DemoCommand>().handle(
             move |_context: BotContext, _update: Update, command: DemoCommand| {
                 let hits = Arc::clone(&hits);
                 async move {
