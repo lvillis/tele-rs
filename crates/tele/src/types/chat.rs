@@ -94,6 +94,92 @@ pub struct ChatMember {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Administrative permission flags exposed by `getChatMember`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum ChatMemberPermission {
+    ManageChat,
+    DeleteMessages,
+    ManageVideoChats,
+    RestrictMembers,
+    PromoteMembers,
+    ChangeInfo,
+    InviteUsers,
+    PostStories,
+    EditStories,
+    DeleteStories,
+    PostMessages,
+    EditMessages,
+    PinMessages,
+    ManageTopics,
+}
+
+impl ChatMemberPermission {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ManageChat => "manage_chat",
+            Self::DeleteMessages => "delete_messages",
+            Self::ManageVideoChats => "manage_video_chats",
+            Self::RestrictMembers => "restrict_members",
+            Self::PromoteMembers => "promote_members",
+            Self::ChangeInfo => "change_info",
+            Self::InviteUsers => "invite_users",
+            Self::PostStories => "post_stories",
+            Self::EditStories => "edit_stories",
+            Self::DeleteStories => "delete_stories",
+            Self::PostMessages => "post_messages",
+            Self::EditMessages => "edit_messages",
+            Self::PinMessages => "pin_messages",
+            Self::ManageTopics => "manage_topics",
+        }
+    }
+
+    fn field_name(&self) -> &'static str {
+        match self {
+            Self::ManageChat => "can_manage_chat",
+            Self::DeleteMessages => "can_delete_messages",
+            Self::ManageVideoChats => "can_manage_video_chats",
+            Self::RestrictMembers => "can_restrict_members",
+            Self::PromoteMembers => "can_promote_members",
+            Self::ChangeInfo => "can_change_info",
+            Self::InviteUsers => "can_invite_users",
+            Self::PostStories => "can_post_stories",
+            Self::EditStories => "can_edit_stories",
+            Self::DeleteStories => "can_delete_stories",
+            Self::PostMessages => "can_post_messages",
+            Self::EditMessages => "can_edit_messages",
+            Self::PinMessages => "can_pin_messages",
+            Self::ManageTopics => "can_manage_topics",
+        }
+    }
+}
+
+impl ChatMember {
+    pub fn is_owner(&self) -> bool {
+        self.status.eq_ignore_ascii_case("creator")
+    }
+
+    pub fn is_admin(&self) -> bool {
+        self.is_owner() || self.status.eq_ignore_ascii_case("administrator")
+    }
+
+    pub fn has_permission(&self, permission: ChatMemberPermission) -> bool {
+        if self.is_owner() {
+            return true;
+        }
+
+        self.bool_field(permission.field_name()).unwrap_or(false)
+    }
+
+    fn bool_field(&self, field: &str) -> Option<bool> {
+        match field {
+            "is_anonymous" => self.is_anonymous,
+            "can_manage_chat" => self.can_manage_chat,
+            _ => self.extra.get(field).and_then(Value::as_bool),
+        }
+    }
+}
+
 /// Telegram chat invite link object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]

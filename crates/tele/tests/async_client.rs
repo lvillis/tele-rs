@@ -5,13 +5,19 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
-use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
+use tele::types::advanced::{
+    AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest,
+    AdvancedSetChatMenuButtonRequest,
+};
 use tele::types::{
-    AnswerInlineQueryRequest, BotCommand, BotCommandScope, CreateInvoiceLinkRequest,
-    GetFileRequest, GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton,
-    LabeledPrice, SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, WebAppData,
+    AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
+    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice, MenuButton,
+    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, WebAppData,
 };
 use tele::{BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, UploadFile};
+
+#[cfg(feature = "bot")]
+use tele::types::BotCommandScope;
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -91,6 +97,36 @@ fn read_full_http_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
     }
 
     Ok(request)
+}
+
+fn accept_with_timeout(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> Result<(TcpStream, std::net::SocketAddr), String> {
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, address)) => {
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|error| error.to_string())?;
+                return Ok((stream, address));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out waiting for request after {}ms",
+                        timeout.as_millis()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 fn spawn_server(
@@ -181,6 +217,43 @@ fn spawn_server_with_checks(
 
         if let Some(error) = check_error {
             return Err(error);
+        }
+
+        Ok(())
+    });
+
+    Ok((format!("http://{address}"), handle))
+}
+
+fn spawn_server_script(
+    script: Vec<(&'static str, u16, &'static str)>,
+) -> Result<(String, ServerHandle), DynError> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+
+    let handle = thread::spawn(move || {
+        for (expected_path, response_status, response_body) in script {
+            let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .map_err(|error| error.to_string())?;
+
+            let buffer = read_full_http_request(&mut stream)?;
+            let request = String::from_utf8_lossy(&buffer);
+            let expected_request_line = format!("POST {expected_path} HTTP/1.1");
+            if !request.contains(&expected_request_line) {
+                return Err(format!("unexpected request line: {request}"));
+            }
+
+            let response = format!(
+                "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+
+            stream
+                .write_all(response.as_bytes())
+                .map_err(|error| error.to_string())?;
+            stream.flush().map_err(|error| error.to_string())?;
         }
 
         Ok(())
@@ -337,6 +410,44 @@ async fn set_and_get_my_commands_success() -> Result<(), DynError> {
     assert_eq!(commands[0].command, "start");
     join_server(get_handle)?;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynError> {
+    let script = vec![
+        (
+            "/bot123:abc/getMyCommands",
+            200,
+            r#"{"ok":true,"result":[{"command":"start","description":"start the bot"}]}"#,
+        ),
+        (
+            "/bot123:abc/getChatMenuButton",
+            200,
+            r#"{"ok":true,"result":{"type":"commands"}}"#,
+        ),
+    ];
+    let (base_url, handle) = spawn_server_script(script)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let plan = BootstrapPlan {
+        verify_get_me: false,
+        commands: Some(SetMyCommandsRequest::new(vec![BotCommand::new(
+            "start",
+            "start the bot",
+        )?])?),
+        menu_button: Some(
+            AdvancedSetChatMenuButtonRequest::new().menu_button(MenuButton::commands()),
+        ),
+    };
+
+    let report = client.ergo().bootstrap(&plan).await?;
+    assert_eq!(report.commands_applied, Some(false));
+    assert_eq!(report.commands_synced, Some(true));
+    assert_eq!(report.menu_button_applied, Some(false));
+    assert_eq!(report.menu_button_synced, Some(true));
+
+    join_server(handle)?;
     Ok(())
 }
 

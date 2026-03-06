@@ -5,16 +5,20 @@ use serde::de::DeserializeOwned;
 
 use crate::client::RetryConfig;
 use crate::types::advanced::{
-    AdvancedAnswerWebAppQueryRequest, AdvancedRequest, AdvancedSetChatMenuButtonRequest,
+    AdvancedAnswerWebAppQueryRequest, AdvancedGetChatMenuButtonRequest, AdvancedRequest,
+    AdvancedSetChatMenuButtonRequest,
 };
 use crate::types::bot::User;
-use crate::types::command::{BotCommand, BotCommandScope, SetMyCommandsRequest};
+use crate::types::command::{BotCommand, GetMyCommandsRequest, SetMyCommandsRequest};
 use crate::types::common::ChatId;
 use crate::types::message::{Message, SendMessageRequest, SentWebAppMessage};
-use crate::types::telegram::{InlineQueryResult, WebAppData};
+use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData};
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::UploadFile;
 use crate::{Error, Result};
+
+#[cfg(feature = "bot")]
+use crate::types::command::BotCommandScope;
 
 #[cfg(feature = "_blocking")]
 use crate::BlockingClient;
@@ -63,9 +67,12 @@ pub struct BootstrapPlan {
 pub struct BootstrapReport {
     pub me: Option<User>,
     pub commands_applied: Option<bool>,
+    pub commands_synced: Option<bool>,
     pub menu_button_applied: Option<bool>,
+    pub menu_button_synced: Option<bool>,
 }
 
+#[cfg(feature = "bot")]
 fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
     let Some(language_code) = language_code else {
         return Ok(None);
@@ -74,6 +81,25 @@ fn normalize_language_code(language_code: Option<String>) -> Result<Option<Strin
         return Err(invalid_request("language_code cannot be empty"));
     }
     Ok(Some(language_code))
+}
+
+fn commands_get_request(request: &SetMyCommandsRequest) -> GetMyCommandsRequest {
+    GetMyCommandsRequest {
+        scope: request.scope.clone(),
+        language_code: request.language_code.clone(),
+    }
+}
+
+fn desired_menu_button(request: &AdvancedSetChatMenuButtonRequest) -> MenuButton {
+    request.menu_button.clone().unwrap_or_default()
+}
+
+fn menu_button_get_request(
+    request: &AdvancedSetChatMenuButtonRequest,
+) -> AdvancedGetChatMenuButtonRequest {
+    AdvancedGetChatMenuButtonRequest {
+        chat_id: request.chat_id,
+    }
 }
 
 #[cfg(feature = "bot")]
@@ -273,6 +299,40 @@ where
     }
 }
 
+#[cfg(feature = "_async")]
+async fn retry_fetch_async<T, F, Fut>(policy: BootstrapRetryPolicy, mut op: F) -> Result<Option<T>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let max_attempts = policy.max_attempts.max(1);
+    let mut attempt = 0;
+
+    loop {
+        attempt += 1;
+        match op().await {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) => {
+                let should_retry = error.is_retryable() && attempt < max_attempts;
+                if should_retry {
+                    let delay = backoff_delay(
+                        policy.base_backoff,
+                        policy.max_backoff,
+                        attempt,
+                        policy.jitter_ratio,
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                if policy.continue_on_failure {
+                    return Ok(None);
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
 #[cfg(feature = "_blocking")]
 fn retry_blocking<F>(policy: BootstrapRetryPolicy, mut op: F) -> Result<bool>
 where
@@ -299,6 +359,39 @@ where
                 }
                 if policy.continue_on_failure {
                     return Ok(false);
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "_blocking")]
+fn retry_fetch_blocking<T, F>(policy: BootstrapRetryPolicy, mut op: F) -> Result<Option<T>>
+where
+    F: FnMut() -> Result<T>,
+{
+    let max_attempts = policy.max_attempts.max(1);
+    let mut attempt = 0;
+
+    loop {
+        attempt += 1;
+        match op() {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) => {
+                let should_retry = error.is_retryable() && attempt < max_attempts;
+                if should_retry {
+                    let delay = backoff_delay(
+                        policy.base_backoff,
+                        policy.max_backoff,
+                        attempt,
+                        policy.jitter_ratio,
+                    );
+                    std::thread::sleep(delay);
+                    continue;
+                }
+                if policy.continue_on_failure {
+                    return Ok(None);
                 }
                 return Err(error);
             }
@@ -587,23 +680,57 @@ impl ErgoApi {
             report.me = Some(self.client.bot().get_me().await?);
         }
         if let Some(commands) = plan.commands.as_ref() {
-            report.commands_applied = Some(
-                retry_async(policy, || async {
+            let get_request = commands_get_request(commands);
+            let current = retry_fetch_async(policy, || {
+                let get_request = get_request.clone();
+                async move { self.client.bot().get_my_commands(&get_request).await }
+            })
+            .await?;
+            if current
+                .as_ref()
+                .is_some_and(|value| value == &commands.commands)
+            {
+                report.commands_applied = Some(false);
+                report.commands_synced = Some(true);
+            } else {
+                let applied = retry_async(policy, || async {
                     self.client.bot().set_my_commands(commands).await
                 })
-                .await?,
-            );
+                .await?;
+                report.commands_applied = Some(applied);
+                report.commands_synced = Some(applied);
+            }
         }
         if let Some(menu_button) = plan.menu_button.as_ref() {
-            report.menu_button_applied = Some(
-                retry_async(policy, || async {
+            let get_request = menu_button_get_request(menu_button);
+            let desired_button = desired_menu_button(menu_button);
+            let current = retry_fetch_async(policy, || {
+                let get_request = get_request.clone();
+                async move {
+                    self.client
+                        .advanced()
+                        .get_chat_menu_button_typed(&get_request)
+                        .await
+                }
+            })
+            .await?;
+            if current
+                .as_ref()
+                .is_some_and(|value| value == &desired_button)
+            {
+                report.menu_button_applied = Some(false);
+                report.menu_button_synced = Some(true);
+            } else {
+                let applied = retry_async(policy, || async {
                     self.client
                         .advanced()
                         .set_chat_menu_button_typed(menu_button)
                         .await
                 })
-                .await?,
-            );
+                .await?;
+                report.menu_button_applied = Some(applied);
+                report.menu_button_synced = Some(applied);
+            }
         }
 
         Ok(report)
@@ -915,16 +1042,45 @@ impl BlockingErgoApi {
             report.me = Some(self.client.bot().get_me()?);
         }
         if let Some(commands) = plan.commands.as_ref() {
-            report.commands_applied = Some(retry_blocking(policy, || {
-                self.client.bot().set_my_commands(commands)
-            })?);
+            let get_request = commands_get_request(commands);
+            let current =
+                retry_fetch_blocking(policy, || self.client.bot().get_my_commands(&get_request))?;
+            if current
+                .as_ref()
+                .is_some_and(|value| value == &commands.commands)
+            {
+                report.commands_applied = Some(false);
+                report.commands_synced = Some(true);
+            } else {
+                let applied =
+                    retry_blocking(policy, || self.client.bot().set_my_commands(commands))?;
+                report.commands_applied = Some(applied);
+                report.commands_synced = Some(applied);
+            }
         }
         if let Some(menu_button) = plan.menu_button.as_ref() {
-            report.menu_button_applied = Some(retry_blocking(policy, || {
+            let get_request = menu_button_get_request(menu_button);
+            let desired_button = desired_menu_button(menu_button);
+            let current = retry_fetch_blocking(policy, || {
                 self.client
                     .advanced()
-                    .set_chat_menu_button_typed(menu_button)
-            })?);
+                    .get_chat_menu_button_typed(&get_request)
+            })?;
+            if current
+                .as_ref()
+                .is_some_and(|value| value == &desired_button)
+            {
+                report.menu_button_applied = Some(false);
+                report.menu_button_synced = Some(true);
+            } else {
+                let applied = retry_blocking(policy, || {
+                    self.client
+                        .advanced()
+                        .set_chat_menu_button_typed(menu_button)
+                })?;
+                report.menu_button_applied = Some(applied);
+                report.menu_button_synced = Some(applied);
+            }
         }
 
         Ok(report)

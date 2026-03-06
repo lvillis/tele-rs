@@ -356,7 +356,11 @@ mod tests {
         if let Some(hash_index) = init_data.find("hash=") {
             let value_index = hash_index + 5;
             if value_index < init_data.len() {
-                init_data.replace_range(value_index..=value_index, "0");
+                let replacement = match init_data.as_bytes()[value_index] {
+                    b'0' => "1",
+                    _ => "0",
+                };
+                init_data.replace_range(value_index..=value_index, replacement);
             }
         }
 

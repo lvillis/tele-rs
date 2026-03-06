@@ -24,6 +24,7 @@ _all-features-compat = ["reqx/_all-features-compat"]
 _async = [
     "dep:bytes",
     "dep:futures-core",
+    "dep:tokio",
 ]
 _blocking = []
 async-tls-native = ["_async", "reqx/async-tls-native", "reqx/strict-feature-guards"]
@@ -34,7 +35,7 @@ blocking-tls-rustls-ring = ["_blocking", "reqx/blocking-tls-rustls-ring", "reqx/
 blocking-tls-rustls-aws-lc-rs = ["_blocking", "reqx/blocking-tls-rustls-aws-lc-rs", "reqx/strict-feature-guards"]
 async = ["async-tls-rustls-ring"]
 blocking = ["blocking-tls-rustls-ring"]
-bot = ["_async", "dep:tokio"]
+bot = ["_async"]
 axum = ["bot", "dep:axum"]
 macros = ["bot", "dep:tele-macros"]
 otel = ["reqx/otel"]

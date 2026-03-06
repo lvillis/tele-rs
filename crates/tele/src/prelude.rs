@@ -14,8 +14,8 @@ pub use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, We
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
 pub use crate::types::{
-    BotCommand, ChatId, Message, MessageId, MessageKind, ParseMode, ReplyMarkup, ReplyParameters,
-    Update, UpdateKind,
+    BotCommand, CallbackPayload, ChatId, ChatMemberPermission, Message, MessageId, MessageKind,
+    ParseMode, ReplyMarkup, ReplyParameters, Update, UpdateKind,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]
@@ -25,9 +25,11 @@ pub use crate::bot::RedisSessionStore;
 #[cfg(feature = "bot")]
 pub use crate::bot::{
     BotApp, BotContext, BotEngine, BotOutbox, CallbackInput, ChannelUpdateSource, ChatSession,
-    DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
-    JsonCallback, JsonFileSessionStore, LongPollingSource, OutboxConfig, PollingConfig, Router,
-    SourceErrorBackoffConfig, TextInput, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
+    CommandArgs, CommandRouteBuilder, CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome,
+    EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore, JsonCallback,
+    JsonFileSessionStore, LongPollingSource, OutboxConfig, ParsedCommandRouteBuilder,
+    PollingConfig, Router, SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
+    TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
     WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,
 };
 

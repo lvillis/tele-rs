@@ -1,3 +1,4 @@
+use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::future::Future;
@@ -21,17 +22,20 @@ use crate::api::{
     StickersService, UpdatesService,
 };
 use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+use crate::types::bot::User;
+use crate::types::chat::{ChatMember, ChatMemberPermission, GetChatMemberRequest};
 use crate::types::command::{BotCommand, BotCommandScope, SetMyCommandsRequest};
-use crate::types::common::ChatId;
+use crate::types::common::{ChatId, UserId};
 use crate::types::message::{
-    Message, MessageKind, SendMessageRequest, SentWebAppMessage, WriteAccessAllowed,
+    Chat, Message, MessageKind, SendMessageRequest, SentWebAppMessage, WriteAccessAllowed,
 };
-use crate::types::telegram::{InlineQueryResult, WebAppData};
+use crate::types::telegram::{CallbackPayload, InlineQueryResult, WebAppData};
 use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
 
 type HandlerFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
+type GuardFuture = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'static>>;
 type SessionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 type SourceFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<Update>>> + Send + 'a>>;
 
@@ -41,6 +45,8 @@ pub type HandlerFn = Arc<dyn Fn(BotContext, Update) -> HandlerFuture + Send + Sy
 /// Shared async middleware function.
 pub type MiddlewareFn =
     Arc<dyn Fn(BotContext, Update, HandlerFn) -> HandlerFuture + Send + Sync + 'static>;
+
+type GuardFn = Arc<dyn Fn(BotContext, Update) -> GuardFuture + Send + Sync + 'static>;
 
 /// Hook called whenever update source polling fails.
 pub type SourceErrorHook = Arc<dyn Fn(&Error) + Send + Sync + 'static>;
@@ -105,12 +111,19 @@ pub enum EngineEvent {
     },
 }
 
-type FilterFn = Arc<dyn Fn(&Update) -> bool + Send + Sync + 'static>;
+#[derive(Clone, Debug, Default)]
+struct DispatchState {
+    command_target: Option<String>,
+}
+
+type RouteFilterFn = Arc<dyn Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static>;
+type RouteHandlerFn =
+    Arc<dyn Fn(BotContext, Update, DispatchState) -> HandlerFuture + Send + Sync + 'static>;
 
 #[derive(Clone)]
 struct Route {
-    filter: FilterFn,
-    handler: HandlerFn,
+    filter: RouteFilterFn,
+    handler: RouteHandlerFn,
 }
 
 #[derive(Clone, Debug)]
@@ -126,14 +139,6 @@ impl Default for CommandTargetConfig {
             auto_resolve: true,
         }
     }
-}
-
-fn command_target_username(state: &Arc<StdRwLock<CommandTargetConfig>>) -> Option<String> {
-    state
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .username
-        .clone()
 }
 
 fn command_mention_from_text(text: &str) -> Option<String> {
@@ -253,6 +258,26 @@ pub trait BotCommands: Sized {
     }
 }
 
+/// Route-level parser for a command's trailing argument string.
+pub trait CommandArgs: Sized {
+    fn parse(args: &str) -> std::result::Result<Self, String>;
+}
+
+impl CommandArgs for String {
+    fn parse(args: &str) -> std::result::Result<Self, String> {
+        Ok(args.trim().to_owned())
+    }
+}
+
+impl CommandArgs for Vec<String> {
+    fn parse(args: &str) -> std::result::Result<Self, String> {
+        if args.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        tokenize_command_args(args).ok_or_else(|| "invalid quoted command arguments".to_owned())
+    }
+}
+
 /// Declarative route-level error strategy for business handlers.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -302,6 +327,28 @@ pub struct CallbackInput(pub String);
 impl CallbackInput {
     pub fn into_inner(self) -> String {
         self.0
+    }
+}
+
+/// Strongly-typed callback extractor payload with both decoded payload and raw data.
+#[derive(Clone, Debug)]
+pub struct TypedCallbackInput<T> {
+    pub payload: T,
+    pub raw: String,
+}
+
+impl<T> UpdateExtractor for TypedCallbackInput<T>
+where
+    T: CallbackPayload,
+{
+    fn extract(update: &Update) -> Option<Self> {
+        let raw = extract_callback_data(update)?.to_owned();
+        let payload = T::decode_callback_data(raw.as_str()).ok()?;
+        Some(Self { payload, raw })
+    }
+
+    fn describe() -> &'static str {
+        "typed callback payload"
     }
 }
 
@@ -416,6 +463,38 @@ where
     }
 }
 
+/// Request-scoped chat-member cache for the acting user.
+#[derive(Clone, Debug)]
+pub struct CurrentUserChatMember(pub ChatMember);
+
+impl CurrentUserChatMember {
+    pub fn into_inner(self) -> ChatMember {
+        self.0
+    }
+}
+
+impl AsRef<ChatMember> for CurrentUserChatMember {
+    fn as_ref(&self) -> &ChatMember {
+        &self.0
+    }
+}
+
+/// Request-scoped chat-member cache for the bot account.
+#[derive(Clone, Debug)]
+pub struct CurrentBotChatMember(pub ChatMember);
+
+impl CurrentBotChatMember {
+    pub fn into_inner(self) -> ChatMember {
+        self.0
+    }
+}
+
+impl AsRef<ChatMember> for CurrentBotChatMember {
+    fn as_ref(&self) -> &ChatMember {
+        &self.0
+    }
+}
+
 fn user_message_for_error(error: &Error, fallback: &str) -> String {
     match error.classification() {
         ErrorClass::Authentication => "bot authentication failed, please contact admin".to_owned(),
@@ -424,19 +503,117 @@ fn user_message_for_error(error: &Error, fallback: &str) -> String {
     }
 }
 
+type ContextExtensionValue = Arc<dyn Any + Send + Sync>;
+type ContextExtensions = Arc<StdRwLock<HashMap<TypeId, ContextExtensionValue>>>;
+
+fn downcast_extension<T>(value: ContextExtensionValue) -> Option<Arc<T>>
+where
+    T: Send + Sync + 'static,
+{
+    Arc::downcast::<T>(value).ok()
+}
+
 /// Dispatch context passed to handlers and middlewares.
 #[derive(Clone)]
 pub struct BotContext {
     client: Client,
+    extensions: ContextExtensions,
 }
 
 impl BotContext {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            extensions: Arc::new(StdRwLock::new(HashMap::new())),
+        }
     }
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    pub fn insert_extension<T>(&self, value: T) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.insert_extension_shared(Arc::new(value))
+    }
+
+    pub fn insert_extension_shared<T>(&self, value: Arc<T>) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let previous = self
+            .extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(TypeId::of::<T>(), value);
+        previous.and_then(downcast_extension::<T>)
+    }
+
+    pub fn get_or_insert_extension_with<T>(&self, init: impl FnOnce() -> T) -> Arc<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        if let Some(value) = self.get_extension::<T>() {
+            return value;
+        }
+
+        let mut extensions = self
+            .extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = extensions
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .and_then(downcast_extension::<T>)
+        {
+            return value;
+        }
+
+        let value = Arc::new(init());
+        let _ = extensions.insert(TypeId::of::<T>(), value.clone());
+        value
+    }
+
+    pub fn get_extension<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.extensions
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .and_then(downcast_extension::<T>)
+    }
+
+    pub fn contains_extension<T>(&self) -> bool
+    where
+        T: Send + Sync + 'static,
+    {
+        self.extensions
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn remove_extension<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&TypeId::of::<T>())
+            .and_then(downcast_extension::<T>)
+    }
+
+    pub fn clear_extensions(&self) {
+        self.extensions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     pub fn bot(&self) -> BotService {
@@ -604,6 +781,40 @@ impl BotContext {
         self.client.ergo().bootstrap_with_retry(plan, policy).await
     }
 
+    /// Runs startup bootstrap and prepares router command-target state.
+    pub async fn bootstrap_router(
+        &self,
+        router: &Router,
+        plan: &BootstrapPlan,
+    ) -> Result<BootstrapReport> {
+        self.bootstrap_router_with_retry(
+            router,
+            plan,
+            BootstrapRetryPolicy {
+                max_attempts: 1,
+                continue_on_failure: false,
+                ..BootstrapRetryPolicy::default()
+            },
+        )
+        .await
+    }
+
+    /// Runs startup bootstrap with retry/backoff and prepares router state.
+    pub async fn bootstrap_router_with_retry(
+        &self,
+        router: &Router,
+        plan: &BootstrapPlan,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<BootstrapReport> {
+        let report = self.bootstrap_with_retry(plan, policy).await?;
+        if let Some(me) = report.me.as_ref() {
+            let _ = router.prepare_with_user(me)?;
+        } else {
+            let _ = router.prepare(self.client()).await?;
+        }
+        Ok(report)
+    }
+
     /// Answers `answerWebAppQuery` with a typed inline result payload.
     pub async fn answer_web_app_query<T>(
         &self,
@@ -658,6 +869,88 @@ impl BotContext {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CurrentBotUser(User);
+
+async fn fetch_chat_member(
+    context: &BotContext,
+    chat_id: i64,
+    user_id: UserId,
+) -> Result<ChatMember> {
+    let request = GetChatMemberRequest {
+        chat_id: ChatId::from(chat_id),
+        user_id,
+    };
+    context.chats().get_chat_member(&request).await
+}
+
+fn require_chat_context(update: &Update, message: &str) -> HandlerResult {
+    let Some(chat) = extract_chat(update) else {
+        return Err(HandlerError::user(message));
+    };
+    if chat.is_group_chat() {
+        Ok(())
+    } else {
+        Err(HandlerError::user(message))
+    }
+}
+
+async fn current_user_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
+    if let Some(member) = context.get_extension::<CurrentUserChatMember>() {
+        return Ok(member.as_ref().0.clone());
+    }
+
+    let Some(chat_id) = update_chat_id(update) else {
+        return Err(invalid_request(
+            "update does not contain a chat id for chat member lookup",
+        ));
+    };
+    let Some(user) = extract_user(update) else {
+        return Err(invalid_request(
+            "update does not contain an acting user for chat member lookup",
+        ));
+    };
+
+    let member = fetch_chat_member(context, chat_id, user.id).await?;
+    let _ = context.insert_extension(CurrentUserChatMember(member.clone()));
+    Ok(member)
+}
+
+async fn current_bot_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
+    if let Some(member) = context.get_extension::<CurrentBotChatMember>() {
+        return Ok(member.as_ref().0.clone());
+    }
+
+    let Some(chat_id) = update_chat_id(update) else {
+        return Err(invalid_request(
+            "update does not contain a chat id for bot member lookup",
+        ));
+    };
+
+    let bot_user = if let Some(user) = context.get_extension::<CurrentBotUser>() {
+        user.as_ref().0.clone()
+    } else {
+        let me = context.bot().get_me().await?;
+        let _ = context.insert_extension(CurrentBotUser(me.clone()));
+        me
+    };
+
+    let member = fetch_chat_member(context, chat_id, bot_user.id).await?;
+    let _ = context.insert_extension(CurrentBotChatMember(member.clone()));
+    Ok(member)
+}
+
+fn missing_permissions(
+    member: &ChatMember,
+    permissions: &[ChatMemberPermission],
+) -> Vec<&'static str> {
+    permissions
+        .iter()
+        .filter(|permission| !member.has_permission(**permission))
+        .map(ChatMemberPermission::as_str)
+        .collect()
+}
+
 /// Declarative update router with middleware support.
 #[derive(Clone, Default)]
 pub struct Router {
@@ -668,9 +961,255 @@ pub struct Router {
     has_command_routes: bool,
 }
 
+/// Route-level in-memory throttle key scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThrottleScope {
+    User,
+    Chat,
+    Command,
+}
+
+#[derive(Clone, Default)]
+struct RouteThrottleStore {
+    inner: Arc<StdRwLock<HashMap<String, VecDeque<Instant>>>>,
+}
+
+impl RouteThrottleStore {
+    fn allow(&self, key: String, limit: usize, window: Duration) -> bool {
+        if limit == 0 || window.is_zero() {
+            return true;
+        }
+
+        let now = Instant::now();
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (allowed, remove_key) = {
+            let history = inner.entry(key.clone()).or_default();
+            while history
+                .front()
+                .is_some_and(|instant| now.saturating_duration_since(*instant) >= window)
+            {
+                let _ = history.pop_front();
+            }
+            let allowed = history.len() < limit;
+            if allowed {
+                history.push_back(now);
+            }
+            (allowed, history.is_empty())
+        };
+        if remove_key {
+            let _ = inner.remove(&key);
+        }
+        allowed
+    }
+}
+
+#[derive(Clone)]
+struct RouteDslConfig {
+    guards: Vec<GuardFn>,
+    route_label: String,
+}
+
+impl RouteDslConfig {
+    fn new(route_label: impl Into<String>) -> Self {
+        Self {
+            guards: Vec::new(),
+            route_label: route_label.into(),
+        }
+    }
+
+    fn push_guard<G, Fut>(&mut self, guard: G)
+    where
+        G: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        self.guards.push(Arc::new(move |context, update| {
+            Box::pin(guard(context, update))
+        }));
+    }
+
+    fn group_only(&mut self) {
+        self.push_guard(|_context, update| async move {
+            let Some(chat) = extract_chat(&update) else {
+                return Err(HandlerError::user(
+                    "this route is only available in group chats",
+                ));
+            };
+            if chat.is_group_chat() {
+                Ok(())
+            } else {
+                Err(HandlerError::user(
+                    "this route is only available in group chats",
+                ))
+            }
+        });
+    }
+
+    fn supergroup_only(&mut self) {
+        self.push_guard(|_context, update| async move {
+            let Some(chat) = extract_chat(&update) else {
+                return Err(HandlerError::user(
+                    "this route is only available in supergroups",
+                ));
+            };
+            if chat.is_supergroup() {
+                Ok(())
+            } else {
+                Err(HandlerError::user(
+                    "this route is only available in supergroups",
+                ))
+            }
+        });
+    }
+
+    fn admin_only(&mut self) {
+        self.push_guard(|context, update| async move {
+            require_chat_context(&update, "this route is only available in group chats")?;
+            let member = current_user_chat_member(&context, &update)
+                .await
+                .map_err(HandlerError::from)?;
+            if member.is_admin() {
+                Ok(())
+            } else {
+                Err(HandlerError::user("chat administrators only"))
+            }
+        });
+    }
+
+    fn owner_only(&mut self) {
+        self.push_guard(|context, update| async move {
+            require_chat_context(&update, "this route is only available in group chats")?;
+            let member = current_user_chat_member(&context, &update)
+                .await
+                .map_err(HandlerError::from)?;
+            if member.is_owner() {
+                Ok(())
+            } else {
+                Err(HandlerError::user("chat owner only"))
+            }
+        });
+    }
+
+    fn require_permissions(&mut self, permissions: Vec<ChatMemberPermission>) {
+        self.push_guard(move |context, update| {
+            let permissions = permissions.clone();
+            async move {
+                require_chat_context(&update, "this route is only available in group chats")?;
+                let member = current_user_chat_member(&context, &update)
+                    .await
+                    .map_err(HandlerError::from)?;
+                let missing = missing_permissions(&member, permissions.as_slice());
+                if missing.is_empty() {
+                    Ok(())
+                } else {
+                    Err(HandlerError::user(format!(
+                        "missing required permissions: {}",
+                        missing.join(", ")
+                    )))
+                }
+            }
+        });
+    }
+
+    fn bot_can(&mut self, permissions: Vec<ChatMemberPermission>) {
+        self.push_guard(move |context, update| {
+            let permissions = permissions.clone();
+            async move {
+                require_chat_context(&update, "this route is only available in group chats")?;
+                let member = current_bot_chat_member(&context, &update)
+                    .await
+                    .map_err(HandlerError::from)?;
+                let missing = missing_permissions(&member, permissions.as_slice());
+                if missing.is_empty() {
+                    Ok(())
+                } else {
+                    Err(HandlerError::user(format!(
+                        "bot is missing required permissions: {}",
+                        missing.join(", ")
+                    )))
+                }
+            }
+        });
+    }
+
+    fn throttle(&mut self, scope: ThrottleScope, limit: u32, window: Duration) {
+        if window.is_zero() {
+            return;
+        }
+
+        let store = RouteThrottleStore::default();
+        let route_label = self.route_label.clone();
+        let limit = limit.max(1) as usize;
+        self.push_guard(move |_context, update| {
+            let store = store.clone();
+            let route_label = route_label.clone();
+            async move {
+                let key = throttle_key(scope, &update, route_label.as_str())?;
+                if store.allow(key, limit, window) {
+                    Ok(())
+                } else {
+                    Err(HandlerError::user(
+                        "too many matching requests, please retry shortly",
+                    ))
+                }
+            }
+        });
+    }
+}
+
+fn throttle_key(
+    scope: ThrottleScope,
+    update: &Update,
+    route_label: &str,
+) -> std::result::Result<String, HandlerError> {
+    match scope {
+        ThrottleScope::User => {
+            let Some(user_id) = extract_user_id(update) else {
+                return Err(HandlerError::user(
+                    "this route requires an acting user for throttling",
+                ));
+            };
+            Ok(format!("{route_label}:user:{user_id}"))
+        }
+        ThrottleScope::Chat => {
+            let Some(chat_id) = update_chat_id(update) else {
+                return Err(HandlerError::user(
+                    "this route requires a chat context for throttling",
+                ));
+            };
+            Ok(format!("{route_label}:chat:{chat_id}"))
+        }
+        ThrottleScope::Command => Ok(format!("{route_label}:command")),
+    }
+}
+
+async fn run_route_guards(
+    guards: &[GuardFn],
+    context: BotContext,
+    update: Update,
+) -> HandlerResult {
+    for guard in guards {
+        guard(context.clone(), update.clone()).await?;
+    }
+    Ok(())
+}
+
 impl Router {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn command_route(&mut self, command: impl Into<String>) -> CommandRouteBuilder<'_> {
+        CommandRouteBuilder::new(self, command.into())
+    }
+
+    pub fn typed_callback_route<T>(&mut self) -> TypedCallbackRouteBuilder<'_, T>
+    where
+        T: CallbackPayload + Send + Sync + 'static,
+    {
+        TypedCallbackRouteBuilder::new(self)
     }
 
     fn command_target_snapshot(&self) -> CommandTargetConfig {
@@ -723,12 +1262,46 @@ impl Router {
         Ok(())
     }
 
+    fn prepare_command_target_with_user(&self, me: &User) -> Result<()> {
+        if !self.has_command_routes {
+            return Ok(());
+        }
+
+        let state = self.command_target_snapshot();
+        if state.username.is_some() || !state.auto_resolve {
+            return Ok(());
+        }
+
+        let username = normalize_bot_username(me.username.as_deref().ok_or_else(|| {
+            invalid_request(
+                "getMe returned bot without username; command mention routing requires a username",
+            )
+        })?)
+        .ok_or_else(|| invalid_request("bot username cannot be empty"))?;
+
+        let mut state = self
+            .command_target
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.username.is_none() && state.auto_resolve {
+            state.username = Some(username);
+        }
+
+        Ok(())
+    }
+
     /// Pre-resolves runtime routing state that may require one-time SDK I/O.
     ///
     /// Today this eagerly caches the current bot username for command mention
     /// routing so dispatch itself can stay side-effect free.
     pub async fn prepare(&self, client: &Client) -> Result<&Self> {
         self.prepare_command_target(client).await?;
+        Ok(self)
+    }
+
+    /// Prepares routing state from a previously fetched `getMe` result.
+    pub fn prepare_with_user(&self, me: &User) -> Result<&Self> {
+        self.prepare_command_target_with_user(me)?;
         Ok(self)
     }
 
@@ -787,39 +1360,44 @@ impl Router {
         self
     }
 
-    pub fn route<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
+    fn current_dispatch_state(&self) -> DispatchState {
+        DispatchState {
+            command_target: self.command_target_username(),
+        }
+    }
+
+    fn route_with_state<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
     where
-        P: Fn(&Update) -> bool + Send + Sync + 'static,
-        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        P: Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static,
+        H: Fn(BotContext, Update, DispatchState) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         self.routes.push(Route {
             filter: Arc::new(predicate),
-            handler: to_handler_fn(handler),
+            handler: to_route_handler_fn(handler),
         });
         self
     }
 
-    /// Adds route with declarative error policy.
-    pub fn route_with_policy<P, H, Fut>(
+    fn route_with_policy_state<P, H, Fut>(
         &mut self,
         predicate: P,
         policy: ErrorPolicy,
         handler: H,
     ) -> &mut Self
     where
-        P: Fn(&Update) -> bool + Send + Sync + 'static,
-        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        P: Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static,
+        H: Fn(BotContext, Update, DispatchState) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
-        self.route(predicate, move |context, update| {
+        self.route_with_state(predicate, move |context, update, state| {
             let handler = Arc::clone(&handler);
             let context_for_policy = context.clone();
             let update_for_policy = update.clone();
             let policy = policy.clone();
             async move {
-                match handler(context, update).await {
+                match handler(context, update, state).await {
                     Ok(()) => Ok(()),
                     Err(error) => match policy {
                         ErrorPolicy::Propagate => Err(error),
@@ -835,6 +1413,61 @@ impl Router {
                 }
             }
         })
+    }
+
+    fn route_fallible_with_state<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
+    where
+        P: Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static,
+        H: Fn(BotContext, Update, DispatchState) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let handler = Arc::new(handler);
+        self.route_with_state(predicate, move |context, update, state| {
+            let handler = Arc::clone(&handler);
+            let context_for_error = context.clone();
+            let update_for_error = update.clone();
+            async move {
+                match handler(context, update, state).await {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        context_for_error
+                            .resolve_handler_error(&update_for_error, error)
+                            .await
+                    }
+                }
+            }
+        })
+    }
+
+    pub fn route<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
+    where
+        P: Fn(&Update) -> bool + Send + Sync + 'static,
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route_with_state(
+            move |update, _state| predicate(update),
+            move |context, update, _state| handler(context, update),
+        )
+    }
+
+    /// Adds route with declarative error policy.
+    pub fn route_with_policy<P, H, Fut>(
+        &mut self,
+        predicate: P,
+        policy: ErrorPolicy,
+        handler: H,
+    ) -> &mut Self
+    where
+        P: Fn(&Update) -> bool + Send + Sync + 'static,
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.route_with_policy_state(
+            move |update, _state| predicate(update),
+            policy,
+            move |context, update, _state| handler(context, update),
+        )
     }
 
     /// Adds route with typed extractor so handlers can focus on business input.
@@ -1040,22 +1673,10 @@ impl Router {
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
-        let handler = Arc::new(handler);
-        self.route(predicate, move |context, update| {
-            let handler = Arc::clone(&handler);
-            let context_for_error = context.clone();
-            let update_for_error = update.clone();
-            async move {
-                match handler(context, update).await {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        context_for_error
-                            .resolve_handler_error(&update_for_error, error)
-                            .await
-                    }
-                }
-            }
-        })
+        self.route_fallible_with_state(
+            move |update, _state| predicate(update),
+            move |context, update, _state| handler(context, update),
+        )
     }
 
     /// Routes only incoming `update.message` updates.
@@ -1198,20 +1819,29 @@ impl Router {
         self.on_extracted::<JsonCallback<T>, _, _>(handler)
     }
 
+    /// Routes callback updates with strongly-typed callback payloads.
+    pub fn on_typed_callback<T, H, Fut>(&mut self, handler: H) -> &mut Self
+    where
+        T: CallbackPayload + Send + 'static,
+        H: Fn(BotContext, Update, TypedCallbackInput<T>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.on_extracted::<TypedCallbackInput<T>, _, _>(handler)
+    }
+
     pub fn on_command<H, Fut>(&mut self, command: impl Into<String>, handler: H) -> &mut Self
     where
         H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let expected = command.into();
-        let target = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route(
-            move |update| {
-                extract_command_for_bot(update, command_target_username(&target).as_deref())
+        self.route_with_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
                     .is_some_and(|command| command == expected)
             },
-            handler,
+            move |context, update, _state| handler(context, update),
         )
     }
 
@@ -1227,15 +1857,14 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let expected = command.into();
-        let target = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route_with_policy(
-            move |update| {
-                extract_command_for_bot(update, command_target_username(&target).as_deref())
+        self.route_with_policy_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
                     .is_some_and(|command| command == expected)
             },
             policy,
-            handler,
+            move |context, update, _state| handler(context, update),
         )
     }
 
@@ -1249,14 +1878,13 @@ impl Router {
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let expected = command.into();
-        let target = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route_fallible(
-            move |update| {
-                extract_command_for_bot(update, command_target_username(&target).as_deref())
+        self.route_fallible_with_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
                     .is_some_and(|command| command == expected)
             },
-            handler,
+            move |context, update, _state| handler(context, update),
         )
     }
 
@@ -1266,23 +1894,15 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
-        let target_filter = Arc::clone(&self.command_target);
-        let target_handler = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route(
-            move |update| {
-                extract_command_data_for_bot(
-                    update,
-                    command_target_username(&target_filter).as_deref(),
-                )
-                .is_some()
+        self.route_with_state(
+            move |update, state| {
+                extract_command_data_for_bot(update, state.command_target.as_deref()).is_some()
             },
-            move |context, update| {
+            move |context, update, state| {
                 let handler = Arc::clone(&handler);
-                let command = extract_command_data_for_bot(
-                    &update,
-                    command_target_username(&target_handler).as_deref(),
-                );
+                let command =
+                    extract_command_data_for_bot(&update, state.command_target.as_deref());
                 async move {
                     let Some(command) = command else {
                         return Err(invalid_request("update does not contain a valid command"));
@@ -1300,23 +1920,15 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
-        let target_filter = Arc::clone(&self.command_target);
-        let target_handler = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route(
-            move |update| {
-                parse_typed_command_for_bot::<C>(
-                    update,
-                    command_target_username(&target_filter).as_deref(),
-                )
-                .is_some()
+        self.route_with_state(
+            move |update, state| {
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
             },
-            move |context, update| {
+            move |context, update, state| {
                 let handler = Arc::clone(&handler);
-                let parsed = parse_typed_command_for_bot::<C>(
-                    &update,
-                    command_target_username(&target_handler).as_deref(),
-                );
+                let parsed =
+                    parse_typed_command_for_bot::<C>(&update, state.command_target.as_deref());
                 async move {
                     let Some(command) = parsed else {
                         return Err(invalid_request(
@@ -1337,32 +1949,18 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
-        let target_filter = Arc::clone(&self.command_target);
-        let target_handler = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route(
-            move |update| {
-                parse_typed_command_for_bot::<C>(
-                    update,
-                    command_target_username(&target_filter).as_deref(),
-                )
-                .is_some()
-                    && extract_command_data_for_bot(
-                        update,
-                        command_target_username(&target_filter).as_deref(),
-                    )
-                    .is_some()
+        self.route_with_state(
+            move |update, state| {
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
+                    && extract_command_data_for_bot(update, state.command_target.as_deref())
+                        .is_some()
             },
-            move |context, update| {
+            move |context, update, state| {
                 let handler = Arc::clone(&handler);
-                let parsed = parse_typed_command_for_bot::<C>(
-                    &update,
-                    command_target_username(&target_handler).as_deref(),
-                );
-                let raw = extract_command_data_for_bot(
-                    &update,
-                    command_target_username(&target_handler).as_deref(),
-                );
+                let parsed =
+                    parse_typed_command_for_bot::<C>(&update, state.command_target.as_deref());
+                let raw = extract_command_data_for_bot(&update, state.command_target.as_deref());
                 async move {
                     let Some(command) = parsed else {
                         return Err(invalid_request(
@@ -1385,23 +1983,15 @@ impl Router {
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let handler = Arc::new(handler);
-        let target_filter = Arc::clone(&self.command_target);
-        let target_handler = Arc::clone(&self.command_target);
         self.has_command_routes = true;
-        self.route_fallible(
-            move |update| {
-                parse_typed_command_for_bot::<C>(
-                    update,
-                    command_target_username(&target_filter).as_deref(),
-                )
-                .is_some()
+        self.route_fallible_with_state(
+            move |update, state| {
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
             },
-            move |context, update| {
+            move |context, update, state| {
                 let handler = Arc::clone(&handler);
-                let parsed = parse_typed_command_for_bot::<C>(
-                    &update,
-                    command_target_username(&target_handler).as_deref(),
-                );
+                let parsed =
+                    parse_typed_command_for_bot::<C>(&update, state.command_target.as_deref());
                 async move {
                     let Some(command) = parsed else {
                         return Err(HandlerError::internal(invalid_request(
@@ -1438,11 +2028,20 @@ impl Router {
     /// network I/O. If you rely on auto command-target resolution for
     /// `/cmd@BotUsername`, call `prepare` or `prepare_for_update` first.
     pub async fn dispatch(&self, context: BotContext, update: Update) -> Result<bool> {
+        let dispatch_state = self.current_dispatch_state();
+
         let handler = self
             .routes
             .iter()
-            .find(|route| (route.filter)(&update))
-            .map(|route| Arc::clone(&route.handler))
+            .find(|route| (route.filter)(&update, &dispatch_state))
+            .map(|route| {
+                let route_handler = Arc::clone(&route.handler);
+                let state = dispatch_state.clone();
+                Arc::new(move |context: BotContext, update: Update| {
+                    let state = state.clone();
+                    route_handler(context, update, state)
+                }) as HandlerFn
+            })
             .or_else(|| self.fallback.as_ref().map(Arc::clone));
 
         let Some(handler) = handler else {
@@ -1452,6 +2051,12 @@ impl Router {
         let wrapped = self.apply_middlewares(handler);
         wrapped(context, update).await?;
         Ok(true)
+    }
+
+    /// Prepares runtime routing state for the given update and immediately dispatches it.
+    pub async fn dispatch_prepared(&self, context: BotContext, update: Update) -> Result<bool> {
+        self.prepare_for_update(context.client(), &update).await?;
+        self.dispatch(context, update).await
     }
 
     fn apply_middlewares(&self, handler: HandlerFn) -> HandlerFn {
@@ -1471,12 +2076,312 @@ impl Router {
     }
 }
 
+/// Chainable DSL for command-scoped route configuration.
+pub struct CommandRouteBuilder<'a> {
+    router: &'a mut Router,
+    command: String,
+    config: RouteDslConfig,
+}
+
+impl<'a> CommandRouteBuilder<'a> {
+    fn new(router: &'a mut Router, command: String) -> Self {
+        let route_label = format!("command:{command}");
+        Self {
+            router,
+            command,
+            config: RouteDslConfig::new(route_label),
+        }
+    }
+
+    pub fn group_only(mut self) -> Self {
+        self.config.group_only();
+        self
+    }
+
+    pub fn supergroup_only(mut self) -> Self {
+        self.config.supergroup_only();
+        self
+    }
+
+    pub fn admin_only(mut self) -> Self {
+        self.config.admin_only();
+        self
+    }
+
+    pub fn owner_only(mut self) -> Self {
+        self.config.owner_only();
+        self
+    }
+
+    pub fn require_permissions(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.require_permissions(permissions.to_vec());
+        self
+    }
+
+    pub fn bot_can(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.bot_can(permissions.to_vec());
+        self
+    }
+
+    pub fn throttle(mut self, scope: ThrottleScope, limit: u32, window: Duration) -> Self {
+        self.config.throttle(scope, limit, window);
+        self
+    }
+
+    pub fn throttle_user(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::User, 1, window)
+    }
+
+    pub fn throttle_chat(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Chat, 1, window)
+    }
+
+    pub fn throttle_command(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Command, 1, window)
+    }
+
+    pub fn parse<T>(self) -> ParsedCommandRouteBuilder<'a, T>
+    where
+        T: CommandArgs + Send + Sync + 'static,
+    {
+        ParsedCommandRouteBuilder {
+            router: self.router,
+            command: self.command,
+            config: self.config,
+            _parsed: std::marker::PhantomData,
+        }
+    }
+
+    pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        let expected = self.command;
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.has_command_routes = true;
+        self.router.route_fallible_with_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
+                    .is_some_and(|command| command == expected)
+            },
+            move |context, update, _state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                async move {
+                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
+                    handler(context, update).await.map_err(HandlerError::from)
+                }
+            },
+        )
+    }
+}
+
+/// Chainable DSL for command routes that parse typed trailing arguments.
+pub struct ParsedCommandRouteBuilder<'a, T> {
+    router: &'a mut Router,
+    command: String,
+    config: RouteDslConfig,
+    _parsed: std::marker::PhantomData<T>,
+}
+
+impl<'a, T> ParsedCommandRouteBuilder<'a, T>
+where
+    T: CommandArgs + Send + Sync + 'static,
+{
+    pub fn group_only(mut self) -> Self {
+        self.config.group_only();
+        self
+    }
+
+    pub fn supergroup_only(mut self) -> Self {
+        self.config.supergroup_only();
+        self
+    }
+
+    pub fn admin_only(mut self) -> Self {
+        self.config.admin_only();
+        self
+    }
+
+    pub fn owner_only(mut self) -> Self {
+        self.config.owner_only();
+        self
+    }
+
+    pub fn require_permissions(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.require_permissions(permissions.to_vec());
+        self
+    }
+
+    pub fn bot_can(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.bot_can(permissions.to_vec());
+        self
+    }
+
+    pub fn throttle(mut self, scope: ThrottleScope, limit: u32, window: Duration) -> Self {
+        self.config.throttle(scope, limit, window);
+        self
+    }
+
+    pub fn throttle_user(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::User, 1, window)
+    }
+
+    pub fn throttle_chat(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Chat, 1, window)
+    }
+
+    pub fn throttle_command(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Command, 1, window)
+    }
+
+    pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        let expected = self.command;
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.has_command_routes = true;
+        self.router.route_fallible_with_state(
+            move |update, state| {
+                extract_command_for_bot(update, state.command_target.as_deref())
+                    .is_some_and(|command| command == expected)
+            },
+            move |context, update, state| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                async move {
+                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
+                    let Some(command) =
+                        extract_command_data_for_bot(&update, state.command_target.as_deref())
+                    else {
+                        return Err(HandlerError::internal(invalid_request(
+                            "update does not contain a valid command",
+                        )));
+                    };
+                    let parsed = T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
+                    handler(context, update, parsed)
+                        .await
+                        .map_err(HandlerError::from)
+                }
+            },
+        )
+    }
+}
+
+/// Chainable DSL for strongly-typed callback routes.
+pub struct TypedCallbackRouteBuilder<'a, T> {
+    router: &'a mut Router,
+    config: RouteDslConfig,
+    _payload: std::marker::PhantomData<T>,
+}
+
+impl<'a, T> TypedCallbackRouteBuilder<'a, T>
+where
+    T: CallbackPayload + Send + Sync + 'static,
+{
+    fn new(router: &'a mut Router) -> Self {
+        Self {
+            router,
+            config: RouteDslConfig::new(format!("callback:{}", std::any::type_name::<T>())),
+            _payload: std::marker::PhantomData,
+        }
+    }
+
+    pub fn group_only(mut self) -> Self {
+        self.config.group_only();
+        self
+    }
+
+    pub fn supergroup_only(mut self) -> Self {
+        self.config.supergroup_only();
+        self
+    }
+
+    pub fn admin_only(mut self) -> Self {
+        self.config.admin_only();
+        self
+    }
+
+    pub fn owner_only(mut self) -> Self {
+        self.config.owner_only();
+        self
+    }
+
+    pub fn require_permissions(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.require_permissions(permissions.to_vec());
+        self
+    }
+
+    pub fn bot_can(mut self, permissions: &[ChatMemberPermission]) -> Self {
+        self.config.bot_can(permissions.to_vec());
+        self
+    }
+
+    pub fn throttle(mut self, scope: ThrottleScope, limit: u32, window: Duration) -> Self {
+        self.config.throttle(scope, limit, window);
+        self
+    }
+
+    pub fn throttle_user(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::User, 1, window)
+    }
+
+    pub fn throttle_chat(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Chat, 1, window)
+    }
+
+    pub fn throttle_command(self, window: Duration) -> Self {
+        self.throttle(ThrottleScope::Command, 1, window)
+    }
+
+    pub fn handle<H, Fut>(self, handler: H) -> &'a mut Router
+    where
+        H: Fn(BotContext, Update, TypedCallbackInput<T>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        let guards = Arc::new(self.config.guards);
+        let handler = Arc::new(handler);
+        self.router.route_fallible(
+            |update| TypedCallbackInput::<T>::extract(update).is_some(),
+            move |context, update| {
+                let guards = Arc::clone(&guards);
+                let handler = Arc::clone(&handler);
+                let payload = TypedCallbackInput::<T>::extract(&update);
+                async move {
+                    run_route_guards(guards.as_ref(), context.clone(), update.clone()).await?;
+                    let Some(payload) = payload else {
+                        return Err(HandlerError::internal(invalid_request(
+                            "update does not contain a valid typed callback payload",
+                        )));
+                    };
+                    handler(context, update, payload)
+                        .await
+                        .map_err(HandlerError::from)
+                }
+            },
+        )
+    }
+}
+
 fn to_handler_fn<H, Fut>(handler: H) -> HandlerFn
 where
     H: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<()>> + Send + 'static,
 {
     Arc::new(move |context, update| Box::pin(handler(context, update)))
+}
+
+fn to_route_handler_fn<H, Fut>(handler: H) -> RouteHandlerFn
+where
+    H: Fn(BotContext, Update, DispatchState) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<()>> + Send + 'static,
+{
+    Arc::new(move |context, update, state| Box::pin(handler(context, update, state)))
 }
 
 fn to_middleware_fn<M, Fut>(middleware: M) -> MiddlewareFn
@@ -1643,6 +2548,36 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
         .and_then(|query| query.message.as_ref())
 }
 
+/// Returns canonical chat extracted from the update.
+pub fn extract_chat(update: &Update) -> Option<&Chat> {
+    extract_message(update).map(Message::chat)
+}
+
+/// Returns the acting Telegram user for the update when available.
+pub fn extract_user(update: &Update) -> Option<&User> {
+    if let Some(query) = update.callback_query.as_ref() {
+        return Some(&query.from);
+    }
+    if let Some(message) = update.message.as_ref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.edited_message.as_ref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.channel_post.as_ref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.edited_channel_post.as_ref() {
+        return message.from_user();
+    }
+    None
+}
+
+/// Returns acting Telegram user id for the update when available.
+pub fn extract_user_id(update: &Update) -> Option<i64> {
+    Some(extract_user(update)?.id.0)
+}
+
 /// Returns primary kind of extracted message.
 pub fn extract_message_kind(update: &Update) -> Option<MessageKind> {
     Some(extract_message(update)?.kind())
@@ -1675,6 +2610,15 @@ where
 {
     let payload = extract_callback_data(update)?;
     serde_json::from_str(payload).ok()
+}
+
+/// Returns a decoded typed callback payload from update callback data.
+pub fn extract_typed_callback<T>(update: &Update) -> Option<T>
+where
+    T: CallbackPayload,
+{
+    let payload = extract_callback_data(update)?;
+    T::decode_callback_data(payload).ok()
 }
 
 /// Returns command name from canonical message text.
@@ -1788,6 +2732,9 @@ pub fn command_definitions<C: BotCommands>() -> Vec<crate::types::command::BotCo
 /// Convenience extractor trait for update handlers.
 pub trait UpdateExt {
     fn message(&self) -> Option<&Message>;
+    fn chat(&self) -> Option<&Chat> {
+        self.message().map(Message::chat)
+    }
     fn message_kind(&self) -> Option<MessageKind> {
         self.message().map(Message::kind)
     }
@@ -1805,18 +2752,29 @@ pub trait UpdateExt {
     fn callback_json<T>(&self) -> Option<T>
     where
         T: DeserializeOwned;
+    fn typed_callback<T>(&self) -> Option<T>
+    where
+        T: CallbackPayload;
     fn command(&self) -> Option<&str>;
     fn command_args(&self) -> Option<&str>;
     fn command_data(&self) -> Option<CommandData>;
     fn typed_command<C>(&self) -> Option<C>
     where
         C: BotCommands;
+    fn user(&self) -> Option<&User>;
+    fn user_id(&self) -> Option<i64> {
+        self.user().map(|user| user.id.0)
+    }
     fn chat_id(&self) -> Option<i64>;
 }
 
 impl UpdateExt for Update {
     fn message(&self) -> Option<&Message> {
         extract_message(self)
+    }
+
+    fn chat(&self) -> Option<&Chat> {
+        extract_chat(self)
     }
 
     fn message_kind(&self) -> Option<MessageKind> {
@@ -1850,6 +2808,13 @@ impl UpdateExt for Update {
         extract_callback_json(self)
     }
 
+    fn typed_callback<T>(&self) -> Option<T>
+    where
+        T: CallbackPayload,
+    {
+        extract_typed_callback(self)
+    }
+
     fn command(&self) -> Option<&str> {
         extract_command(self)
     }
@@ -1867,6 +2832,10 @@ impl UpdateExt for Update {
         C: BotCommands,
     {
         parse_typed_command(self)
+    }
+
+    fn user(&self) -> Option<&User> {
+        extract_user(self)
     }
 
     fn chat_id(&self) -> Option<i64> {
@@ -3618,6 +4587,30 @@ where
         &mut self.source
     }
 
+    /// Prepares router runtime state ahead of dispatch.
+    pub async fn prepare_router(&self) -> Result<&Self> {
+        let _ = self.router.prepare(&self.client).await?;
+        Ok(self)
+    }
+
+    /// Runs startup bootstrap and prepares router runtime state.
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+        BotContext::new(self.client.clone())
+            .bootstrap_router(&self.router, plan)
+            .await
+    }
+
+    /// Runs startup bootstrap with retry/backoff and prepares router state.
+    pub async fn bootstrap_with_retry(
+        &self,
+        plan: &BootstrapPlan,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<BootstrapReport> {
+        BotContext::new(self.client.clone())
+            .bootstrap_router_with_retry(&self.router, plan, policy)
+            .await
+    }
+
     pub fn on_source_error<F>(mut self, hook: F) -> Self
     where
         F: Fn(&Error) + Send + Sync + 'static,
@@ -4014,6 +5007,26 @@ where
         self
     }
 
+    /// Prepares router runtime state ahead of serving updates.
+    pub async fn prepare_router(&self) -> Result<&Self> {
+        let _ = self.engine.prepare_router().await?;
+        Ok(self)
+    }
+
+    /// Runs startup bootstrap and prepares router runtime state.
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+        self.engine.bootstrap(plan).await
+    }
+
+    /// Runs startup bootstrap with retry/backoff and prepares router state.
+    pub async fn bootstrap_with_retry(
+        &self,
+        plan: &BootstrapPlan,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<BootstrapReport> {
+        self.engine.bootstrap_with_retry(plan, policy).await
+    }
+
     pub fn on_source_error<F>(mut self, hook: F) -> Self
     where
         F: Fn(&Error) + Send + Sync + 'static,
@@ -4133,6 +5146,24 @@ impl WebhookRunner {
         self
     }
 
+    /// Runs startup bootstrap and prepares webhook router state.
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+        BotContext::new(self.client.clone())
+            .bootstrap_router(&self.router, plan)
+            .await
+    }
+
+    /// Runs startup bootstrap with retry/backoff and prepares webhook router state.
+    pub async fn bootstrap_with_retry(
+        &self,
+        plan: &BootstrapPlan,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<BootstrapReport> {
+        BotContext::new(self.client.clone())
+            .bootstrap_router_with_retry(&self.router, plan, policy)
+            .await
+    }
+
     pub fn verify_secret_token(&self, incoming_secret: Option<&str>) -> bool {
         match self.config.expected_secret_token.as_deref() {
             None => true,
@@ -4165,11 +5196,8 @@ impl WebhookRunner {
     /// Dispatches one already-deserialized update and returns structured outcome.
     pub async fn dispatch_update_outcome(&self, update: Update) -> Result<DispatchOutcome> {
         let update_id = update.update_id;
-        self.router
-            .prepare_for_update(&self.client, &update)
-            .await?;
         let context = BotContext::new(self.client.clone());
-        let result = self.router.dispatch(context, update).await;
+        let result = self.router.dispatch_prepared(context, update).await;
 
         match result {
             Ok(true) => Ok(DispatchOutcome::Handled { update_id }),
@@ -4301,10 +5329,11 @@ pub mod testing {
 
         pub async fn dispatch(&self, update: Update) -> Result<DispatchOutcome> {
             let update_id = update.update_id;
-            self.router
-                .prepare_for_update(self.context.client(), &update)
-                .await?;
-            match self.router.dispatch(self.context.clone(), update).await? {
+            match self
+                .router
+                .dispatch_prepared(self.context.clone(), update)
+                .await?
+            {
                 true => Ok(DispatchOutcome::Handled { update_id }),
                 false => Ok(DispatchOutcome::Ignored { update_id }),
             }

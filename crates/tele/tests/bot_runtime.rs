@@ -10,19 +10,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotContext, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData, DispatchOutcome,
-    EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
-    JsonFileSessionStore, LongPollingSource, OutboxConfig, PollingConfig, Router, StateTransition,
-    TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner, WriteAccessAllowedInput,
-    apply_chat_state_transition, channel_source, clear_chat_state, extract_callback_data,
-    extract_callback_json, extract_command, extract_command_args, extract_command_data,
-    extract_message, extract_text, extract_web_app_data, extract_write_access_allowed,
-    load_chat_state, parse_command_text, parse_command_text_for_bot, save_chat_state,
-    tokenize_command_args,
+    BotContext, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData,
+    CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome, EngineConfig, EngineEvent,
+    ErrorPolicy, HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
+    OutboxConfig, PollingConfig, Router, StateTransition, TextInput, UpdateExt, UpdateExtractor,
+    WebAppInput, WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition,
+    channel_source, clear_chat_state, extract_callback_data, extract_callback_json,
+    extract_command, extract_command_args, extract_command_data, extract_message, extract_text,
+    extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
+    parse_command_text, parse_command_text_for_bot, save_chat_state, tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
@@ -30,11 +31,17 @@ use tele::types::telegram::{
     MenuButtonWebApp, WebAppInfo,
 };
 use tele::types::update::Update;
-use tele::types::{MessageKind, UpdateKind};
+use tele::types::{ChatMember, ChatMemberPermission, MessageKind, UpdateKind};
 use tele::{Error, ErrorClass};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct DemoCallbackPayload {
+    action: String,
+    target: i64,
+}
 
 fn accept_with_timeout(
     listener: &TcpListener,
@@ -258,6 +265,28 @@ fn message_update(update_id: i64, chat_id: i64, text: &str) -> serde_json::Value
     })
 }
 
+fn group_message_update(
+    update_id: i64,
+    chat_id: i64,
+    user_id: i64,
+    text: &str,
+) -> serde_json::Value {
+    json!({
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "date": 1700000000 + update_id,
+            "chat": {"id": chat_id, "type": "supergroup", "title": "ops"},
+            "from": {
+                "id": user_id,
+                "is_bot": false,
+                "first_name": "moderator"
+            },
+            "text": text
+        }
+    })
+}
+
 fn callback_update(update_id: i64, chat_id: i64, data: &str) -> serde_json::Value {
     json!({
         "update_id": update_id,
@@ -277,6 +306,60 @@ fn callback_update(update_id: i64, chat_id: i64, data: &str) -> serde_json::Valu
             "data": data
         }
     })
+}
+
+fn permission_field(permission: ChatMemberPermission) -> &'static str {
+    match permission {
+        ChatMemberPermission::ManageChat => "can_manage_chat",
+        ChatMemberPermission::DeleteMessages => "can_delete_messages",
+        ChatMemberPermission::ManageVideoChats => "can_manage_video_chats",
+        ChatMemberPermission::RestrictMembers => "can_restrict_members",
+        ChatMemberPermission::PromoteMembers => "can_promote_members",
+        ChatMemberPermission::ChangeInfo => "can_change_info",
+        ChatMemberPermission::InviteUsers => "can_invite_users",
+        ChatMemberPermission::PostStories => "can_post_stories",
+        ChatMemberPermission::EditStories => "can_edit_stories",
+        ChatMemberPermission::DeleteStories => "can_delete_stories",
+        ChatMemberPermission::PostMessages => "can_post_messages",
+        ChatMemberPermission::EditMessages => "can_edit_messages",
+        ChatMemberPermission::PinMessages => "can_pin_messages",
+        ChatMemberPermission::ManageTopics => "can_manage_topics",
+        _ => "unknown_permission",
+    }
+}
+
+fn chat_member_with_permissions(
+    user_id: i64,
+    is_bot: bool,
+    status: &str,
+    permissions: &[ChatMemberPermission],
+) -> Result<ChatMember, DynError> {
+    let mut value = serde_json::Map::new();
+    let mut user = serde_json::Map::new();
+    let mut manage_chat = None;
+
+    let _ = value.insert("status".to_owned(), json!(status));
+    let _ = user.insert("id".to_owned(), json!(user_id));
+    let _ = user.insert("is_bot".to_owned(), json!(is_bot));
+    let _ = user.insert(
+        "first_name".to_owned(),
+        json!(if is_bot { "tele" } else { "moderator" }),
+    );
+    let _ = value.insert("user".to_owned(), serde_json::Value::Object(user));
+
+    for permission in permissions {
+        let field = permission_field(*permission);
+        if field == "can_manage_chat" {
+            manage_chat = Some(true);
+        } else if field != "unknown_permission" {
+            let _ = value.insert(field.to_owned(), json!(true));
+        }
+    }
+    if let Some(manage_chat) = manage_chat {
+        let _ = value.insert("can_manage_chat".to_owned(), json!(manage_chat));
+    }
+
+    serde_json::from_value(serde_json::Value::Object(value)).map_err(Into::into)
 }
 
 #[tokio::test]
@@ -480,6 +563,172 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError> {
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct TraceId(u64);
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let hits = Arc::new(AtomicUsize::new(0));
+
+    let mut router = Router::new();
+    router.middleware(|context, update, next| async move {
+        let _ = context.insert_extension(TraceId(42));
+        next(context, update).await
+    });
+    {
+        let hits = Arc::clone(&hits);
+        router.on_message(move |context: BotContext, _update: Update| {
+            let hits = Arc::clone(&hits);
+            async move {
+                assert_eq!(
+                    context
+                        .get_extension::<TraceId>()
+                        .as_deref()
+                        .map(|value| value.0),
+                    Some(42)
+                );
+                hits.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+    }
+
+    let Some(update) = parse_update(message_update(204, 1, "hello")) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn typed_callback_button_and_route_round_trip() -> Result<(), DynError> {
+    let payload = DemoCallbackPayload {
+        action: "confirm".to_owned(),
+        target: 7,
+    };
+    let button = InlineKeyboardButton::typed_callback("Confirm", &payload)?;
+    assert_eq!(
+        button.decode_callback::<DemoCallbackPayload>()?,
+        Some(payload.clone())
+    );
+
+    let Some(update) = parse_update(callback_update(
+        205,
+        1,
+        button.callback_data().unwrap_or_default(),
+    )) else {
+        return Ok(());
+    };
+    assert_eq!(
+        extract_typed_callback::<DemoCallbackPayload>(&update),
+        Some(payload.clone())
+    );
+    assert_eq!(
+        update.typed_callback::<DemoCallbackPayload>(),
+        Some(payload.clone())
+    );
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        let expected = payload.clone();
+        router.typed_callback_route::<DemoCallbackPayload>().handle(
+            move |_context: BotContext, _update: Update, callback| {
+                let hits = Arc::clone(&hits);
+                let expected = expected.clone();
+                async move {
+                    assert_eq!(callback.payload, expected);
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":501,"date":1710000000,"chat":{"id":-10042,"type":"supergroup"},"text":"rate limited"}}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, response)?;
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+
+    let Some(update) = parse_update(group_message_update(206, -10042, 123, "/ban @spam")) else {
+        return Ok(());
+    };
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        router
+            .command_route("ban")
+            .group_only()
+            .admin_only()
+            .require_permissions(&[ChatMemberPermission::DeleteMessages])
+            .bot_can(&[ChatMemberPermission::RestrictMembers])
+            .throttle_user(Duration::from_secs(30))
+            .parse::<Vec<String>>()
+            .handle(move |context: BotContext, _update: Update, args| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    assert_eq!(args, vec!["@spam".to_owned()]);
+                    assert!(context.get_extension::<CurrentUserChatMember>().is_some());
+                    assert!(context.get_extension::<CurrentBotChatMember>().is_some());
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+    }
+
+    let user_member = chat_member_with_permissions(
+        123,
+        false,
+        "administrator",
+        &[
+            ChatMemberPermission::ManageChat,
+            ChatMemberPermission::DeleteMessages,
+        ],
+    )?;
+    let bot_member = chat_member_with_permissions(
+        1,
+        true,
+        "administrator",
+        &[
+            ChatMemberPermission::ManageChat,
+            ChatMemberPermission::RestrictMembers,
+        ],
+    )?;
+
+    let make_context = || {
+        let context = BotContext::new(client.clone());
+        let _ = context.insert_extension(CurrentUserChatMember(user_member.clone()));
+        let _ = context.insert_extension(CurrentBotChatMember(bot_member.clone()));
+        context
+    };
+
+    assert!(router.dispatch(make_context(), update.clone()).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    assert!(router.dispatch(make_context(), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(), DynError> {
     let unconfigured_client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -613,6 +862,81 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
         })
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_dispatch_prepared_handles_command_mentions() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
+
+    let mut router = Router::new();
+    router.on_command(
+        "start",
+        |_context: BotContext, _update: Update| async move { Ok(()) },
+    );
+    let Some(update) = parse_update(message_update(212, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+
+    assert!(
+        router
+            .dispatch_prepared(BotContext::new(client), update)
+            .await?
+    );
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
+    let context = BotContext::new(client.clone());
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        router.on_command("start", move |_context: BotContext, _update: Update| {
+            let hits = Arc::clone(&hits);
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+    }
+
+    let report = context
+        .bootstrap_router(
+            &router,
+            &tele::BootstrapPlan {
+                verify_get_me: true,
+                commands: None,
+                menu_button: None,
+            },
+        )
+        .await?;
+    assert_eq!(
+        report.me.as_ref().and_then(|me| me.username.as_deref()),
+        Some("ThisBot")
+    );
+
+    join_server(handle).await?;
+
+    let Some(update) = parse_update(message_update(213, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

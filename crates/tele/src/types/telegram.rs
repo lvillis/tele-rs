@@ -1,10 +1,57 @@
 use std::collections::BTreeMap;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::common::{ChatId, MessageId, ParseMode};
 use crate::types::message::MessageEntity;
+use crate::{Error, Result};
+
+pub const MAX_CALLBACK_DATA_BYTES: usize = 64;
+
+fn invalid_request(reason: impl Into<String>) -> Error {
+    Error::InvalidRequest {
+        reason: reason.into(),
+    }
+}
+
+fn validate_callback_data(data: impl Into<String>) -> Result<String> {
+    let data = data.into();
+    if data.trim().is_empty() {
+        return Err(invalid_request("callback_data cannot be empty"));
+    }
+    if data.len() > MAX_CALLBACK_DATA_BYTES {
+        return Err(invalid_request(format!(
+            "callback_data exceeds Telegram's 64-byte limit ({})",
+            data.len()
+        )));
+    }
+    Ok(data)
+}
+
+/// Strongly-typed callback payload codec for inline keyboard buttons.
+pub trait CallbackPayload: Sized {
+    fn encode_callback_data(&self) -> Result<String>;
+    fn decode_callback_data(data: &str) -> Result<Self>;
+}
+
+impl<T> CallbackPayload for T
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn encode_callback_data(&self) -> Result<String> {
+        let encoded =
+            serde_json::to_string(self).map_err(|source| Error::SerializeRequest { source })?;
+        validate_callback_data(encoded)
+    }
+
+    fn decode_callback_data(data: &str) -> Result<Self> {
+        serde_json::from_str(data).map_err(|source| {
+            invalid_request(format!("failed to decode callback payload: {source}"))
+        })
+    }
+}
 
 /// Generic inline query result payload.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -584,9 +631,48 @@ impl InlineKeyboardButton {
         }
     }
 
+    pub fn callback(text: impl Into<String>, data: impl Into<String>) -> Result<Self> {
+        Self::new(text).with_callback_data(data)
+    }
+
+    pub fn typed_callback<T>(text: impl Into<String>, payload: &T) -> Result<Self>
+    where
+        T: CallbackPayload,
+    {
+        Self::new(text).with_typed_callback(payload)
+    }
+
     pub fn web_app(mut self, web_app: impl Into<WebAppInfo>) -> Self {
         self.web_app = Some(web_app.into());
         self
+    }
+
+    pub fn with_callback_data(mut self, data: impl Into<String>) -> Result<Self> {
+        self.extra.insert(
+            "callback_data".to_owned(),
+            Value::String(validate_callback_data(data)?),
+        );
+        Ok(self)
+    }
+
+    pub fn with_typed_callback<T>(self, payload: &T) -> Result<Self>
+    where
+        T: CallbackPayload,
+    {
+        self.with_callback_data(payload.encode_callback_data()?)
+    }
+
+    pub fn callback_data(&self) -> Option<&str> {
+        self.extra.get("callback_data").and_then(Value::as_str)
+    }
+
+    pub fn decode_callback<T>(&self) -> Result<Option<T>>
+    where
+        T: CallbackPayload,
+    {
+        self.callback_data()
+            .map(T::decode_callback_data)
+            .transpose()
     }
 }
 
@@ -605,6 +691,15 @@ impl InlineKeyboardMarkup {
             inline_keyboard,
             extra: BTreeMap::new(),
         }
+    }
+
+    pub fn single_row(row: Vec<InlineKeyboardButton>) -> Self {
+        Self::new(vec![row])
+    }
+
+    pub fn push_row(mut self, row: Vec<InlineKeyboardButton>) -> Self {
+        self.inline_keyboard.push(row);
+        self
     }
 }
 

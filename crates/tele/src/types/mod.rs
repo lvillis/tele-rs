@@ -17,14 +17,14 @@ pub mod webhook;
 pub use bot::{GetUserProfilePhotosRequest, User, UserProfilePhotos};
 pub use chat::{
     BanChatMemberRequest, BanChatSenderChatRequest, ChatAdministratorRights, ChatInviteLink,
-    ChatMember, ChatPermissions, CreateChatInviteLinkRequest, DeleteChatPhotoRequest,
-    DeleteChatStickerSetRequest, EditChatInviteLinkRequest, ExportChatInviteLinkRequest,
-    GetChatAdministratorsRequest, GetChatMemberCountRequest, GetChatMemberRequest, GetChatRequest,
-    LeaveChatRequest, PinChatMessageRequest, PromoteChatMemberRequest, RestrictChatMemberRequest,
-    RevokeChatInviteLinkRequest, SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest,
-    SetChatPermissionsRequest, SetChatStickerSetRequest, SetChatTitleRequest,
-    UnbanChatMemberRequest, UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest,
-    UnpinChatMessageRequest,
+    ChatMember, ChatMemberPermission, ChatPermissions, CreateChatInviteLinkRequest,
+    DeleteChatPhotoRequest, DeleteChatStickerSetRequest, EditChatInviteLinkRequest,
+    ExportChatInviteLinkRequest, GetChatAdministratorsRequest, GetChatMemberCountRequest,
+    GetChatMemberRequest, GetChatRequest, LeaveChatRequest, PinChatMessageRequest,
+    PromoteChatMemberRequest, RestrictChatMemberRequest, RevokeChatInviteLinkRequest,
+    SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest, SetChatPermissionsRequest,
+    SetChatStickerSetRequest, SetChatTitleRequest, UnbanChatMemberRequest,
+    UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest, UnpinChatMessageRequest,
 };
 pub use command::{
     BotCommand, BotCommandScope, BotDescription, BotName, BotShortDescription,
@@ -60,12 +60,12 @@ pub use sticker::{
     StickerType, UploadStickerFileRequest,
 };
 pub use telegram::{
-    AcceptedGiftTypes, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
-    InlineQueryResultArticle, InlineQueryResultsButton, InputChecklist, InputPaidMedia,
-    InputStoryContent, InputTextMessageContent, KeyboardButton, LinkPreviewOptions, MenuButton,
-    MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType, ReplyKeyboardMarkup,
-    ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea, SuggestedPostParameters,
-    WebAppData, WebAppInfo,
+    AcceptedGiftTypes, CallbackPayload, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup,
+    InlineQueryResult, InlineQueryResultArticle, InlineQueryResultsButton, InputChecklist,
+    InputPaidMedia, InputStoryContent, InputTextMessageContent, KeyboardButton, LinkPreviewOptions,
+    MenuButton, MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType,
+    ReplyKeyboardMarkup, ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea,
+    SuggestedPostParameters, WebAppData, WebAppInfo,
 };
 pub use update::{
     AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChosenInlineResult,

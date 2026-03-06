@@ -39,6 +39,28 @@ pub struct Chat {
     pub extra: BTreeMap<String, Value>,
 }
 
+impl Chat {
+    pub fn is_private(&self) -> bool {
+        matches!(self.kind, ChatType::Private)
+    }
+
+    pub fn is_group(&self) -> bool {
+        matches!(self.kind, ChatType::Group)
+    }
+
+    pub fn is_supergroup(&self) -> bool {
+        matches!(self.kind, ChatType::Supergroup)
+    }
+
+    pub fn is_channel(&self) -> bool {
+        matches!(self.kind, ChatType::Channel)
+    }
+
+    pub fn is_group_chat(&self) -> bool {
+        self.is_group() || self.is_supergroup()
+    }
+}
+
 /// Telegram message entity.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -205,6 +227,14 @@ fn is_unmodeled_message_content_key(key: &str) -> bool {
 }
 
 impl Message {
+    pub fn chat(&self) -> &Chat {
+        &self.chat
+    }
+
+    pub fn from_user(&self) -> Option<&User> {
+        self.from.as_ref()
+    }
+
     fn has_modeled_kind(&self) -> bool {
         self.write_access_allowed.is_some()
             || self.web_app_data.is_some()
@@ -848,13 +878,42 @@ pub struct InputMediaDocument {
 /// Input media objects for `sendMediaGroup`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
 pub enum InputMedia {
-    Photo(InputMediaPhoto),
-    Video(InputMediaVideo),
-    Animation(InputMediaAnimation),
-    Audio(InputMediaAudio),
-    Document(InputMediaDocument),
+    Photo(Box<InputMediaPhoto>),
+    Video(Box<InputMediaVideo>),
+    Animation(Box<InputMediaAnimation>),
+    Audio(Box<InputMediaAudio>),
+    Document(Box<InputMediaDocument>),
+}
+
+impl From<InputMediaPhoto> for InputMedia {
+    fn from(value: InputMediaPhoto) -> Self {
+        Self::Photo(Box::new(value))
+    }
+}
+
+impl From<InputMediaVideo> for InputMedia {
+    fn from(value: InputMediaVideo) -> Self {
+        Self::Video(Box::new(value))
+    }
+}
+
+impl From<InputMediaAnimation> for InputMedia {
+    fn from(value: InputMediaAnimation) -> Self {
+        Self::Animation(Box::new(value))
+    }
+}
+
+impl From<InputMediaAudio> for InputMedia {
+    fn from(value: InputMediaAudio) -> Self {
+        Self::Audio(Box::new(value))
+    }
+}
+
+impl From<InputMediaDocument> for InputMedia {
+    fn from(value: InputMediaDocument) -> Self {
+        Self::Document(Box::new(value))
+    }
 }
 
 /// `sendMediaGroup` request.
@@ -1402,10 +1461,38 @@ impl StopMessageLiveLocationRequest {
 /// Return type for edit message methods.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum EditMessageResult {
-    Message(Message),
+    Message(Box<Message>),
     Success(bool),
+}
+
+impl EditMessageResult {
+    pub fn message(&self) -> Option<&Message> {
+        match self {
+            Self::Message(message) => Some(message.as_ref()),
+            Self::Success(_) => None,
+        }
+    }
+
+    pub fn into_message(self) -> Option<Message> {
+        match self {
+            Self::Message(message) => Some(*message),
+            Self::Success(_) => None,
+        }
+    }
+
+    pub fn success(&self) -> Option<bool> {
+        match self {
+            Self::Message(_) => None,
+            Self::Success(success) => Some(*success),
+        }
+    }
+}
+
+impl From<Message> for EditMessageResult {
+    fn from(value: Message) -> Self {
+        Self::Message(Box::new(value))
+    }
 }
 
 /// `deleteMessage` request.
@@ -1724,6 +1811,49 @@ mod tests {
         assert_eq!(message.kind(), MessageKind::Unknown);
         assert!(message.has_kind(MessageKind::Unknown));
         assert_eq!(message.kinds(), vec![MessageKind::Unknown]);
+        Ok(())
+    }
+
+    #[test]
+    fn input_media_round_trips_with_boxed_variants() -> std::result::Result<(), Box<dyn StdError>> {
+        let media = InputMedia::from(InputMediaPhoto {
+            media: "attach://photo".to_owned(),
+            caption: Some("preview".to_owned()),
+            parse_mode: Some(ParseMode::Html),
+            has_spoiler: None,
+        });
+
+        let value = serde_json::to_value(&media)?;
+        assert_eq!(value.get("type"), Some(&json!("photo")));
+        let parsed: InputMedia = serde_json::from_value(value)?;
+        let InputMedia::Photo(photo) = parsed else {
+            return Err("expected photo input media".into());
+        };
+        assert_eq!(photo.media, "attach://photo");
+        assert_eq!(photo.caption.as_deref(), Some("preview"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn edit_message_result_helpers_cover_both_variants()
+    -> std::result::Result<(), Box<dyn StdError>> {
+        let message = message_for_kind(MessageKind::Text)?;
+        let result = EditMessageResult::from(message.clone());
+        assert_eq!(
+            result.message().map(|message| message.message_id),
+            Some(message.message_id)
+        );
+        assert_eq!(result.success(), None);
+        assert_eq!(
+            result.into_message().map(|message| message.message_id),
+            Some(message.message_id)
+        );
+
+        let success = EditMessageResult::Success(true);
+        assert!(success.message().is_none());
+        assert_eq!(success.success(), Some(true));
+
         Ok(())
     }
 }
