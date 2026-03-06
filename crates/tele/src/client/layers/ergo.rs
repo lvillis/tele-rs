@@ -3,9 +3,11 @@ use super::bootstrap::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy};
 use super::bootstrap::{retry_async, retry_fetch_async};
 #[cfg(feature = "_blocking")]
 use super::bootstrap::{retry_blocking, retry_fetch_blocking};
+#[cfg(feature = "bot")]
+use super::support::typed_commands_request;
 use super::support::{
     callback_query_id, commands_get_request, desired_menu_button, menu_button_get_request,
-    parse_web_app_query_payload, typed_commands_request, update_chat_id,
+    parse_web_app_query_payload, update_chat_id,
 };
 use super::*;
 
