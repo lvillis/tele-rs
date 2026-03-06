@@ -183,6 +183,25 @@ async fn blocking_create_invoice_link_success() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn blocking_transport_error_has_request_id() -> Result<(), DynError> {
+    let client = BlockingClient::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(100))
+        .total_timeout(Some(Duration::from_millis(300)))
+        .build_blocking()?;
+
+    let error = match client.bot().get_me() {
+        Ok(_) => return Err("expected transport error".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Transport { .. }));
+    assert!(error.request_id().is_some());
+    assert!(!error.to_string().contains("123:abc"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_build_configuration_error_is_not_mapped_as_transport() -> Result<(), DynError> {
     let error = match BlockingClient::builder("https://api.telegram.org")?
         .bot_token("123:abc")?

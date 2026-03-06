@@ -9,6 +9,7 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
+pub use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
 #[cfg(feature = "_async")]
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
@@ -26,8 +27,8 @@ pub use crate::bot::{
     BotApp, BotContext, BotEngine, BotOutbox, CallbackInput, ChannelUpdateSource, ChatSession,
     DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
     JsonCallback, JsonFileSessionStore, LongPollingSource, OutboxConfig, PollingConfig, Router,
-    TextInput, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink, WebAppInput,
-    WebhookRunner, WriteAccessAllowedInput, channel_source,
+    SourceErrorBackoffConfig, TextInput, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
+    WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,
 };
 
 #[cfg(feature = "macros")]

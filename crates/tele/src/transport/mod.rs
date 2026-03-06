@@ -6,6 +6,7 @@ pub(crate) mod blocking_transport;
 use std::collections::BTreeSet;
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(any(feature = "_blocking", test))]
@@ -26,6 +27,8 @@ use crate::client::{RateLimitConfig, RetryConfig};
 use crate::types::common::ResponseParameters;
 use crate::types::upload::UploadFile;
 use crate::util::{body_snippet, redact_token, request_id_from_headers};
+
+static LOCAL_REQUEST_ID_SEQ: AtomicU64 = AtomicU64::new(1);
 
 fn is_configuration_error_code(code: reqx::ErrorCode) -> bool {
     matches!(
@@ -72,8 +75,8 @@ where
         serde_json::from_slice(body).map_err(|source| Error::DeserializeResponse {
             method: method.to_owned(),
             status: Some(status.as_u16()),
-            request_id: request_id.clone(),
-            body_snippet: snippet.clone(),
+            request_id: request_id.clone().map(Into::into),
+            body_snippet: snippet.clone().map(Into::into),
             source,
         })?;
 
@@ -85,25 +88,39 @@ where
         return Err(Error::MissingResult {
             method: method.to_owned(),
             status: Some(status.as_u16()),
-            request_id,
-            body_snippet: snippet,
+            request_id: request_id.map(Into::into),
+            body_snippet: snippet.map(Into::into),
         });
     }
 
     Err(Error::Api {
         method: method.to_owned(),
         status: Some(status.as_u16()),
-        request_id,
+        request_id: request_id.map(Into::into),
         error_code: envelope.error_code,
         description: envelope
             .description
-            .unwrap_or_else(|| "telegram api returned an unknown error".to_owned()),
-        parameters: envelope.parameters,
-        body_snippet: snippet,
+            .unwrap_or_else(|| "telegram api returned an unknown error".to_owned())
+            .into(),
+        parameters: envelope.parameters.map(Box::new),
+        body_snippet: snippet.map(Into::into),
     })
 }
 
-pub(crate) fn map_reqx_error(method: &str, token: &str, source: reqx::Error) -> Error {
+pub(crate) fn local_transport_request_id(method: &str) -> String {
+    let sequence = LOCAL_REQUEST_ID_SEQ.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_millis());
+    format!("tele-{method}-{timestamp:x}-{sequence:x}")
+}
+
+pub(crate) fn map_reqx_error(
+    method: &str,
+    token: &str,
+    source: reqx::Error,
+    fallback_request_id: Option<String>,
+) -> Error {
     let code = source.code();
     if is_configuration_error_code(code) {
         return Error::Configuration {
@@ -120,10 +137,14 @@ pub(crate) fn map_reqx_error(method: &str, token: &str, source: reqx::Error) -> 
     Error::Transport {
         method: method.to_owned(),
         status: source.status_code(),
-        request_id: source.request_id().map(ToOwned::to_owned),
+        request_id: source
+            .request_id()
+            .map(ToOwned::to_owned)
+            .or(fallback_request_id)
+            .map(Into::into),
         retry_after: source.retry_after(SystemTime::now()),
-        request_path,
-        message: redact_token(&source.to_string(), token),
+        request_path: request_path.map(Into::into),
+        message: redact_token(&source.to_string(), token).into(),
     }
 }
 

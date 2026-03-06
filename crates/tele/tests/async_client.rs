@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
-    AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
-    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice,
-    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest,
+    AnswerInlineQueryRequest, BotCommand, BotCommandScope, CreateInvoiceLinkRequest,
+    GetFileRequest, GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton,
+    LabeledPrice, SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, WebAppData,
 };
-use tele::{Client, Error, ErrorClass, UploadFile};
+use tele::{BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, UploadFile};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -290,6 +290,7 @@ async fn transport_error_redacts_token() -> Result<(), DynError> {
 
     let text = err.to_string();
     assert!(!text.contains("123:abc"));
+    assert!(err.request_id().is_some());
     Ok(())
 }
 
@@ -336,6 +337,111 @@ async fn set_and_get_my_commands_success() -> Result<(), DynError> {
     assert_eq!(commands[0].command, "start");
     join_server(get_handle)?;
 
+    Ok(())
+}
+
+#[cfg(feature = "bot")]
+#[derive(Clone, Debug)]
+enum DemoCommand {
+    Start,
+}
+
+#[cfg(feature = "bot")]
+impl tele::bot::BotCommands for DemoCommand {
+    fn parse(command: &str, _args: &str) -> Option<Self> {
+        if command == "start" {
+            Some(Self::Start)
+        } else {
+            None
+        }
+    }
+
+    fn descriptions() -> &'static [tele::bot::CommandDescription] {
+        &[tele::bot::CommandDescription {
+            command: "start",
+            description: "start command",
+        }]
+    }
+}
+
+#[cfg(feature = "bot")]
+#[tokio::test]
+async fn ergo_set_typed_commands_with_scope_and_language() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 4] = [
+        "\"commands\":[{\"command\":\"start\",\"description\":\"start command\"}]",
+        "\"scope\":{\"type\":\"all_private_chats\"}",
+        "\"language_code\":\"zh-hans\"",
+        "POST /bot123:abc/setMyCommands HTTP/1.1",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/setMyCommands", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let applied = client
+        .ergo()
+        .set_typed_commands_with_options::<DemoCommand>(
+            Some(BotCommandScope::AllPrivateChats),
+            Some("zh-hans".to_owned()),
+        )
+        .await?;
+    assert!(applied);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(100))
+        .total_timeout(Some(Duration::from_millis(300)))
+        .build()?;
+
+    let commands = SetMyCommandsRequest::new(vec![BotCommand::new("start", "start bot")?])?;
+    let plan = BootstrapPlan {
+        verify_get_me: false,
+        commands: Some(commands),
+        menu_button: None,
+    };
+    let report = client
+        .ergo()
+        .bootstrap_with_retry(
+            &plan,
+            BootstrapRetryPolicy {
+                max_attempts: 1,
+                continue_on_failure: true,
+                ..BootstrapRetryPolicy::default()
+            },
+        )
+        .await?;
+    assert_eq!(report.commands_applied, Some(false));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn ergo_answer_web_app_query_from_payload() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"inline_message_id":"inline-42"}}"#;
+    const CHECKS: [&str; 3] = [
+        "\"web_app_query_id\":\"query-42\"",
+        "\"type\":\"article\"",
+        "\"title\":\"From Payload\"",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/answerWebAppQuery", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let web_app_data = WebAppData::new("{\"query_id\":\"query-42\",\"item\":\"coffee\"}", "Open");
+    let result = InlineQueryResult::article("r-42", "From Payload", "ok")?;
+    let sent = client
+        .ergo()
+        .answer_web_app_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
+        .await?;
+    assert_eq!(sent.inline_message_id, "inline-42");
+
+    join_server(handle)?;
     Ok(())
 }
 

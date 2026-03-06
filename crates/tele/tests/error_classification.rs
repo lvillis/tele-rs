@@ -11,7 +11,7 @@ fn classifies_rate_limited_transport_errors() {
         request_id: None,
         retry_after: Some(Duration::from_secs(3)),
         request_path: None,
-        message: "too many requests".to_owned(),
+        message: "too many requests".into(),
     };
 
     assert_eq!(error.classification(), ErrorClass::RateLimited);
@@ -26,7 +26,7 @@ fn classifies_auth_errors_from_api_code() {
         status: Some(401),
         request_id: None,
         error_code: Some(401),
-        description: "unauthorized".to_owned(),
+        description: "unauthorized".into(),
         parameters: None,
         body_snippet: None,
     };
@@ -53,8 +53,8 @@ fn classifies_protocol_and_decode_errors() {
         status: Some(200),
         request_id: None,
         error_code: Some(400),
-        description: "retry later".to_owned(),
-        parameters: Some(parameters),
+        description: "retry later".into(),
+        parameters: Some(Box::new(parameters)),
         body_snippet: None,
     };
     assert_eq!(api_with_retry.classification(), ErrorClass::RateLimited);

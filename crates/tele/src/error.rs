@@ -82,8 +82,8 @@ pub enum Error {
     DeserializeResponse {
         method: String,
         status: Option<u16>,
-        request_id: Option<String>,
-        body_snippet: Option<String>,
+        request_id: Option<Box<str>>,
+        body_snippet: Option<Box<str>>,
         #[source]
         source: serde_json::Error,
     },
@@ -92,29 +92,29 @@ pub enum Error {
     Transport {
         method: String,
         status: Option<u16>,
-        request_id: Option<String>,
+        request_id: Option<Box<str>>,
         retry_after: Option<Duration>,
-        request_path: Option<String>,
-        message: String,
+        request_path: Option<Box<str>>,
+        message: Box<str>,
     },
 
     #[error("telegram api error while calling `{method}`: {description}")]
     Api {
         method: String,
         status: Option<u16>,
-        request_id: Option<String>,
+        request_id: Option<Box<str>>,
         error_code: Option<i64>,
-        description: String,
-        parameters: Option<ResponseParameters>,
-        body_snippet: Option<String>,
+        description: Box<str>,
+        parameters: Option<Box<ResponseParameters>>,
+        body_snippet: Option<Box<str>>,
     },
 
     #[error("telegram api returned `ok=true` without `result` for `{method}`")]
     MissingResult {
         method: String,
         status: Option<u16>,
-        request_id: Option<String>,
-        body_snippet: Option<String>,
+        request_id: Option<Box<str>>,
+        body_snippet: Option<Box<str>>,
     },
 }
 
@@ -158,7 +158,7 @@ impl Error {
                 }
                 if error_code.is_some_and(|code| code == 429)
                     || parameters
-                        .as_ref()
+                        .as_deref()
                         .and_then(|parameters| parameters.retry_after)
                         .is_some()
                 {
@@ -206,7 +206,7 @@ impl Error {
         match self {
             Self::Transport { retry_after, .. } => *retry_after,
             Self::Api { parameters, .. } => parameters
-                .as_ref()
+                .as_deref()
                 .and_then(|parameters| parameters.retry_after)
                 .map(Duration::from_secs),
             _ => None,

@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 
 use crate::client::RequestDefaults;
 use crate::transport::{
-    build_multipart_payload, map_reqx_builder_error, map_reqx_error, parse_telegram_response,
-    to_rate_limit_policy, to_retry_policy,
+    build_multipart_payload, local_transport_request_id, map_reqx_builder_error, map_reqx_error,
+    parse_telegram_response, to_rate_limit_policy, to_retry_policy,
 };
 use crate::types::upload::UploadFile;
 use crate::util::{build_api_path, validate_method_name};
@@ -99,7 +99,14 @@ impl BlockingTransport {
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
             .body(body)
             .send_with_status()
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,
@@ -147,7 +154,14 @@ impl BlockingTransport {
             .header(CONTENT_LENGTH, content_length)
             .body_reader(payload.into_reader())
             .send_with_status()
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,
@@ -174,7 +188,14 @@ impl BlockingTransport {
         let response = self
             .configure_request(self.client.request(Method::POST, path), defaults)
             .send_with_status()
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,

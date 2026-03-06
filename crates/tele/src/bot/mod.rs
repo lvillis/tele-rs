@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -20,10 +20,13 @@ use crate::api::{
     AdvancedService, BotService, ChatsService, FilesService, MessagesService, PaymentsService,
     StickersService, UpdatesService,
 };
-use crate::types::command::SetMyCommandsRequest;
+use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+use crate::types::command::{BotCommand, BotCommandScope, SetMyCommandsRequest};
 use crate::types::common::ChatId;
-use crate::types::message::{Message, MessageKind, SendMessageRequest, WriteAccessAllowed};
-use crate::types::telegram::WebAppData;
+use crate::types::message::{
+    Message, MessageKind, SendMessageRequest, SentWebAppMessage, WriteAccessAllowed,
+};
+use crate::types::telegram::{InlineQueryResult, WebAppData};
 use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
@@ -42,11 +45,32 @@ pub type MiddlewareFn =
 /// Hook called whenever update source polling fails.
 pub type SourceErrorHook = Arc<dyn Fn(&Error) + Send + Sync + 'static>;
 
+/// Async hook called whenever update source polling fails.
+pub type AsyncSourceErrorHook = Arc<
+    dyn Fn(&Error) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync + 'static,
+>;
+
 /// Hook called when a handler fails. The first parameter is `update_id`.
 pub type HandlerErrorHook = Arc<dyn Fn(i64, &Error) + Send + Sync + 'static>;
 
+/// Async hook called when a handler fails. The first parameter is `update_id`.
+pub type AsyncHandlerErrorHook = Arc<
+    dyn Fn(i64, &Error) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
 /// Hook called for high-level runtime events.
 pub type EngineEventHook = Arc<dyn Fn(&EngineEvent) + Send + Sync + 'static>;
+
+/// Async hook called for high-level runtime events.
+pub type AsyncEngineEventHook = Arc<
+    dyn Fn(&EngineEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// Runtime event payload for observability.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +83,10 @@ pub enum EngineEvent {
     PollFailed {
         classification: ErrorClass,
         retryable: bool,
+        status: Option<u16>,
+        error_code: Option<i64>,
+        request_id: Option<String>,
+        message: String,
     },
     DispatchStarted {
         update_id: i64,
@@ -85,6 +113,49 @@ struct Route {
     handler: HandlerFn,
 }
 
+#[derive(Clone, Debug)]
+struct CommandTargetConfig {
+    username: Option<String>,
+    auto_resolve: bool,
+}
+
+impl Default for CommandTargetConfig {
+    fn default() -> Self {
+        Self {
+            username: None,
+            auto_resolve: true,
+        }
+    }
+}
+
+fn command_target_username(state: &Arc<StdRwLock<CommandTargetConfig>>) -> Option<String> {
+    state
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .username
+        .clone()
+}
+
+fn command_mention_from_text(text: &str) -> Option<String> {
+    let token = text.split_whitespace().next()?;
+    let command = token.strip_prefix('/')?;
+    let (name, mention) = command.split_once('@')?;
+    if name.is_empty() {
+        return None;
+    }
+    normalize_bot_username(mention)
+}
+
+fn update_mentions_command(update: &Update) -> bool {
+    extract_text(update)
+        .and_then(command_mention_from_text)
+        .is_some()
+}
+
+fn updates_mention_command(updates: &[Update]) -> bool {
+    updates.iter().any(update_mentions_command)
+}
+
 fn invalid_request(reason: impl Into<String>) -> Error {
     Error::InvalidRequest {
         reason: reason.into(),
@@ -105,6 +176,7 @@ where
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandData {
     pub name: String,
+    pub mention: Option<String>,
     pub args: String,
 }
 
@@ -115,6 +187,23 @@ impl CommandData {
 
     pub fn has_args(&self) -> bool {
         !self.args_trimmed().is_empty()
+    }
+
+    pub fn target_mention(&self) -> Option<&str> {
+        self.mention.as_deref()
+    }
+
+    pub fn is_addressed_to(&self, bot_username: Option<&str>) -> bool {
+        let Some(mention) = self.mention.as_deref() else {
+            return true;
+        };
+        let Some(bot_username) = bot_username else {
+            return false;
+        };
+        let Some(expected) = normalize_bot_username(bot_username) else {
+            return false;
+        };
+        mention.eq_ignore_ascii_case(expected.as_str())
     }
 }
 
@@ -233,6 +322,22 @@ pub struct WebAppInput(pub WebAppData);
 impl WebAppInput {
     pub fn into_inner(self) -> WebAppData {
         self.0
+    }
+
+    pub fn parse_json<T>(&self) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        serde_json::from_str(&self.0.data).map_err(|source| Error::InvalidRequest {
+            reason: format!("invalid web_app_data JSON payload: {source}"),
+        })
+    }
+
+    pub fn parse_query_payload<T>(&self) -> Result<WebAppQueryPayload<T>>
+    where
+        T: DeserializeOwned,
+    {
+        WebAppQueryPayload::parse(&self.0)
     }
 }
 
@@ -430,6 +535,117 @@ impl BotContext {
         self.bot().set_my_commands(&request).await
     }
 
+    /// Registers explicit commands with retry/backoff policy.
+    pub async fn set_commands_with_retry(
+        &self,
+        commands: Vec<BotCommand>,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_commands_with_retry(commands, policy)
+            .await
+    }
+
+    /// Registers typed commands with optional scope and language code.
+    pub async fn set_typed_commands_with_options<C>(
+        &self,
+        scope: Option<BotCommandScope>,
+        language_code: Option<String>,
+    ) -> Result<bool>
+    where
+        C: BotCommands,
+    {
+        self.client
+            .ergo()
+            .set_typed_commands_with_options::<C>(scope, language_code)
+            .await
+    }
+
+    /// Registers typed commands with options and retry/backoff.
+    pub async fn set_typed_commands_with_options_retry<C>(
+        &self,
+        scope: Option<BotCommandScope>,
+        language_code: Option<String>,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<bool>
+    where
+        C: BotCommands,
+    {
+        self.client
+            .ergo()
+            .set_typed_commands_with_options_retry::<C>(scope, language_code, policy)
+            .await
+    }
+
+    /// Applies chat menu button with retry/backoff.
+    pub async fn set_chat_menu_button_with_retry(
+        &self,
+        request: &crate::types::advanced::AdvancedSetChatMenuButtonRequest,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_chat_menu_button_with_retry(request, policy)
+            .await
+    }
+
+    /// Runs one-shot startup bootstrap (`getMe`/commands/menu) without retries.
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+        self.client.ergo().bootstrap(plan).await
+    }
+
+    /// Runs startup bootstrap with retry/backoff policy.
+    pub async fn bootstrap_with_retry(
+        &self,
+        plan: &BootstrapPlan,
+        policy: BootstrapRetryPolicy,
+    ) -> Result<BootstrapReport> {
+        self.client.ergo().bootstrap_with_retry(plan, policy).await
+    }
+
+    /// Answers `answerWebAppQuery` with a typed inline result payload.
+    pub async fn answer_web_app_query<T>(
+        &self,
+        web_app_query_id: impl Into<String>,
+        result: T,
+    ) -> Result<SentWebAppMessage>
+    where
+        T: Serialize,
+    {
+        self.client
+            .ergo()
+            .answer_web_app_query(web_app_query_id, result)
+            .await
+    }
+
+    /// Answers `answerWebAppQuery` with a pre-built inline result payload.
+    pub async fn answer_web_app_query_result(
+        &self,
+        web_app_query_id: impl Into<String>,
+        result: InlineQueryResult,
+    ) -> Result<SentWebAppMessage> {
+        let request =
+            crate::types::advanced::AdvancedAnswerWebAppQueryRequest::new(web_app_query_id, result);
+        self.advanced().answer_web_app_query_typed(&request).await
+    }
+
+    /// Parses WebApp payload and answers `answerWebAppQuery` in one step.
+    pub async fn answer_web_app_query_from_payload<T, R>(
+        &self,
+        web_app_data: &WebAppData,
+        result: R,
+    ) -> Result<SentWebAppMessage>
+    where
+        T: DeserializeOwned,
+        R: Serialize,
+    {
+        self.client
+            .ergo()
+            .answer_web_app_query_from_payload::<T, R>(web_app_data, result)
+            .await
+    }
+
     /// Converts high-level handler error into transportable SDK result.
     pub async fn resolve_handler_error(&self, update: &Update, error: HandlerError) -> Result<()> {
         match error {
@@ -448,11 +664,127 @@ pub struct Router {
     routes: Vec<Route>,
     middlewares: Vec<MiddlewareFn>,
     fallback: Option<HandlerFn>,
+    command_target: Arc<StdRwLock<CommandTargetConfig>>,
+    has_command_routes: bool,
 }
 
 impl Router {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn command_target_snapshot(&self) -> CommandTargetConfig {
+        self.command_target
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn command_target_username(&self) -> Option<String> {
+        self.command_target_snapshot().username
+    }
+
+    fn set_command_target_config(&self, username: Option<String>, auto_resolve: bool) -> &Self {
+        let mut state = self
+            .command_target
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.username = username;
+        state.auto_resolve = auto_resolve;
+        self
+    }
+
+    async fn prepare_command_target(&self, client: &Client) -> Result<()> {
+        if !self.has_command_routes {
+            return Ok(());
+        }
+
+        let state = self.command_target_snapshot();
+        if state.username.is_some() || !state.auto_resolve {
+            return Ok(());
+        }
+
+        let me = client.bot().get_me().await?;
+        let username = normalize_bot_username(me.username.as_deref().ok_or_else(|| {
+            invalid_request(
+                "getMe returned bot without username; command mention routing requires a username",
+            )
+        })?)
+        .ok_or_else(|| invalid_request("bot username cannot be empty"))?;
+
+        let mut state = self
+            .command_target
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.username.is_none() && state.auto_resolve {
+            state.username = Some(username);
+        }
+
+        Ok(())
+    }
+
+    /// Pre-resolves runtime routing state that may require one-time SDK I/O.
+    ///
+    /// Today this eagerly caches the current bot username for command mention
+    /// routing so dispatch itself can stay side-effect free.
+    pub async fn prepare(&self, client: &Client) -> Result<&Self> {
+        self.prepare_command_target(client).await?;
+        Ok(self)
+    }
+
+    /// Prepares routing state only when the current update contains a bot mention command.
+    pub async fn prepare_for_update(&self, client: &Client, update: &Update) -> Result<&Self> {
+        if update_mentions_command(update) {
+            self.prepare(client).await?;
+        }
+        Ok(self)
+    }
+
+    async fn prepare_for_updates(&self, client: &Client, updates: &[Update]) -> Result<()> {
+        if updates_mention_command(updates) {
+            self.prepare(client).await?;
+        }
+        Ok(())
+    }
+
+    /// Sets command target bot username used by command routes.
+    ///
+    /// When set, mentioned commands like `/start@MyBot` are accepted only if
+    /// `MyBot` matches this target case-insensitively.
+    pub fn command_target(mut self, bot_username: impl Into<String>) -> Result<Self> {
+        let _ = self.set_command_target(bot_username)?;
+        Ok(self)
+    }
+
+    /// Sets command target bot username used by command routes.
+    pub fn set_command_target(&mut self, bot_username: impl Into<String>) -> Result<&mut Self> {
+        let raw = bot_username.into();
+        let bot_username = normalize_bot_username(raw.as_str())
+            .ok_or_else(|| invalid_request("command target bot username cannot be empty"))?;
+        let _ = self.set_command_target_config(Some(bot_username), false);
+        Ok(self)
+    }
+
+    /// Clears manual command target and re-enables lazy auto-resolution.
+    pub fn clear_command_target(&mut self) -> &mut Self {
+        let _ = self.set_command_target_config(None, true);
+        self
+    }
+
+    /// Disables lazy auto-resolution for mentioned commands.
+    ///
+    /// After disabling, commands like `/start@ThisBot` are ignored unless an
+    /// explicit target was configured with `set_command_target`.
+    pub fn disable_auto_command_target(&mut self) -> &mut Self {
+        let _ = self.set_command_target_config(None, false);
+        self
+    }
+
+    /// Enables lazy auto-resolution for mentioned commands.
+    pub fn enable_auto_command_target(&mut self) -> &mut Self {
+        let username = self.command_target_username();
+        let _ = self.set_command_target_config(username, true);
+        self
     }
 
     pub fn route<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
@@ -872,8 +1204,13 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let expected = command.into();
+        let target = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route(
-            move |update| extract_command(update).is_some_and(|command| command == expected),
+            move |update| {
+                extract_command_for_bot(update, command_target_username(&target).as_deref())
+                    .is_some_and(|command| command == expected)
+            },
             handler,
         )
     }
@@ -890,8 +1227,13 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let expected = command.into();
+        let target = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route_with_policy(
-            move |update| extract_command(update).is_some_and(|command| command == expected),
+            move |update| {
+                extract_command_for_bot(update, command_target_username(&target).as_deref())
+                    .is_some_and(|command| command == expected)
+            },
             policy,
             handler,
         )
@@ -907,8 +1249,13 @@ impl Router {
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let expected = command.into();
+        let target = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route_fallible(
-            move |update| extract_command(update).is_some_and(|command| command == expected),
+            move |update| {
+                extract_command_for_bot(update, command_target_username(&target).as_deref())
+                    .is_some_and(|command| command == expected)
+            },
             handler,
         )
     }
@@ -919,11 +1266,23 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
+        let target_filter = Arc::clone(&self.command_target);
+        let target_handler = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route(
-            |update| extract_command_data(update).is_some(),
+            move |update| {
+                extract_command_data_for_bot(
+                    update,
+                    command_target_username(&target_filter).as_deref(),
+                )
+                .is_some()
+            },
             move |context, update| {
                 let handler = Arc::clone(&handler);
-                let command = extract_command_data(&update);
+                let command = extract_command_data_for_bot(
+                    &update,
+                    command_target_username(&target_handler).as_deref(),
+                );
                 async move {
                     let Some(command) = command else {
                         return Err(invalid_request("update does not contain a valid command"));
@@ -941,11 +1300,23 @@ impl Router {
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let handler = Arc::new(handler);
+        let target_filter = Arc::clone(&self.command_target);
+        let target_handler = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route(
-            |update| parse_typed_command::<C>(update).is_some(),
+            move |update| {
+                parse_typed_command_for_bot::<C>(
+                    update,
+                    command_target_username(&target_filter).as_deref(),
+                )
+                .is_some()
+            },
             move |context, update| {
                 let handler = Arc::clone(&handler);
-                let parsed = parse_typed_command::<C>(&update);
+                let parsed = parse_typed_command_for_bot::<C>(
+                    &update,
+                    command_target_username(&target_handler).as_deref(),
+                );
                 async move {
                     let Some(command) = parsed else {
                         return Err(invalid_request(
@@ -965,7 +1336,46 @@ impl Router {
         H: Fn(BotContext, Update, TypedCommandInput<C>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
-        self.on_extracted::<TypedCommandInput<C>, _, _>(handler)
+        let handler = Arc::new(handler);
+        let target_filter = Arc::clone(&self.command_target);
+        let target_handler = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
+        self.route(
+            move |update| {
+                parse_typed_command_for_bot::<C>(
+                    update,
+                    command_target_username(&target_filter).as_deref(),
+                )
+                .is_some()
+                    && extract_command_data_for_bot(
+                        update,
+                        command_target_username(&target_filter).as_deref(),
+                    )
+                    .is_some()
+            },
+            move |context, update| {
+                let handler = Arc::clone(&handler);
+                let parsed = parse_typed_command_for_bot::<C>(
+                    &update,
+                    command_target_username(&target_handler).as_deref(),
+                );
+                let raw = extract_command_data_for_bot(
+                    &update,
+                    command_target_username(&target_handler).as_deref(),
+                );
+                async move {
+                    let Some(command) = parsed else {
+                        return Err(invalid_request(
+                            "update does not contain a valid typed command",
+                        ));
+                    };
+                    let Some(raw) = raw else {
+                        return Err(invalid_request("update does not contain a valid command"));
+                    };
+                    handler(context, update, TypedCommandInput { command, raw }).await
+                }
+            },
+        )
     }
 
     pub fn on_typed_command_fallible<C, H, Fut>(&mut self, handler: H) -> &mut Self
@@ -975,11 +1385,23 @@ impl Router {
         Fut: Future<Output = HandlerResult> + Send + 'static,
     {
         let handler = Arc::new(handler);
+        let target_filter = Arc::clone(&self.command_target);
+        let target_handler = Arc::clone(&self.command_target);
+        self.has_command_routes = true;
         self.route_fallible(
-            |update| parse_typed_command::<C>(update).is_some(),
+            move |update| {
+                parse_typed_command_for_bot::<C>(
+                    update,
+                    command_target_username(&target_filter).as_deref(),
+                )
+                .is_some()
+            },
             move |context, update| {
                 let handler = Arc::clone(&handler);
-                let parsed = parse_typed_command::<C>(&update);
+                let parsed = parse_typed_command_for_bot::<C>(
+                    &update,
+                    command_target_username(&target_handler).as_deref(),
+                );
                 async move {
                     let Some(command) = parsed else {
                         return Err(HandlerError::internal(invalid_request(
@@ -1011,6 +1433,10 @@ impl Router {
     }
 
     /// Dispatches a single update to the first matching route.
+    ///
+    /// This method is intentionally side-effect free and does not perform
+    /// network I/O. If you rely on auto command-target resolution for
+    /// `/cmd@BotUsername`, call `prepare` or `prepare_for_update` first.
     pub async fn dispatch(&self, context: BotContext, update: Update) -> Result<bool> {
         let handler = self
             .routes
@@ -1063,23 +1489,51 @@ where
 
 /// Parses a slash command from raw message text.
 pub fn parse_command_text(text: &str) -> Option<CommandData> {
+    parse_command_text_for_bot(text, None)
+}
+
+/// Parses a slash command from raw message text with optional bot-username targeting.
+///
+/// When a command contains `@botname`, it is accepted only if `bot_username`
+/// is provided and matches case-insensitively.
+pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Option<CommandData> {
     let token = text.split_whitespace().next()?;
     let command = token.strip_prefix('/')?;
 
-    let name = match command.split_once('@') {
-        Some((command, _bot_name)) => command,
-        None => command,
+    let (name, mention) = match command.split_once('@') {
+        Some((name, mention)) => (name, Some(mention)),
+        None => (command, None),
     };
 
     if name.is_empty() {
         return None;
     }
 
+    let mention = match mention {
+        Some(value) => Some(normalize_bot_username(value)?),
+        None => None,
+    };
+
     let args = text[token.len()..].trim().to_owned();
-    Some(CommandData {
+    let command = CommandData {
         name: name.to_owned(),
+        mention,
         args,
-    })
+    };
+    if command.is_addressed_to(bot_username) {
+        Some(command)
+    } else {
+        None
+    }
+}
+
+fn normalize_bot_username(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_start_matches('@').trim();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_owned())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1223,40 +1677,100 @@ where
     serde_json::from_str(payload).ok()
 }
 
-/// Returns command name from message text (without leading `/` and optional `@botname`).
+/// Returns command name from canonical message text.
+///
+/// Mentioned commands (for example, `/start@OtherBot`) are ignored by default.
 pub fn extract_command(update: &Update) -> Option<&str> {
-    let text = update.message.as_ref()?.text.as_deref()?;
+    extract_command_for_bot(update, None)
+}
+
+/// Returns command name from canonical message text, filtered by target bot username.
+pub fn extract_command_for_bot<'a>(
+    update: &'a Update,
+    bot_username: Option<&str>,
+) -> Option<&'a str> {
+    let text = extract_text(update)?;
     let token = text.split_whitespace().next()?;
     let command = token.strip_prefix('/')?;
-
-    let command = match command.split_once('@') {
-        Some((command, _bot_name)) => command,
-        None => command,
+    let (name, mention) = match command.split_once('@') {
+        Some((name, mention)) => (name, Some(mention)),
+        None => (command, None),
     };
-
-    if command.is_empty() {
+    if name.is_empty() {
         return None;
     }
 
-    Some(command)
+    let mention = mention.and_then(normalize_bot_username);
+    let command = CommandData {
+        name: name.to_owned(),
+        mention,
+        args: text[token.len()..].trim().to_owned(),
+    };
+    if command.is_addressed_to(bot_username) {
+        Some(name)
+    } else {
+        None
+    }
 }
 
 /// Returns command arguments as a trimmed string slice.
 pub fn extract_command_args(update: &Update) -> Option<&str> {
-    let text = update.message.as_ref()?.text.as_deref()?;
+    extract_command_args_for_bot(update, None)
+}
+
+/// Returns command arguments as a trimmed string slice, filtered by target bot username.
+pub fn extract_command_args_for_bot<'a>(
+    update: &'a Update,
+    bot_username: Option<&str>,
+) -> Option<&'a str> {
+    let text = extract_text(update)?;
     let token = text.split_whitespace().next()?;
-    let _ = token.strip_prefix('/')?;
-    Some(text[token.len()..].trim())
+    let command = token.strip_prefix('/')?;
+    let mention = command
+        .split_once('@')
+        .and_then(|(_, mention)| normalize_bot_username(mention));
+    let name = command.split_once('@').map_or(command, |(name, _)| name);
+    if name.is_empty() {
+        return None;
+    }
+
+    let command_data = CommandData {
+        name: name.to_owned(),
+        mention,
+        args: text[token.len()..].trim().to_owned(),
+    };
+    if command_data.is_addressed_to(bot_username) {
+        Some(text[token.len()..].trim())
+    } else {
+        None
+    }
 }
 
 /// Returns parsed command with owned command name and args.
 pub fn extract_command_data(update: &Update) -> Option<CommandData> {
-    parse_command_text(update.message.as_ref()?.text.as_deref()?)
+    extract_command_data_for_bot(update, None)
+}
+
+/// Returns parsed command with owned command name and args, filtered by target bot username.
+pub fn extract_command_data_for_bot(
+    update: &Update,
+    bot_username: Option<&str>,
+) -> Option<CommandData> {
+    parse_command_text_for_bot(extract_text(update)?, bot_username)
 }
 
 /// Parses typed command from incoming update using a `BotCommands` implementation.
 pub fn parse_typed_command<C: BotCommands>(update: &Update) -> Option<C> {
-    let command = extract_command_data(update)?;
+    let command = extract_command_data_for_bot(update, None)?;
+    C::parse(&command.name, command.args_trimmed())
+}
+
+/// Parses typed command from incoming update for an explicit bot username target.
+pub fn parse_typed_command_for_bot<C: BotCommands>(
+    update: &Update,
+    bot_username: Option<&str>,
+) -> Option<C> {
+    let command = extract_command_data_for_bot(update, bot_username)?;
     C::parse(&command.name, command.args_trimmed())
 }
 
@@ -2101,6 +2615,37 @@ impl Default for PollingConfig {
     }
 }
 
+impl PollingConfig {
+    fn resolve_poll_timeout_seconds(
+        &self,
+        request_timeout: Duration,
+        total_timeout: Option<Duration>,
+    ) -> Result<u16> {
+        let request_budget =
+            total_timeout.map_or(request_timeout, |total| total.min(request_timeout));
+
+        // Keep one second of headroom so transport timeout does not preempt long polling.
+        let max_poll_timeout = request_budget
+            .checked_sub(Duration::from_secs(1))
+            .map_or(0, |timeout| {
+                timeout.as_secs().min(u64::from(u16::MAX)) as u16
+            });
+
+        if self.poll_timeout_seconds > 0 && max_poll_timeout == 0 {
+            return Err(Error::Configuration {
+                reason: format!(
+                    "poll_timeout_seconds={} requires at least 1s timeout budget headroom, got request_timeout={}ms and total_timeout={}ms; increase timeouts or set poll_timeout_seconds=0 for short polling",
+                    self.poll_timeout_seconds,
+                    request_timeout.as_millis(),
+                    total_timeout.map_or(0_u128, |value| value.as_millis())
+                ),
+            });
+        }
+
+        Ok(self.poll_timeout_seconds.min(max_poll_timeout))
+    }
+}
+
 /// Result of dispatching one update through router + middleware chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchOutcome {
@@ -2125,11 +2670,33 @@ pub trait UpdateSource: Send + 'static {
     fn poll<'a>(&'a mut self) -> SourceFuture<'a>;
 }
 
+/// Exponential backoff policy for source-side polling errors.
+#[derive(Clone, Debug)]
+pub struct SourceErrorBackoffConfig {
+    pub base_delay: Duration,
+    pub max_delay: Duration,
+    pub jitter_ratio: f32,
+}
+
+impl Default for SourceErrorBackoffConfig {
+    fn default() -> Self {
+        Self {
+            base_delay: Duration::from_millis(500),
+            max_delay: Duration::from_secs(30),
+            jitter_ratio: 0.2,
+        }
+    }
+}
+
 /// Shared engine configuration independent from input source implementation.
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub idle_delay: Duration,
     pub error_delay: Duration,
+    /// Optional exponential backoff for repeated source errors.
+    ///
+    /// When enabled, this takes precedence over `error_delay`.
+    pub source_error_backoff: Option<SourceErrorBackoffConfig>,
     pub continue_on_source_error: bool,
     pub continue_on_handler_error: bool,
     pub max_handler_concurrency: usize,
@@ -2140,6 +2707,7 @@ impl Default for EngineConfig {
         Self {
             idle_delay: Duration::from_millis(100),
             error_delay: Duration::from_millis(500),
+            source_error_backoff: None,
             continue_on_source_error: true,
             continue_on_handler_error: true,
             max_handler_concurrency: 1,
@@ -2177,8 +2745,20 @@ impl LongPollingSource {
         self
     }
 
+    /// Sets polling config and validates timeout budget immediately.
+    pub fn with_config_checked(mut self, config: PollingConfig) -> Result<Self> {
+        self.config = config;
+        let _ = self.validate_timeout_budget()?;
+        Ok(self)
+    }
+
     pub fn config_mut(&mut self) -> &mut PollingConfig {
         &mut self.config
+    }
+
+    /// Validates timeout budget and returns resolved poll timeout seconds.
+    pub fn validate_timeout_budget(&self) -> Result<u16> {
+        self.effective_poll_timeout_seconds()
     }
 
     pub fn next_offset(&self) -> Option<i64> {
@@ -2281,34 +2861,10 @@ impl LongPollingSource {
     }
 
     fn effective_poll_timeout_seconds(&self) -> Result<u16> {
-        let request_budget = self
-            .client
-            .total_timeout()
-            .map_or(self.client.request_timeout(), |total_timeout| {
-                total_timeout.min(self.client.request_timeout())
-            });
-
-        // Keep one second of headroom so transport timeout does not preempt long polling.
-        let max_poll_timeout = request_budget
-            .checked_sub(Duration::from_secs(1))
-            .map_or(0, |timeout| {
-                timeout.as_secs().min(u64::from(u16::MAX)) as u16
-            });
-
-        if self.config.poll_timeout_seconds > 0 && max_poll_timeout == 0 {
-            return Err(Error::Configuration {
-                reason: format!(
-                    "poll_timeout_seconds={} requires at least 1s timeout budget headroom, got request_timeout={}ms and total_timeout={}ms; increase timeouts or set poll_timeout_seconds=0 for short polling",
-                    self.config.poll_timeout_seconds,
-                    self.client.request_timeout().as_millis(),
-                    self.client
-                        .total_timeout()
-                        .map_or(0_u128, |value| value.as_millis())
-                ),
-            });
-        }
-
-        Ok(self.config.poll_timeout_seconds.min(max_poll_timeout))
+        self.config.resolve_poll_timeout_seconds(
+            self.client.request_timeout(),
+            self.client.total_timeout(),
+        )
     }
 }
 
@@ -2997,6 +3553,20 @@ fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duratio
     delay.min(max)
 }
 
+fn jitter_duration(delay: Duration, jitter_ratio: f32) -> Duration {
+    if delay.is_zero() || jitter_ratio <= 0.0 {
+        return delay;
+    }
+
+    let ratio = f64::from(jitter_ratio.clamp(0.0, 1.0));
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    let unit = (now_nanos % 10_000) as f64 / 10_000.0;
+    let multiplier = (1.0 - ratio) + (2.0 * ratio * unit);
+    Duration::from_secs_f64(delay.as_secs_f64() * multiplier)
+}
+
 /// Source-agnostic bot engine that handles dispatching, backpressure and error policy.
 pub struct BotEngine<S>
 where
@@ -3009,6 +3579,10 @@ where
     on_source_error: Option<SourceErrorHook>,
     on_handler_error: Option<HandlerErrorHook>,
     on_event: Option<EngineEventHook>,
+    on_source_error_async: Option<AsyncSourceErrorHook>,
+    on_handler_error_async: Option<AsyncHandlerErrorHook>,
+    on_event_async: Option<AsyncEngineEventHook>,
+    source_error_streak: usize,
 }
 
 impl<S> BotEngine<S>
@@ -3024,6 +3598,10 @@ where
             on_source_error: None,
             on_handler_error: None,
             on_event: None,
+            on_source_error_async: None,
+            on_handler_error_async: None,
+            on_event_async: None,
+            source_error_streak: 0,
         }
     }
 
@@ -3048,11 +3626,31 @@ where
         self
     }
 
+    pub fn on_source_error_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&Error) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_source_error_async = Some(Arc::new(move |error| Box::pin(hook(error))));
+        self
+    }
+
     pub fn on_handler_error<F>(mut self, hook: F) -> Self
     where
         F: Fn(i64, &Error) + Send + Sync + 'static,
     {
         self.on_handler_error = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn on_handler_error_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(i64, &Error) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_handler_error_async = Some(Arc::new(move |update_id, error| {
+            Box::pin(hook(update_id, error))
+        }));
         self
     }
 
@@ -3064,8 +3662,17 @@ where
         self
     }
 
+    pub fn on_event_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineEvent) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_event_async = Some(Arc::new(move |event| Box::pin(hook(event))));
+        self
+    }
+
     pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
-        self.notify_event(EngineEvent::PollStarted);
+        self.notify_event(EngineEvent::PollStarted).await;
 
         let updates = match self.source.poll().await {
             Ok(updates) => updates,
@@ -3073,14 +3680,37 @@ where
                 self.notify_event(EngineEvent::PollFailed {
                     classification: error.classification(),
                     retryable: error.is_retryable(),
-                });
+                    status: error.status().map(|status| status.as_u16()),
+                    error_code: error.error_code(),
+                    request_id: error.request_id().map(ToOwned::to_owned),
+                    message: error.to_string(),
+                })
+                .await;
                 return Err(error);
             }
         };
 
+        if let Err(error) = self
+            .router
+            .prepare_for_updates(&self.client, &updates)
+            .await
+        {
+            self.notify_event(EngineEvent::PollFailed {
+                classification: error.classification(),
+                retryable: error.is_retryable(),
+                status: error.status().map(|status| status.as_u16()),
+                error_code: error.error_code(),
+                request_id: error.request_id().map(ToOwned::to_owned),
+                message: error.to_string(),
+            })
+            .await;
+            return Err(error);
+        }
+
         self.notify_event(EngineEvent::PollCompleted {
             update_count: updates.len(),
-        });
+        })
+        .await;
 
         self.dispatch_updates(updates).await
     }
@@ -3088,7 +3718,7 @@ where
     pub async fn run(&mut self) -> Result<()> {
         loop {
             let poll_result = self.poll_once().await;
-            let delay = self.handle_poll_result(poll_result)?;
+            let delay = self.handle_poll_result(poll_result).await?;
             wait_if_needed(delay).await;
         }
     }
@@ -3103,7 +3733,7 @@ where
             tokio::select! {
                 _ = &mut shutdown => return Ok(()),
                 poll_result = self.poll_once() => {
-                    let delay = self.handle_poll_result(poll_result)?;
+                    let delay = self.handle_poll_result(poll_result).await?;
                     if !delay.is_zero() {
                         tokio::select! {
                             _ = &mut shutdown => return Ok(()),
@@ -3130,31 +3760,36 @@ where
 
         for update in updates {
             let update_id = update.update_id;
-            self.notify_unknown_kinds(&update);
+            self.notify_unknown_kinds(&update).await;
             let context = BotContext::new(self.client.clone());
-            self.notify_event(EngineEvent::DispatchStarted { update_id });
+            self.notify_event(EngineEvent::DispatchStarted { update_id })
+                .await;
             match self.router.dispatch(context, update).await {
                 Ok(true) => {
                     let outcome = DispatchOutcome::Handled { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
                 Ok(false) => {
                     let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
                 Err(error) => {
-                    self.notify_handler_error(update_id, &error);
+                    self.notify_handler_error(update_id, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id,
                         classification: error.classification(),
-                    });
+                    })
+                    .await;
                     if !self.config.continue_on_handler_error {
                         return Err(error);
                     }
                     let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
             }
@@ -3173,8 +3808,9 @@ where
 
         for update in updates {
             let update_id = update.update_id;
-            self.notify_unknown_kinds(&update);
-            self.notify_event(EngineEvent::DispatchStarted { update_id });
+            self.notify_unknown_kinds(&update).await;
+            self.notify_event(EngineEvent::DispatchStarted { update_id })
+                .await;
 
             let permit = semaphore
                 .clone()
@@ -3198,35 +3834,40 @@ where
             match join_result {
                 Ok((update_id, Ok(true))) => {
                     let outcome = DispatchOutcome::Handled { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
                 Ok((update_id, Ok(false))) => {
                     let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
                 Ok((update_id, Err(error))) => {
-                    self.notify_handler_error(update_id, &error);
+                    self.notify_handler_error(update_id, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id,
                         classification: error.classification(),
-                    });
+                    })
+                    .await;
                     if !self.config.continue_on_handler_error {
                         first_error = Some(error);
                         break;
                     }
                     let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome });
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
                     outcomes.push(outcome);
                 }
                 Err(join_error) => {
                     let error = invalid_request(format!("bot handler task failed: {join_error}"));
-                    self.notify_handler_error(-1, &error);
+                    self.notify_handler_error(-1, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id: -1,
                         classification: error.classification(),
-                    });
+                    })
+                    .await;
                     if !self.config.continue_on_handler_error {
                         first_error = Some(error);
                         break;
@@ -3244,33 +3885,57 @@ where
         Ok(outcomes)
     }
 
-    fn handle_poll_result(&self, poll_result: Result<Vec<DispatchOutcome>>) -> Result<Duration> {
+    async fn handle_poll_result(
+        &mut self,
+        poll_result: Result<Vec<DispatchOutcome>>,
+    ) -> Result<Duration> {
         match poll_result {
-            Ok(outcomes) if outcomes.is_empty() => Ok(self.config.idle_delay),
-            Ok(_) => Ok(Duration::ZERO),
+            Ok(outcomes) if outcomes.is_empty() => {
+                self.source_error_streak = 0;
+                Ok(self.config.idle_delay)
+            }
+            Ok(_) => {
+                self.source_error_streak = 0;
+                Ok(Duration::ZERO)
+            }
             Err(error) => {
-                self.notify_source_error(&error);
+                self.notify_source_error(&error).await;
                 if !self.config.continue_on_source_error {
                     return Err(error);
+                }
+                self.source_error_streak = self.source_error_streak.saturating_add(1);
+                if let Some(backoff) = self.config.source_error_backoff.as_ref() {
+                    let delay = exponential_backoff(
+                        backoff.base_delay,
+                        backoff.max_delay,
+                        self.source_error_streak,
+                    );
+                    return Ok(jitter_duration(delay, backoff.jitter_ratio).min(backoff.max_delay));
                 }
                 Ok(self.config.error_delay)
             }
         }
     }
 
-    fn notify_source_error(&self, error: &Error) {
+    async fn notify_source_error(&self, error: &Error) {
         if let Some(hook) = self.on_source_error.as_ref() {
             hook(error);
         }
-    }
-
-    fn notify_handler_error(&self, update_id: i64, error: &Error) {
-        if let Some(hook) = self.on_handler_error.as_ref() {
-            hook(update_id, error);
+        if let Some(hook) = self.on_source_error_async.as_ref() {
+            hook(error).await;
         }
     }
 
-    fn notify_unknown_kinds(&self, update: &Update) {
+    async fn notify_handler_error(&self, update_id: i64, error: &Error) {
+        if let Some(hook) = self.on_handler_error.as_ref() {
+            hook(update_id, error);
+        }
+        if let Some(hook) = self.on_handler_error_async.as_ref() {
+            hook(update_id, error).await;
+        }
+    }
+
+    async fn notify_unknown_kinds(&self, update: &Update) {
         let update_kind = update.kind();
         let message_kind = extract_message_kind(update);
         if update_kind != UpdateKind::Unknown && message_kind != Some(MessageKind::Unknown) {
@@ -3281,12 +3946,16 @@ where
             update_id: update.update_id,
             update_kind,
             message_kind,
-        });
+        })
+        .await;
     }
 
-    fn notify_event(&self, event: EngineEvent) {
+    async fn notify_event(&self, event: EngineEvent) {
         if let Some(hook) = self.on_event.as_ref() {
             hook(&event);
+        }
+        if let Some(hook) = self.on_event_async.as_ref() {
+            hook(&event).await;
         }
     }
 }
@@ -3353,6 +4022,15 @@ where
         self
     }
 
+    pub fn on_source_error_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&Error) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.engine = self.engine.on_source_error_async(hook);
+        self
+    }
+
     pub fn on_handler_error<F>(mut self, hook: F) -> Self
     where
         F: Fn(i64, &Error) + Send + Sync + 'static,
@@ -3361,11 +4039,29 @@ where
         self
     }
 
+    pub fn on_handler_error_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(i64, &Error) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.engine = self.engine.on_handler_error_async(hook);
+        self
+    }
+
     pub fn on_event<F>(mut self, hook: F) -> Self
     where
         F: Fn(&EngineEvent) + Send + Sync + 'static,
     {
         self.engine = self.engine.on_event(hook);
+        self
+    }
+
+    pub fn on_event_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineEvent) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.engine = self.engine.on_event_async(hook);
         self
     }
 
@@ -3469,6 +4165,9 @@ impl WebhookRunner {
     /// Dispatches one already-deserialized update and returns structured outcome.
     pub async fn dispatch_update_outcome(&self, update: Update) -> Result<DispatchOutcome> {
         let update_id = update.update_id;
+        self.router
+            .prepare_for_update(&self.client, &update)
+            .await?;
         let context = BotContext::new(self.client.clone());
         let result = self.router.dispatch(context, update).await;
 
@@ -3602,6 +4301,9 @@ pub mod testing {
 
         pub async fn dispatch(&self, update: Update) -> Result<DispatchOutcome> {
             let update_id = update.update_id;
+            self.router
+                .prepare_for_update(self.context.client(), &update)
+                .await?;
             match self.router.dispatch(self.context.clone(), update).await? {
                 true => Ok(DispatchOutcome::Handled { update_id }),
                 false => Ok(DispatchOutcome::Ignored { update_id }),

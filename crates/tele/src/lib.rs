@@ -1,6 +1,4 @@
 #![forbid(unsafe_code)]
-// The SDK exposes rich structured errors by design.
-#![allow(clippy::result_large_err)]
 
 //! `tele` is an ergonomic Telegram Bot API SDK for Rust.
 //! Built on `reqx`, with strict error modeling and async/blocking parity.
@@ -51,6 +49,7 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
+pub use client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 #[cfg(feature = "_async")]
 pub use client::{ErgoApi, RawApi, TypedApi};

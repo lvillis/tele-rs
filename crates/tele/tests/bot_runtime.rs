@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use tele::Client;
-use tele::Error;
+use tele::bot::testing::BotHarness;
 use tele::bot::{
     BotContext, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData, DispatchOutcome,
     EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
@@ -21,7 +21,8 @@ use tele::bot::{
     apply_chat_state_transition, channel_source, clear_chat_state, extract_callback_data,
     extract_callback_json, extract_command, extract_command_args, extract_command_data,
     extract_message, extract_text, extract_web_app_data, extract_write_access_allowed,
-    load_chat_state, parse_command_text, save_chat_state, tokenize_command_args,
+    load_chat_state, parse_command_text, parse_command_text_for_bot, save_chat_state,
+    tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
@@ -30,6 +31,7 @@ use tele::types::telegram::{
 };
 use tele::types::update::Update;
 use tele::types::{MessageKind, UpdateKind};
+use tele::{Error, ErrorClass};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -235,6 +237,15 @@ fn parse_update(input: serde_json::Value) -> Option<Update> {
     serde_json::from_value(input).ok()
 }
 
+fn reject_blocked_text(text: &TextInput, _update: &Update) -> tele::bot::HandlerResult {
+    if text.0.contains("blocked") {
+        return Err(HandlerError::internal(Error::InvalidRequest {
+            reason: "blocked by guard".to_owned(),
+        }));
+    }
+    Ok(())
+}
+
 fn message_update(update_id: i64, chat_id: i64, text: &str) -> serde_json::Value {
     json!({
         "update_id": update_id,
@@ -338,6 +349,7 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         parsed,
         Some(CommandData {
             name: "echo".to_owned(),
+            mention: None,
             args: "hello world".to_owned()
         })
     );
@@ -352,6 +364,7 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         extract_command_data(&update),
         Some(CommandData {
             name: "echo".to_owned(),
+            mention: None,
             args: "hello world".to_owned()
         })
     );
@@ -462,6 +475,160 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert!(extract_callback_json::<serde_json::Value>(&callback).is_none());
     assert_eq!(callback.callback_data(), Some("btn-1"));
     assert!(callback.message().is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(), DynError> {
+    let unconfigured_client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut disabled_auto_router = Router::new();
+    let _ = disabled_auto_router.disable_auto_command_target();
+    disabled_auto_router.on_command(
+        "start",
+        |_context: BotContext, _update: Update| async move { Ok(()) },
+    );
+    let Some(targeted_this_bot_without_auto) =
+        parse_update(message_update(205, 1, "/start@ThisBot hi"))
+    else {
+        return Ok(());
+    };
+    assert_eq!(parse_command_text("/start@OtherBot hi"), None);
+    assert!(
+        !disabled_auto_router
+            .dispatch(
+                BotContext::new(unconfigured_client.clone()),
+                targeted_this_bot_without_auto,
+            )
+            .await?
+    );
+
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let auto_client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
+
+    let mut auto_router = Router::new();
+    auto_router.on_command(
+        "start",
+        |_context: BotContext, _update: Update| async move { Ok(()) },
+    );
+    let Some(unprepared_targeted_this_bot) =
+        parse_update(message_update(206, 1, "/start@ThisBot hi"))
+    else {
+        return Ok(());
+    };
+    assert!(
+        !auto_router
+            .dispatch(
+                BotContext::new(unconfigured_client.clone()),
+                unprepared_targeted_this_bot,
+            )
+            .await?
+    );
+    auto_router.prepare(&auto_client).await?;
+    let Some(targeted_this_bot) = parse_update(message_update(207, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(
+        auto_router
+            .dispatch(BotContext::new(auto_client.clone()), targeted_this_bot)
+            .await?
+    );
+    join_server(handle).await?;
+
+    let Some(targeted_other_bot) = parse_update(message_update(208, 1, "/start@OtherBot hi"))
+    else {
+        return Ok(());
+    };
+    assert!(
+        !auto_router
+            .dispatch(BotContext::new(auto_client), targeted_other_bot)
+            .await?
+    );
+
+    let (harness_base_url, harness_handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let harness_client = Client::builder(&harness_base_url)?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut harness_router = Router::new();
+    harness_router.on_command(
+        "start",
+        |_context: BotContext, _update: Update| async move { Ok(()) },
+    );
+    let harness = BotHarness::with_client(harness_client, harness_router);
+    let Some(harness_update) = parse_update(message_update(209, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(matches!(
+        harness.dispatch(harness_update).await?,
+        DispatchOutcome::Handled { .. }
+    ));
+    join_server(harness_handle).await?;
+
+    let mut targeted_router = Router::new();
+    let _ = targeted_router.set_command_target("ThisBot")?;
+    targeted_router.on_command(
+        "start",
+        |_context: BotContext, _update: Update| async move { Ok(()) },
+    );
+    let Some(targeted_this_bot) = parse_update(message_update(210, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(parse_command_text_for_bot("/start@ThisBot hi", Some("thisbot")).is_some());
+    assert!(
+        targeted_router
+            .dispatch(BotContext::new(unconfigured_client), targeted_this_bot)
+            .await?
+    );
+
+    let Some(edited_update) = parse_update(json!({
+        "update_id": 211,
+        "edited_message": {
+            "message_id": 211,
+            "date": 1700000211,
+            "chat": {"id": 1, "type": "private"},
+            "text": "/echo changed"
+        }
+    })) else {
+        return Ok(());
+    };
+    assert_eq!(extract_command(&edited_update), Some("echo"));
+    assert_eq!(extract_command_args(&edited_update), Some("changed"));
+    assert_eq!(
+        extract_command_data(&edited_update),
+        Some(CommandData {
+            name: "echo".to_owned(),
+            mention: None,
+            args: "changed".to_owned(),
+        })
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn long_polling_config_checked_fails_early() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(500))
+        .total_timeout(Some(Duration::from_millis(500)))
+        .build()?;
+
+    let source = LongPollingSource::new(client).with_config_checked(PollingConfig {
+        poll_timeout_seconds: 30,
+        ..PollingConfig::default()
+    });
+    assert!(source.is_err());
 
     Ok(())
 }
@@ -1444,14 +1611,7 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
     {
         let guard_hits = Arc::clone(&guard_hits);
         guard_router.on_extracted_guard::<TextInput, _, _, _>(
-            |text, _update| {
-                if text.0.contains("blocked") {
-                    return Err(HandlerError::internal(Error::InvalidRequest {
-                        reason: "blocked by guard".to_owned(),
-                    }));
-                }
-                Ok(())
-            },
+            reject_blocked_text,
             move |_context: BotContext, _update: Update, _text| {
                 let guard_hits = Arc::clone(&guard_hits);
                 async move {
@@ -1504,7 +1664,7 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
                 request_id: None,
                 retry_after: None,
                 request_path: None,
-                message: "upstream unavailable".to_owned(),
+                message: "upstream unavailable".into(),
             })
         },
     );
@@ -1824,6 +1984,63 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
         update_kind: UpdateKind::Message,
         message_kind: Some(MessageKind::Unknown),
     }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_poll_failed_emits_details_and_async_hook() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(200))
+        .total_timeout(Some(Duration::from_millis(500)))
+        .build()?;
+
+    let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
+    let async_hits = Arc::new(AtomicUsize::new(0));
+    let mut engine = BotEngine::with_long_polling(client, Router::new())
+        .with_config(EngineConfig {
+            continue_on_source_error: false,
+            ..EngineConfig::default()
+        })
+        .on_event({
+            let events = Arc::clone(&events);
+            move |event| {
+                if let Ok(mut guard) = events.lock() {
+                    guard.push(event.clone());
+                }
+            }
+        })
+        .on_event_async({
+            let async_hits = Arc::clone(&async_hits);
+            move |_event| {
+                let async_hits = Arc::clone(&async_hits);
+                async move {
+                    async_hits.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+    let poll = engine.poll_once().await;
+    assert!(poll.is_err());
+    assert!(async_hits.load(Ordering::SeqCst) > 0);
+
+    let captured = events.lock().map_err(|error| error.to_string())?;
+    let poll_failed = captured
+        .iter()
+        .find(|event| matches!(event, EngineEvent::PollFailed { .. }));
+    assert!(poll_failed.is_some());
+    if let Some(EngineEvent::PollFailed {
+        classification,
+        request_id,
+        message,
+        ..
+    }) = poll_failed
+    {
+        assert_eq!(*classification, ErrorClass::Transport);
+        assert!(request_id.as_deref().is_some());
+        assert!(!message.is_empty());
+    }
 
     Ok(())
 }

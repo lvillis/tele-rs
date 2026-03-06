@@ -72,6 +72,22 @@ impl SetMyCommandsRequest {
             language_code: None,
         })
     }
+
+    pub fn scope(mut self, scope: BotCommandScope) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    pub fn language_code(mut self, language_code: impl Into<String>) -> Result<Self> {
+        let language_code = language_code.into();
+        if language_code.trim().is_empty() {
+            return Err(Error::InvalidRequest {
+                reason: "language_code cannot be empty".to_owned(),
+            });
+        }
+        self.language_code = Some(language_code);
+        Ok(self)
+    }
 }
 
 /// `getMyCommands` request.

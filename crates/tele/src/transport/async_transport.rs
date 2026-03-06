@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 
 use crate::client::RequestDefaults;
 use crate::transport::{
-    build_multipart_payload, map_reqx_builder_error, map_reqx_error, parse_telegram_response,
-    to_rate_limit_policy, to_retry_policy,
+    build_multipart_payload, local_transport_request_id, map_reqx_builder_error, map_reqx_error,
+    parse_telegram_response, to_rate_limit_policy, to_retry_policy,
 };
 use crate::types::upload::UploadFile;
 use crate::util::{build_api_path, validate_method_name};
@@ -100,7 +100,14 @@ impl AsyncTransport {
             .body(body)
             .send_with_status()
             .await
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,
@@ -149,7 +156,14 @@ impl AsyncTransport {
             .body_stream(payload.into_stream())
             .send_with_status()
             .await
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,
@@ -177,7 +191,14 @@ impl AsyncTransport {
             .configure_request(self.client.request(Method::POST, path), defaults)
             .send_with_status()
             .await
-            .map_err(|source| map_reqx_error(method, token, source))?;
+            .map_err(|source| {
+                map_reqx_error(
+                    method,
+                    token,
+                    source,
+                    Some(local_transport_request_id(method)),
+                )
+            })?;
 
         parse_telegram_response(
             method,
