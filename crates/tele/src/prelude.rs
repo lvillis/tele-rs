@@ -14,9 +14,9 @@ pub use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, We
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
 pub use crate::types::{
-    BotCommand, CallbackCodec, CallbackPayload, ChatId, ChatMemberPermission,
-    CompactCallbackPayload, Message, MessageId, MessageKind, ParseMode, ReplyMarkup,
-    ReplyParameters, Update, UpdateKind,
+    BotCommand, CallbackCodec, CallbackPayload, ChatId, ChatJoinRequest, ChatMemberPermission,
+    ChatMemberUpdated, ChatPermissions, CompactCallbackPayload, Message, MessageId, MessageKind,
+    MessageOrigin, ParseMode, ReplyMarkup, ReplyParameters, Update, UpdateKind,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]
@@ -26,11 +26,12 @@ pub use crate::bot::RedisSessionStore;
 #[cfg(feature = "bot")]
 pub use crate::bot::{
     BotApp, BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, CallbackRouteBuilder,
-    ChannelUpdateSource, ChatSession, CommandArgs, CommandRouteBuilder, CompactCallbackInput,
-    CompactCallbackRouteBuilder, CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome,
-    EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore, JsonCallback,
-    JsonFileSessionStore, LongPollingSource, OutboxConfig, ParsedCommandRouteBuilder,
-    PollingConfig, Router, SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
+    ChannelUpdateSource, ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandArgs,
+    CommandRouteBuilder, CompactCallbackInput, CompactCallbackRouteBuilder, CurrentBotChatMember,
+    CurrentUserChatMember, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError,
+    InMemorySessionStore, JsonCallback, JsonFileSessionStore, LongPollingSource,
+    MyChatMemberUpdatedInput, OutboxConfig, ParsedCommandRouteBuilder, PollingConfig, Router,
+    SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
     TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
     WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,
 };

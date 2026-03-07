@@ -15,16 +15,17 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, ChatSession, CommandData,
-    CurrentBotChatMember, CurrentUserChatMember, DispatchOutcome, EngineConfig, EngineEvent,
-    ErrorPolicy, HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
-    OutboxConfig, PollingConfig, Router, StateTransition, TextInput, UpdateExt, UpdateExtractor,
-    WebAppInput, WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition,
-    channel_source, clear_chat_state, extract_callback_data, extract_callback_json,
-    extract_command, extract_command_args, extract_command_data, extract_compact_callback,
-    extract_message, extract_text, extract_typed_callback, extract_web_app_data,
-    extract_write_access_allowed, load_chat_state, parse_command_text, parse_command_text_for_bot,
-    save_chat_state, tokenize_command_args,
+    BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, ChatJoinRequestInput,
+    ChatMemberUpdatedInput, ChatSession, CommandData, CurrentBotChatMember, CurrentUserChatMember,
+    DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
+    JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, PollingConfig,
+    Router, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
+    WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
+    extract_callback_data, extract_callback_json, extract_chat_join_request,
+    extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
+    extract_compact_callback, extract_message, extract_my_chat_member_update, extract_text,
+    extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
+    parse_command_text, parse_command_text_for_bot, save_chat_state, tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
@@ -580,6 +581,130 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert!(extract_callback_json::<serde_json::Value>(&callback).is_none());
     assert_eq!(callback.callback_data(), Some("btn-1"));
     assert!(callback.message().is_some());
+
+    let maybe_join_request = parse_update(serde_json::json!({
+        "update_id": 204,
+        "chat_join_request": {
+            "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+            "from": {"id": 77, "is_bot": false, "first_name": "candidate"},
+            "user_chat_id": 7001,
+            "date": 1700000003,
+            "bio": "please let me in"
+        }
+    }));
+    assert!(maybe_join_request.is_some());
+    let Some(join_request) = maybe_join_request else {
+        return Ok(());
+    };
+
+    assert_eq!(join_request.update_kind(), UpdateKind::ChatJoinRequest);
+    assert_eq!(join_request.chat_id(), Some(-1001));
+    assert_eq!(join_request.user_id(), Some(77));
+    assert_eq!(
+        extract_chat_join_request(&join_request).map(|request| request.user_chat_id),
+        Some(7001)
+    );
+    assert_eq!(
+        join_request
+            .chat_join_request()
+            .and_then(|request| request.bio.as_deref()),
+        Some("please let me in")
+    );
+    let join_request_extracted = ChatJoinRequestInput::extract(&join_request);
+    assert_eq!(
+        join_request_extracted
+            .as_ref()
+            .map(|request| request.0.chat.id),
+        Some(-1001)
+    );
+
+    let maybe_chat_member_update = parse_update(serde_json::json!({
+        "update_id": 205,
+        "chat_member": {
+            "chat": {"id": -1002, "type": "supergroup", "title": "mods"},
+            "from": {"id": 12, "is_bot": false, "first_name": "admin"},
+            "date": 1700000004,
+            "old_chat_member": {
+                "status": "left",
+                "user": {"id": 78, "is_bot": false, "first_name": "candidate"}
+            },
+            "new_chat_member": {
+                "status": "member",
+                "user": {"id": 78, "is_bot": false, "first_name": "candidate"}
+            },
+            "via_join_request": true
+        }
+    }));
+    assert!(maybe_chat_member_update.is_some());
+    let Some(chat_member_update) = maybe_chat_member_update else {
+        return Ok(());
+    };
+
+    assert_eq!(chat_member_update.update_kind(), UpdateKind::ChatMember);
+    assert_eq!(chat_member_update.chat_id(), Some(-1002));
+    assert_eq!(chat_member_update.user_id(), Some(12));
+    assert_eq!(
+        extract_chat_member_update(&chat_member_update).map(|update| update.member_user().id.0),
+        Some(78)
+    );
+    assert!(
+        chat_member_update
+            .chat_member_update()
+            .is_some_and(|update| update.via_join_request)
+    );
+    let chat_member_extracted = ChatMemberUpdatedInput::extract(&chat_member_update);
+    assert_eq!(
+        chat_member_extracted
+            .as_ref()
+            .map(|update| update.0.chat.id),
+        Some(-1002)
+    );
+
+    let maybe_my_chat_member_update = parse_update(serde_json::json!({
+        "update_id": 206,
+        "my_chat_member": {
+            "chat": {"id": -1003, "type": "supergroup", "title": "ops"},
+            "from": {"id": 13, "is_bot": false, "first_name": "owner"},
+            "date": 1700000005,
+            "old_chat_member": {
+                "status": "member",
+                "user": {"id": 999, "is_bot": true, "first_name": "tele"}
+            },
+            "new_chat_member": {
+                "status": "administrator",
+                "user": {"id": 999, "is_bot": true, "first_name": "tele"},
+                "can_manage_chat": true
+            }
+        }
+    }));
+    assert!(maybe_my_chat_member_update.is_some());
+    let Some(my_chat_member_update) = maybe_my_chat_member_update else {
+        return Ok(());
+    };
+
+    assert_eq!(
+        my_chat_member_update.update_kind(),
+        UpdateKind::MyChatMember
+    );
+    assert_eq!(my_chat_member_update.chat_id(), Some(-1003));
+    assert_eq!(my_chat_member_update.user_id(), Some(13));
+    assert_eq!(
+        extract_my_chat_member_update(&my_chat_member_update)
+            .map(|update| update.member_user().id.0),
+        Some(999)
+    );
+    assert!(
+        my_chat_member_update
+            .my_chat_member_update()
+            .is_some_and(|update| update.member().is_admin())
+    );
+    let my_chat_member_extracted = MyChatMemberUpdatedInput::extract(&my_chat_member_update);
+    assert_eq!(
+        my_chat_member_extracted
+            .as_ref()
+            .map(|update| update.0.chat.id),
+        Some(-1003)
+    );
 
     Ok(())
 }
@@ -1944,6 +2069,143 @@ async fn extractor_routes_dispatch_text_and_callback_inputs() -> Result<(), DynE
 }
 
 #[tokio::test]
+async fn chat_join_request_route_dispatches_typed_input() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        router.chat_join_request_route().handle(
+            move |_context: BotContext, _update: Update, request: ChatJoinRequestInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if request.0.from.id.0 == 501 && request.0.chat.id == -2001 {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let Some(update) = parse_update(serde_json::json!({
+        "update_id": 4003,
+        "chat_join_request": {
+            "chat": {"id": -2001, "type": "supergroup", "title": "screening"},
+            "from": {"id": 501, "is_bot": false, "first_name": "candidate"},
+            "user_chat_id": 99001,
+            "date": 1700000403
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let chat_member_hits = Arc::new(AtomicUsize::new(0));
+    let my_chat_member_hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let chat_member_hits = Arc::clone(&chat_member_hits);
+        router.chat_member_route().handle(
+            move |_context: BotContext, _update: Update, member_update: ChatMemberUpdatedInput| {
+                let chat_member_hits = Arc::clone(&chat_member_hits);
+                async move {
+                    if member_update.0.member_user().id.0 == 601 && member_update.0.chat.id == -2101
+                    {
+                        chat_member_hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let my_chat_member_hits = Arc::clone(&my_chat_member_hits);
+        router.my_chat_member_route().handle(
+            move |_context: BotContext,
+                  _update: Update,
+                  member_update: MyChatMemberUpdatedInput| {
+                let my_chat_member_hits = Arc::clone(&my_chat_member_hits);
+                async move {
+                    if member_update.0.member_user().id.0 == 999 && member_update.0.chat.id == -2102
+                    {
+                        my_chat_member_hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let Some(chat_member_update) = parse_update(serde_json::json!({
+        "update_id": 4004,
+        "chat_member": {
+            "chat": {"id": -2101, "type": "supergroup", "title": "screening"},
+            "from": {"id": 1, "is_bot": false, "first_name": "admin"},
+            "date": 1700000404,
+            "old_chat_member": {
+                "status": "left",
+                "user": {"id": 601, "is_bot": false, "first_name": "candidate"}
+            },
+            "new_chat_member": {
+                "status": "member",
+                "user": {"id": 601, "is_bot": false, "first_name": "candidate"}
+            }
+        }
+    })) else {
+        return Ok(());
+    };
+    let Some(my_chat_member_update) = parse_update(serde_json::json!({
+        "update_id": 4005,
+        "my_chat_member": {
+            "chat": {"id": -2102, "type": "supergroup", "title": "screening"},
+            "from": {"id": 1, "is_bot": false, "first_name": "admin"},
+            "date": 1700000405,
+            "old_chat_member": {
+                "status": "member",
+                "user": {"id": 999, "is_bot": true, "first_name": "tele"}
+            },
+            "new_chat_member": {
+                "status": "administrator",
+                "user": {"id": 999, "is_bot": true, "first_name": "tele"},
+                "can_manage_chat": true
+            }
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert!(
+        router
+            .dispatch(BotContext::new(client.clone()), chat_member_update)
+            .await?
+    );
+    assert!(
+        router
+            .dispatch(BotContext::new(client), my_chat_member_update)
+            .await?
+    );
+    assert_eq!(chat_member_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(my_chat_member_hits.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -2385,7 +2647,7 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
             "message_id": 4303,
             "date": 1700004303,
             "chat": {"id": 1, "type": "private"},
-            "sticker": {"file_id": "s-4303"}
+            "game": {"title": "demo"}
         }
     }));
     assert!(maybe_update.is_some());

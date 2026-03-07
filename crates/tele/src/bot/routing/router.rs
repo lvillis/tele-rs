@@ -650,6 +650,18 @@ impl Router {
         ExtractedRouteBuilder::new(self, "write_access_allowed")
     }
 
+    pub fn chat_join_request_route(&mut self) -> ExtractedRouteBuilder<'_, ChatJoinRequestInput> {
+        ExtractedRouteBuilder::new(self, "chat_join_request")
+    }
+
+    pub fn chat_member_route(&mut self) -> ExtractedRouteBuilder<'_, ChatMemberUpdatedInput> {
+        ExtractedRouteBuilder::new(self, "chat_member")
+    }
+
+    pub fn my_chat_member_route(&mut self) -> ExtractedRouteBuilder<'_, MyChatMemberUpdatedInput> {
+        ExtractedRouteBuilder::new(self, "my_chat_member")
+    }
+
     pub fn command_input_route(&mut self) -> CommandInputRouteBuilder<'_> {
         CommandInputRouteBuilder::new(self)
     }
@@ -977,36 +989,48 @@ impl Router {
     }
 
     /// Dispatches a single update to the first matching route.
-    pub async fn dispatch(&self, context: BotContext, update: Update) -> Result<bool> {
-        let dispatch_state = self.current_dispatch_state();
+    pub fn dispatch(
+        &self,
+        context: BotContext,
+        update: Update,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+        Box::pin(async move {
+            let dispatch_state = self.current_dispatch_state();
 
-        let handler = self
-            .routes
-            .iter()
-            .find(|route| (route.filter)(&update, &dispatch_state))
-            .map(|route| {
-                let route_handler = Arc::clone(&route.handler);
-                let state = dispatch_state.clone();
-                Arc::new(move |context: BotContext, update: Update| {
-                    let state = state.clone();
-                    route_handler(context, update, state)
-                }) as HandlerFn
-            })
-            .or_else(|| self.fallback.as_ref().map(Arc::clone));
+            let handler = self
+                .routes
+                .iter()
+                .find(|route| (route.filter)(&update, &dispatch_state))
+                .map(|route| {
+                    let route_handler = Arc::clone(&route.handler);
+                    let state = dispatch_state.clone();
+                    Arc::new(move |context: BotContext, update: Update| {
+                        let state = state.clone();
+                        route_handler(context, update, state)
+                    }) as HandlerFn
+                })
+                .or_else(|| self.fallback.as_ref().map(Arc::clone));
 
-        let Some(handler) = handler else {
-            return Ok(false);
-        };
+            let Some(handler) = handler else {
+                return Ok(false);
+            };
 
-        let wrapped = self.apply_middlewares(handler);
-        wrapped(context, update).await?;
-        Ok(true)
+            let wrapped = self.apply_middlewares(handler);
+            wrapped(context, update).await?;
+            Ok(true)
+        })
     }
 
     /// Prepares runtime routing state for the given update and immediately dispatches it.
-    pub async fn dispatch_prepared(&self, context: BotContext, update: Update) -> Result<bool> {
-        self.prepare_for_update(context.client(), &update).await?;
-        self.dispatch(context, update).await
+    pub fn dispatch_prepared(
+        &self,
+        context: BotContext,
+        update: Update,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+        Box::pin(async move {
+            self.prepare_for_update(context.client(), &update).await?;
+            self.dispatch(context, update).await
+        })
     }
 
     fn apply_middlewares(&self, handler: HandlerFn) -> HandlerFn {

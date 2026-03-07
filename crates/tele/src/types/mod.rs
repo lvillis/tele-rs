@@ -35,16 +35,17 @@ pub use command::{
 pub use common::{ChatId, MessageId, ParseMode, ResponseParameters, UserId};
 pub use file::{File, GetFileRequest};
 pub use message::{
-    Chat, ChatAction, ChatType, CopyMessageRequest, CopyMessagesRequest, DeleteMessageRequest,
-    DeleteMessagesRequest, DiceEmoji, EditMessageCaptionRequest, EditMessageLiveLocationRequest,
-    EditMessageReplyMarkupRequest, EditMessageResult, EditMessageTextRequest,
-    ForwardMessageRequest, InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument,
-    InputMediaPhoto, InputMediaVideo, Message, MessageEntity, MessageIdObject, MessageKind,
-    PhotoSize, Poll, PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest,
-    SendContactRequest, SendDiceRequest, SendDocumentRequest, SendLocationRequest,
-    SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest,
-    SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest, SentWebAppMessage,
-    StopMessageLiveLocationRequest, StopPollRequest, WriteAccessAllowed,
+    Animation, Audio, Chat, ChatAction, ChatType, Contact, CopyMessageRequest, CopyMessagesRequest,
+    DeleteMessageRequest, DeleteMessagesRequest, Dice, DiceEmoji, Document,
+    EditMessageCaptionRequest, EditMessageLiveLocationRequest, EditMessageReplyMarkupRequest,
+    EditMessageResult, EditMessageTextRequest, ForwardMessageRequest, InputMedia,
+    InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo,
+    Location, Message, MessageEntity, MessageIdObject, MessageKind, MessageOrigin, PhotoSize, Poll,
+    PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest, SendContactRequest,
+    SendDiceRequest, SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest,
+    SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
+    SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest,
+    StopPollRequest, Story, Venue, Video, VideoNote, VideoQuality, Voice, WriteAccessAllowed,
 };
 pub use payment::{
     AnswerPreCheckoutQueryRequest, AnswerShippingQueryRequest, CreateInvoiceLinkRequest,
@@ -70,8 +71,9 @@ pub use telegram::{
     WebAppData, WebAppInfo,
 };
 pub use update::{
-    AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChosenInlineResult,
-    GetUpdatesRequest, InlineQuery, PollAnswer, Update, UpdateKind,
+    AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChatJoinRequest,
+    ChatMemberUpdated, ChosenInlineResult, GetUpdatesRequest, InlineQuery, PollAnswer, Update,
+    UpdateKind,
 };
 pub use upload::UploadFile;
 pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo};

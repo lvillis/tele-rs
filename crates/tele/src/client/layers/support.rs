@@ -64,6 +64,15 @@ pub(crate) fn update_chat_id(update: &Update) -> Option<i64> {
     if let Some(message) = update.edited_channel_post.as_ref() {
         return Some(message.chat.id);
     }
+    if let Some(request) = update.chat_join_request.as_ref() {
+        return Some(request.chat.id);
+    }
+    if let Some(member_update) = update.chat_member.as_ref() {
+        return Some(member_update.chat.id);
+    }
+    if let Some(member_update) = update.my_chat_member.as_ref() {
+        return Some(member_update.chat.id);
+    }
 
     update
         .callback_query

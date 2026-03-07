@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::bot::User;
-use crate::types::message::{Message, Poll};
+use crate::types::chat::{ChatInviteLink, ChatMember};
+use crate::types::message::{Chat, Location, Message, Poll};
 use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton, WebAppData};
 
 /// Classified update payload kind.
@@ -70,7 +71,9 @@ pub struct InlineQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub location: Option<Value>,
+    pub location: Option<Location>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram chosen inline result object.
@@ -83,7 +86,9 @@ pub struct ChosenInlineResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub location: Option<Value>,
+    pub location: Option<Location>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram poll answer object.
@@ -91,8 +96,76 @@ pub struct ChosenInlineResult {
 #[non_exhaustive]
 pub struct PollAnswer {
     pub poll_id: String,
-    pub user: User,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voter_chat: Option<Chat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<User>,
     pub option_ids: Vec<u8>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram chat join request object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatJoinRequest {
+    pub chat: Chat,
+    pub from: User,
+    pub user_chat_id: i64,
+    pub date: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_link: Option<ChatInviteLink>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ChatJoinRequest {
+    pub fn chat_id(&self) -> i64 {
+        self.chat.id
+    }
+
+    pub fn user_id(&self) -> i64 {
+        self.from.id.0
+    }
+}
+
+/// Telegram chat member update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberUpdated {
+    pub chat: Chat,
+    pub from: User,
+    pub date: i64,
+    pub old_chat_member: ChatMember,
+    pub new_chat_member: ChatMember,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_link: Option<ChatInviteLink>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub via_join_request: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub via_chat_folder_invite_link: bool,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ChatMemberUpdated {
+    pub fn chat_id(&self) -> i64 {
+        self.chat.id
+    }
+
+    pub fn actor_id(&self) -> i64 {
+        self.from.id.0
+    }
+
+    pub fn member(&self) -> &ChatMember {
+        &self.new_chat_member
+    }
+
+    pub fn member_user(&self) -> &User {
+        &self.new_chat_member.user
+    }
 }
 
 /// Telegram update object.
@@ -119,11 +192,11 @@ pub struct Update {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll_answer: Option<PollAnswer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub my_chat_member: Option<Value>,
+    pub my_chat_member: Option<ChatMemberUpdated>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_member: Option<Value>,
+    pub chat_member: Option<ChatMemberUpdated>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_join_request: Option<Value>,
+    pub chat_join_request: Option<ChatJoinRequest>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -214,6 +287,22 @@ impl Update {
             .and_then(|query| query.message.as_ref())
             .and_then(|message| message.web_app_data())
     }
+
+    pub fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
+        self.chat_join_request.as_ref()
+    }
+
+    pub fn my_chat_member(&self) -> Option<&ChatMemberUpdated> {
+        self.my_chat_member.as_ref()
+    }
+
+    pub fn chat_member(&self) -> Option<&ChatMemberUpdated> {
+        self.chat_member.as_ref()
+    }
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// `getUpdates` request.
@@ -486,15 +575,47 @@ mod tests {
             }),
             UpdateKind::MyChatMember => json!({
                 "update_id": 109,
-                "my_chat_member": {"dummy": true}
+                "my_chat_member": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "from": {"id": 1, "is_bot": false, "first_name": "admin"},
+                    "date": 1700000109,
+                    "old_chat_member": {
+                        "status": "member",
+                        "user": {"id": 9, "is_bot": true, "first_name": "tele"}
+                    },
+                    "new_chat_member": {
+                        "status": "administrator",
+                        "user": {"id": 9, "is_bot": true, "first_name": "tele"},
+                        "can_manage_chat": true
+                    }
+                }
             }),
             UpdateKind::ChatMember => json!({
                 "update_id": 110,
-                "chat_member": {"dummy": true}
+                "chat_member": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "from": {"id": 1, "is_bot": false, "first_name": "admin"},
+                    "date": 1700000110,
+                    "old_chat_member": {
+                        "status": "left",
+                        "user": {"id": 55, "is_bot": false, "first_name": "member"}
+                    },
+                    "new_chat_member": {
+                        "status": "member",
+                        "user": {"id": 55, "is_bot": false, "first_name": "member"}
+                    },
+                    "via_join_request": true
+                }
             }),
             UpdateKind::ChatJoinRequest => json!({
                 "update_id": 111,
-                "chat_join_request": {"dummy": true}
+                "chat_join_request": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "from": {"id": 99, "is_bot": false, "first_name": "applicant"},
+                    "user_chat_id": 9001,
+                    "date": 1700000111,
+                    "bio": "hello there"
+                }
             }),
             UpdateKind::Unknown => json!({
                 "update_id": 112,
@@ -527,6 +648,43 @@ mod tests {
         assert_eq!(update.kind(), UpdateKind::Unknown);
         assert!(update.has_kind(UpdateKind::Unknown));
         assert_eq!(update.kinds(), vec![UpdateKind::Unknown]);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_chat_join_request_as_typed_model() -> std::result::Result<(), Box<dyn StdError>> {
+        let update = update_for_kind(UpdateKind::ChatJoinRequest)?;
+        let Some(join_request) = update.chat_join_request() else {
+            return Err("missing typed join request".into());
+        };
+
+        assert_eq!(join_request.chat_id(), -1001);
+        assert_eq!(join_request.user_id(), 99);
+        assert_eq!(join_request.bio.as_deref(), Some("hello there"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn parses_chat_member_updates_as_typed_model() -> std::result::Result<(), Box<dyn StdError>> {
+        let member_update = update_for_kind(UpdateKind::ChatMember)?;
+        let my_member_update = update_for_kind(UpdateKind::MyChatMember)?;
+
+        let Some(chat_member) = member_update.chat_member() else {
+            return Err("missing chat_member update".into());
+        };
+        assert_eq!(chat_member.chat_id(), -1001);
+        assert_eq!(chat_member.actor_id(), 1);
+        assert_eq!(chat_member.member_user().id.0, 55);
+        assert!(chat_member.via_join_request);
+
+        let Some(my_chat_member) = my_member_update.my_chat_member() else {
+            return Err("missing my_chat_member update".into());
+        };
+        assert_eq!(my_chat_member.chat_id(), -1001);
+        assert_eq!(my_chat_member.actor_id(), 1);
+        assert!(my_chat_member.member().is_admin());
+
         Ok(())
     }
 }

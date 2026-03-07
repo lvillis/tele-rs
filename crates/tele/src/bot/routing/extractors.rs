@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::update::{ChatJoinRequest, ChatMemberUpdated};
 
 /// Parsed slash command with command name and trailing arguments.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -226,6 +227,66 @@ impl UpdateExtractor for WriteAccessAllowedInput {
     }
 }
 
+/// Chat join request extractor payload.
+#[derive(Clone, Debug)]
+pub struct ChatJoinRequestInput(pub ChatJoinRequest);
+
+impl ChatJoinRequestInput {
+    pub fn into_inner(self) -> ChatJoinRequest {
+        self.0
+    }
+}
+
+impl UpdateExtractor for ChatJoinRequestInput {
+    fn extract(update: &Update) -> Option<Self> {
+        extract_chat_join_request(update).cloned().map(Self)
+    }
+
+    fn describe() -> &'static str {
+        "chat join request"
+    }
+}
+
+/// Chat member update extractor payload.
+#[derive(Clone, Debug)]
+pub struct ChatMemberUpdatedInput(pub ChatMemberUpdated);
+
+impl ChatMemberUpdatedInput {
+    pub fn into_inner(self) -> ChatMemberUpdated {
+        self.0
+    }
+}
+
+impl UpdateExtractor for ChatMemberUpdatedInput {
+    fn extract(update: &Update) -> Option<Self> {
+        extract_chat_member_update(update).cloned().map(Self)
+    }
+
+    fn describe() -> &'static str {
+        "chat member update"
+    }
+}
+
+/// Bot membership update extractor payload.
+#[derive(Clone, Debug)]
+pub struct MyChatMemberUpdatedInput(pub ChatMemberUpdated);
+
+impl MyChatMemberUpdatedInput {
+    pub fn into_inner(self) -> ChatMemberUpdated {
+        self.0
+    }
+}
+
+impl UpdateExtractor for MyChatMemberUpdatedInput {
+    fn extract(update: &Update) -> Option<Self> {
+        extract_my_chat_member_update(update).cloned().map(Self)
+    }
+
+    fn describe() -> &'static str {
+        "my chat member update"
+    }
+}
+
 /// JSON-decoded callback extractor payload.
 #[derive(Clone, Debug)]
 pub struct JsonCallback<T>(pub T);
@@ -429,7 +490,17 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
 
 /// Returns canonical chat extracted from the update.
 pub fn extract_chat(update: &Update) -> Option<&Chat> {
-    extract_message(update).map(Message::chat)
+    if let Some(message) = extract_message(update) {
+        return Some(message.chat());
+    }
+    if let Some(member_update) = extract_chat_member_update(update) {
+        return Some(&member_update.chat);
+    }
+    if let Some(member_update) = extract_my_chat_member_update(update) {
+        return Some(&member_update.chat);
+    }
+
+    extract_chat_join_request(update).map(|request| &request.chat)
 }
 
 /// Returns the acting Telegram user for the update when available.
@@ -448,6 +519,15 @@ pub fn extract_user(update: &Update) -> Option<&User> {
     }
     if let Some(message) = update.edited_channel_post.as_ref() {
         return message.from_user();
+    }
+    if let Some(request) = update.chat_join_request.as_ref() {
+        return Some(&request.from);
+    }
+    if let Some(member_update) = update.chat_member.as_ref() {
+        return Some(&member_update.from);
+    }
+    if let Some(member_update) = update.my_chat_member.as_ref() {
+        return Some(&member_update.from);
     }
     None
 }
@@ -475,6 +555,21 @@ pub fn extract_web_app_data(update: &Update) -> Option<&WebAppData> {
 /// Returns write-access service payload from extracted message when available.
 pub fn extract_write_access_allowed(update: &Update) -> Option<&WriteAccessAllowed> {
     extract_message(update)?.write_access_allowed()
+}
+
+/// Returns typed chat join request payload from update.
+pub fn extract_chat_join_request(update: &Update) -> Option<&ChatJoinRequest> {
+    update.chat_join_request()
+}
+
+/// Returns typed chat member update payload from update.
+pub fn extract_chat_member_update(update: &Update) -> Option<&ChatMemberUpdated> {
+    update.chat_member()
+}
+
+/// Returns typed current-bot member update payload from update.
+pub fn extract_my_chat_member_update(update: &Update) -> Option<&ChatMemberUpdated> {
+    update.my_chat_member()
 }
 
 /// Returns callback query data payload from update.
@@ -643,6 +738,15 @@ pub trait UpdateExt {
     fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
         None
     }
+    fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
+        None
+    }
+    fn chat_member_update(&self) -> Option<&ChatMemberUpdated> {
+        None
+    }
+    fn my_chat_member_update(&self) -> Option<&ChatMemberUpdated> {
+        None
+    }
     fn callback_data(&self) -> Option<&str>;
     fn callback_json<T>(&self) -> Option<T>
     where
@@ -696,6 +800,18 @@ impl UpdateExt for Update {
 
     fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
         extract_write_access_allowed(self)
+    }
+
+    fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
+        extract_chat_join_request(self)
+    }
+
+    fn chat_member_update(&self) -> Option<&ChatMemberUpdated> {
+        extract_chat_member_update(self)
+    }
+
+    fn my_chat_member_update(&self) -> Option<&ChatMemberUpdated> {
+        extract_my_chat_member_update(self)
     }
 
     fn callback_data(&self) -> Option<&str> {
@@ -760,5 +876,15 @@ impl UpdateExt for Update {
 
 /// Tries to extract a canonical chat id from an incoming update.
 pub fn update_chat_id(update: &Update) -> Option<i64> {
-    extract_message(update).map(|message| message.chat.id)
+    if let Some(message) = extract_message(update) {
+        return Some(message.chat.id);
+    }
+    if let Some(member_update) = extract_chat_member_update(update) {
+        return Some(member_update.chat.id);
+    }
+    if let Some(member_update) = extract_my_chat_member_update(update) {
+        return Some(member_update.chat.id);
+    }
+
+    extract_chat_join_request(update).map(|request| request.chat.id)
 }

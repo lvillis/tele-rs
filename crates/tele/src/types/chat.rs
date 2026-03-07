@@ -40,6 +40,82 @@ pub struct ChatPermissions {
     pub can_manage_topics: Option<bool>,
 }
 
+macro_rules! impl_chat_permissions_builders {
+    ($($method:ident => $field:ident),+ $(,)?) => {
+        $(
+            pub fn $method(mut self, allowed: bool) -> Self {
+                self.$field = Some(allowed);
+                self
+            }
+        )+
+    };
+}
+
+impl ChatPermissions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn allow_all() -> Self {
+        Self {
+            can_send_messages: Some(true),
+            can_send_audios: Some(true),
+            can_send_documents: Some(true),
+            can_send_photos: Some(true),
+            can_send_videos: Some(true),
+            can_send_video_notes: Some(true),
+            can_send_voice_notes: Some(true),
+            can_send_polls: Some(true),
+            can_send_other_messages: Some(true),
+            can_add_web_page_previews: Some(true),
+            can_change_info: Some(true),
+            can_invite_users: Some(true),
+            can_pin_messages: Some(true),
+            can_manage_topics: Some(true),
+        }
+    }
+
+    pub fn deny_all() -> Self {
+        Self {
+            can_send_messages: Some(false),
+            can_send_audios: Some(false),
+            can_send_documents: Some(false),
+            can_send_photos: Some(false),
+            can_send_videos: Some(false),
+            can_send_video_notes: Some(false),
+            can_send_voice_notes: Some(false),
+            can_send_polls: Some(false),
+            can_send_other_messages: Some(false),
+            can_add_web_page_previews: Some(false),
+            can_change_info: Some(false),
+            can_invite_users: Some(false),
+            can_pin_messages: Some(false),
+            can_manage_topics: Some(false),
+        }
+    }
+
+    pub fn read_only() -> Self {
+        Self::deny_all()
+    }
+
+    impl_chat_permissions_builders! {
+        with_send_messages => can_send_messages,
+        with_send_audios => can_send_audios,
+        with_send_documents => can_send_documents,
+        with_send_photos => can_send_photos,
+        with_send_videos => can_send_videos,
+        with_send_video_notes => can_send_video_notes,
+        with_send_voice_notes => can_send_voice_notes,
+        with_send_polls => can_send_polls,
+        with_send_other_messages => can_send_other_messages,
+        with_add_web_page_previews => can_add_web_page_previews,
+        with_change_info => can_change_info,
+        with_invite_users => can_invite_users,
+        with_pin_messages => can_pin_messages,
+        with_manage_topics => can_manage_topics,
+    }
+}
+
 /// Telegram chat administrator rights object.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -90,6 +166,32 @@ pub struct ChatMember {
     pub is_anonymous: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_manage_chat: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_delete_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_video_chats: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_restrict_members: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_promote_members: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_change_info: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_invite_users: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_post_stories: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_edit_stories: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_delete_stories: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_post_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_edit_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_pin_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_topics: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -133,25 +235,6 @@ impl ChatMemberPermission {
             Self::ManageTopics => "manage_topics",
         }
     }
-
-    fn field_name(&self) -> &'static str {
-        match self {
-            Self::ManageChat => "can_manage_chat",
-            Self::DeleteMessages => "can_delete_messages",
-            Self::ManageVideoChats => "can_manage_video_chats",
-            Self::RestrictMembers => "can_restrict_members",
-            Self::PromoteMembers => "can_promote_members",
-            Self::ChangeInfo => "can_change_info",
-            Self::InviteUsers => "can_invite_users",
-            Self::PostStories => "can_post_stories",
-            Self::EditStories => "can_edit_stories",
-            Self::DeleteStories => "can_delete_stories",
-            Self::PostMessages => "can_post_messages",
-            Self::EditMessages => "can_edit_messages",
-            Self::PinMessages => "can_pin_messages",
-            Self::ManageTopics => "can_manage_topics",
-        }
-    }
 }
 
 impl ChatMember {
@@ -168,14 +251,21 @@ impl ChatMember {
             return true;
         }
 
-        self.bool_field(permission.field_name()).unwrap_or(false)
-    }
-
-    fn bool_field(&self, field: &str) -> Option<bool> {
-        match field {
-            "is_anonymous" => self.is_anonymous,
-            "can_manage_chat" => self.can_manage_chat,
-            _ => self.extra.get(field).and_then(Value::as_bool),
+        match permission {
+            ChatMemberPermission::ManageChat => self.can_manage_chat.unwrap_or(false),
+            ChatMemberPermission::DeleteMessages => self.can_delete_messages.unwrap_or(false),
+            ChatMemberPermission::ManageVideoChats => self.can_manage_video_chats.unwrap_or(false),
+            ChatMemberPermission::RestrictMembers => self.can_restrict_members.unwrap_or(false),
+            ChatMemberPermission::PromoteMembers => self.can_promote_members.unwrap_or(false),
+            ChatMemberPermission::ChangeInfo => self.can_change_info.unwrap_or(false),
+            ChatMemberPermission::InviteUsers => self.can_invite_users.unwrap_or(false),
+            ChatMemberPermission::PostStories => self.can_post_stories.unwrap_or(false),
+            ChatMemberPermission::EditStories => self.can_edit_stories.unwrap_or(false),
+            ChatMemberPermission::DeleteStories => self.can_delete_stories.unwrap_or(false),
+            ChatMemberPermission::PostMessages => self.can_post_messages.unwrap_or(false),
+            ChatMemberPermission::EditMessages => self.can_edit_messages.unwrap_or(false),
+            ChatMemberPermission::PinMessages => self.can_pin_messages.unwrap_or(false),
+            ChatMemberPermission::ManageTopics => self.can_manage_topics.unwrap_or(false),
         }
     }
 }
@@ -410,4 +500,68 @@ pub struct SetChatStickerSetRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct DeleteChatStickerSetRequest {
     pub chat_id: ChatId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn chat_permissions_presets_and_builders_work() {
+        let denied = ChatPermissions::deny_all();
+        assert_eq!(denied.can_send_messages, Some(false));
+        assert_eq!(denied.can_manage_topics, Some(false));
+
+        let allowed = ChatPermissions::allow_all();
+        assert_eq!(allowed.can_send_messages, Some(true));
+        assert_eq!(allowed.can_invite_users, Some(true));
+
+        let custom = ChatPermissions::read_only()
+            .with_send_messages(true)
+            .with_add_web_page_previews(true);
+        assert_eq!(custom.can_send_messages, Some(true));
+        assert_eq!(custom.can_add_web_page_previews, Some(true));
+        assert_eq!(custom.can_send_photos, Some(false));
+    }
+
+    #[test]
+    fn chat_member_permissions_are_fully_typed()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let member: ChatMember = serde_json::from_value(json!({
+            "status": "administrator",
+            "user": {"id": 1, "is_bot": false, "first_name": "mod"},
+            "can_manage_chat": true,
+            "can_delete_messages": true,
+            "can_manage_video_chats": true,
+            "can_restrict_members": true,
+            "can_promote_members": false,
+            "can_change_info": true,
+            "can_invite_users": true,
+            "can_post_stories": true,
+            "can_edit_stories": false,
+            "can_delete_stories": true,
+            "can_post_messages": false,
+            "can_edit_messages": false,
+            "can_pin_messages": true,
+            "can_manage_topics": true
+        }))?;
+
+        assert!(member.has_permission(ChatMemberPermission::ManageChat));
+        assert!(member.has_permission(ChatMemberPermission::DeleteMessages));
+        assert!(member.has_permission(ChatMemberPermission::ManageVideoChats));
+        assert!(member.has_permission(ChatMemberPermission::RestrictMembers));
+        assert!(!member.has_permission(ChatMemberPermission::PromoteMembers));
+        assert!(member.has_permission(ChatMemberPermission::ChangeInfo));
+        assert!(member.has_permission(ChatMemberPermission::InviteUsers));
+        assert!(member.has_permission(ChatMemberPermission::PostStories));
+        assert!(!member.has_permission(ChatMemberPermission::EditStories));
+        assert!(member.has_permission(ChatMemberPermission::DeleteStories));
+        assert!(!member.has_permission(ChatMemberPermission::PostMessages));
+        assert!(!member.has_permission(ChatMemberPermission::EditMessages));
+        assert!(member.has_permission(ChatMemberPermission::PinMessages));
+        assert!(member.has_permission(ChatMemberPermission::ManageTopics));
+
+        Ok(())
+    }
 }

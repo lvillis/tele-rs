@@ -60,24 +60,32 @@ impl BotHarness {
         }
     }
 
-    pub async fn dispatch(&self, update: Update) -> Result<DispatchOutcome> {
-        let update_id = update.update_id;
-        match self
-            .router
-            .dispatch_prepared(self.context.clone(), update)
-            .await?
-        {
-            true => Ok(DispatchOutcome::Handled { update_id }),
-            false => Ok(DispatchOutcome::Ignored { update_id }),
-        }
+    pub fn dispatch(
+        &self,
+        update: Update,
+    ) -> Pin<Box<dyn Future<Output = Result<DispatchOutcome>> + Send + '_>> {
+        Box::pin(async move {
+            let update_id = update.update_id;
+            match self
+                .router
+                .dispatch_prepared(self.context.clone(), update)
+                .await?
+            {
+                true => Ok(DispatchOutcome::Handled { update_id }),
+                false => Ok(DispatchOutcome::Ignored { update_id }),
+            }
+        })
     }
 
-    pub async fn dispatch_json(&self, payload: &[u8]) -> Result<DispatchOutcome> {
-        let update: Update = serde_json::from_slice(payload).map_err(|source| {
+    pub fn dispatch_json(
+        &self,
+        payload: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<DispatchOutcome>> + Send + '_>> {
+        let update: Result<Update> = serde_json::from_slice(payload).map_err(|source| {
             invalid_request(format!(
                 "failed to deserialize test update payload: {source}"
             ))
-        })?;
-        self.dispatch(update).await
+        });
+        Box::pin(async move { self.dispatch(update?).await })
     }
 }

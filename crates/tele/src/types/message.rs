@@ -5,7 +5,8 @@ use serde_json::Value;
 
 use crate::Error;
 use crate::types::bot::User;
-use crate::types::common::{ChatId, MessageId, ParseMode};
+use crate::types::common::{ChatId, MessageId, ParseMode, UserId};
+use crate::types::sticker::Sticker;
 use crate::types::telegram::{LinkPreviewOptions, ReplyMarkup, ReplyParameters, WebAppData};
 
 /// Telegram chat type.
@@ -93,6 +94,306 @@ pub struct PhotoSize {
     pub file_size: Option<u64>,
 }
 
+/// Telegram animation file object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Animation {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub duration: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<PhotoSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram audio file object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Audio {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub duration: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<PhotoSize>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram generic document object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Document {
+    pub file_id: String,
+    pub file_unique_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<PhotoSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram story object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Story {
+    pub chat: Chat,
+    pub id: i64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram video quality descriptor.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct VideoQuality {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub codec: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram video object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Video {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub duration: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<PhotoSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Vec<PhotoSize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_timestamp: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualities: Option<Vec<VideoQuality>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram video note object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct VideoNote {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub length: u32,
+    pub duration: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<PhotoSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram voice note object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Voice {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub duration: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram phone contact object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Contact {
+    pub phone_number: String,
+    pub first_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcard: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram animated dice object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Dice {
+    pub emoji: DiceEmoji,
+    pub value: u8,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram geographic location object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Location {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_accuracy: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_period: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proximity_alert_radius: Option<u32>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram venue object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct Venue {
+    pub location: Location,
+    pub title: String,
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foursquare_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foursquare_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_place_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_place_type: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram forwarded message origin.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MessageOrigin {
+    User {
+        date: i64,
+        sender_user: User,
+    },
+    HiddenUser {
+        date: i64,
+        sender_user_name: String,
+    },
+    Chat {
+        date: i64,
+        sender_chat: Chat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author_signature: Option<String>,
+    },
+    Channel {
+        date: i64,
+        chat: Chat,
+        message_id: MessageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author_signature: Option<String>,
+    },
+}
+
+impl MessageOrigin {
+    pub fn date(&self) -> i64 {
+        match self {
+            Self::User { date, .. }
+            | Self::HiddenUser { date, .. }
+            | Self::Chat { date, .. }
+            | Self::Channel { date, .. } => *date,
+        }
+    }
+
+    pub fn user(&self) -> Option<&User> {
+        match self {
+            Self::User { sender_user, .. } => Some(sender_user),
+            _ => None,
+        }
+    }
+
+    pub fn chat(&self) -> Option<&Chat> {
+        match self {
+            Self::Chat { sender_chat, .. } => Some(sender_chat),
+            Self::Channel { chat, .. } => Some(chat),
+            _ => None,
+        }
+    }
+
+    pub fn author_signature(&self) -> Option<&str> {
+        match self {
+            Self::Chat {
+                author_signature, ..
+            }
+            | Self::Channel {
+                author_signature, ..
+            } => author_signature.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn sender_name(&self) -> Option<&str> {
+        match self {
+            Self::User { sender_user, .. } => Some(sender_user.first_name.as_str()),
+            Self::HiddenUser {
+                sender_user_name, ..
+            } => Some(sender_user_name.as_str()),
+            Self::Chat { sender_chat, .. } => sender_chat
+                .title
+                .as_deref()
+                .or(sender_chat.username.as_deref())
+                .or(sender_chat.first_name.as_deref()),
+            Self::Channel { chat, .. } => chat
+                .title
+                .as_deref()
+                .or(chat.username.as_deref())
+                .or(chat.first_name.as_deref()),
+        }
+    }
+
+    pub fn message_id(&self) -> Option<MessageId> {
+        match self {
+            Self::Channel { message_id, .. } => Some(*message_id),
+            _ => None,
+        }
+    }
+}
+
 /// Telegram poll option.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -139,17 +440,41 @@ pub enum MessageKind {
     WriteAccessAllowed,
     WebAppData,
     Poll,
+    Animation,
+    Audio,
+    Contact,
+    Dice,
+    Document,
+    Location,
     Photo,
+    Sticker,
+    Story,
+    Venue,
+    Video,
+    VideoNote,
+    Voice,
     Text,
     Caption,
     Unknown,
 }
 
-const KNOWN_MESSAGE_KINDS: [MessageKind; 6] = [
+const KNOWN_MESSAGE_KINDS: [MessageKind; 18] = [
     MessageKind::WriteAccessAllowed,
     MessageKind::WebAppData,
     MessageKind::Poll,
+    MessageKind::Animation,
+    MessageKind::Audio,
+    MessageKind::Contact,
+    MessageKind::Dice,
+    MessageKind::Document,
+    MessageKind::Location,
     MessageKind::Photo,
+    MessageKind::Sticker,
+    MessageKind::Story,
+    MessageKind::Venue,
+    MessageKind::Video,
+    MessageKind::VideoNote,
+    MessageKind::Voice,
     MessageKind::Text,
     MessageKind::Caption,
 ];
@@ -164,6 +489,10 @@ pub struct Message {
     pub chat: Chat,
     pub date: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward_origin: Option<MessageOrigin>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_automatic_forward: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
@@ -172,7 +501,31 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<Animation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<Audio>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact: Option<Contact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dice: Option<Dice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<Document>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub photo: Option<Vec<PhotoSize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker: Option<Sticker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story: Option<Story>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue: Option<Venue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<Video>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_note: Option<VideoNote>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<Voice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,23 +538,15 @@ pub struct Message {
     pub extra: BTreeMap<String, Value>,
 }
 
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn is_unmodeled_message_content_key(key: &str) -> bool {
     matches!(
         key,
-        "animation"
-            | "audio"
-            | "document"
-            | "sticker"
-            | "story"
-            | "video"
-            | "video_note"
-            | "voice"
-            | "contact"
-            | "dice"
-            | "game"
+        "game"
             | "invoice"
-            | "location"
-            | "venue"
             | "new_chat_members"
             | "left_chat_member"
             | "new_chat_title"
@@ -239,7 +584,19 @@ impl Message {
         self.write_access_allowed.is_some()
             || self.web_app_data.is_some()
             || self.poll.is_some()
+            || self.animation.is_some()
+            || self.audio.is_some()
+            || self.contact.is_some()
+            || self.dice.is_some()
+            || self.document.is_some()
+            || self.location.is_some()
             || self.photo.is_some()
+            || self.sticker.is_some()
+            || self.story.is_some()
+            || self.venue.is_some()
+            || self.video.is_some()
+            || self.video_note.is_some()
+            || self.voice.is_some()
             || self.text.is_some()
             || self.caption.is_some()
     }
@@ -256,6 +613,14 @@ impl Message {
 
     pub fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
         self.write_access_allowed.as_ref()
+    }
+
+    pub fn forward_origin(&self) -> Option<&MessageOrigin> {
+        self.forward_origin.as_ref()
+    }
+
+    pub fn is_automatic_forward(&self) -> bool {
+        self.is_automatic_forward
     }
 
     /// Returns the primary message kind using stable precedence.
@@ -291,7 +656,19 @@ impl Message {
             MessageKind::WriteAccessAllowed => self.write_access_allowed.is_some(),
             MessageKind::WebAppData => self.web_app_data.is_some(),
             MessageKind::Poll => self.poll.is_some(),
+            MessageKind::Animation => self.animation.is_some(),
+            MessageKind::Audio => self.audio.is_some(),
+            MessageKind::Contact => self.contact.is_some(),
+            MessageKind::Dice => self.dice.is_some(),
+            MessageKind::Document => self.document.is_some(),
+            MessageKind::Location => self.location.is_some(),
             MessageKind::Photo => self.photo.is_some(),
+            MessageKind::Sticker => self.sticker.is_some(),
+            MessageKind::Story => self.story.is_some(),
+            MessageKind::Venue => self.venue.is_some(),
+            MessageKind::Video => self.video.is_some(),
+            MessageKind::VideoNote => self.video_note.is_some(),
+            MessageKind::Voice => self.voice.is_some(),
             MessageKind::Text => self.text.is_some(),
             MessageKind::Caption => self.caption.is_some(),
             MessageKind::Unknown => self.has_unmodeled_content() || !self.has_modeled_kind(),
@@ -1183,7 +1560,7 @@ impl StopPollRequest {
 }
 
 /// Dice emoji.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum DiceEmoji {
     #[serde(rename = "🎲")]
     Dice,
@@ -1698,7 +2075,7 @@ mod tests {
             "message_id": 3,
             "date": 1700000002,
             "chat": {"id": 1, "type": "private"},
-            "sticker": {"file_id": "s1"}
+            "game": {"title": "demo"}
         }))?;
 
         assert_eq!(message.kind(), MessageKind::Unknown);
@@ -1714,7 +2091,7 @@ mod tests {
             "date": 1700000003,
             "chat": {"id": 1, "type": "private"},
             "text": "hello",
-            "sticker": {"file_id": "s1"}
+            "game": {"title": "demo"}
         }))?;
 
         assert_eq!(message.kind(), MessageKind::Text);
@@ -1764,6 +2141,64 @@ mod tests {
                     }),
                 );
             }
+            MessageKind::Animation => {
+                object.insert(
+                    "animation".to_owned(),
+                    json!({
+                        "file_id": "anim-1",
+                        "file_unique_id": "anim-u-1",
+                        "width": 320,
+                        "height": 240,
+                        "duration": 4
+                    }),
+                );
+            }
+            MessageKind::Audio => {
+                object.insert(
+                    "audio".to_owned(),
+                    json!({
+                        "file_id": "audio-1",
+                        "file_unique_id": "audio-u-1",
+                        "duration": 42
+                    }),
+                );
+            }
+            MessageKind::Contact => {
+                object.insert(
+                    "contact".to_owned(),
+                    json!({
+                        "phone_number": "+123",
+                        "first_name": "contact"
+                    }),
+                );
+            }
+            MessageKind::Dice => {
+                object.insert(
+                    "dice".to_owned(),
+                    json!({
+                        "emoji": "🎲",
+                        "value": 6
+                    }),
+                );
+            }
+            MessageKind::Document => {
+                object.insert(
+                    "document".to_owned(),
+                    json!({
+                        "file_id": "doc-1",
+                        "file_unique_id": "doc-u-1"
+                    }),
+                );
+            }
+            MessageKind::Location => {
+                object.insert(
+                    "location".to_owned(),
+                    json!({
+                        "latitude": 1.25,
+                        "longitude": 103.8
+                    }),
+                );
+            }
             MessageKind::Photo => {
                 object.insert(
                     "photo".to_owned(),
@@ -1775,6 +2210,75 @@ mod tests {
                     }]),
                 );
             }
+            MessageKind::Sticker => {
+                object.insert(
+                    "sticker".to_owned(),
+                    json!({
+                        "file_id": "s-1",
+                        "file_unique_id": "su-1",
+                        "type": "regular",
+                        "width": 128,
+                        "height": 128,
+                        "is_animated": false,
+                        "is_video": false
+                    }),
+                );
+            }
+            MessageKind::Story => {
+                object.insert(
+                    "story".to_owned(),
+                    json!({
+                        "chat": {"id": -1001, "type": "channel", "title": "stories"},
+                        "id": 7
+                    }),
+                );
+            }
+            MessageKind::Venue => {
+                object.insert(
+                    "venue".to_owned(),
+                    json!({
+                        "location": {
+                            "latitude": 1.25,
+                            "longitude": 103.8
+                        },
+                        "title": "HQ",
+                        "address": "Somewhere"
+                    }),
+                );
+            }
+            MessageKind::Video => {
+                object.insert(
+                    "video".to_owned(),
+                    json!({
+                        "file_id": "video-1",
+                        "file_unique_id": "video-u-1",
+                        "width": 640,
+                        "height": 480,
+                        "duration": 8
+                    }),
+                );
+            }
+            MessageKind::VideoNote => {
+                object.insert(
+                    "video_note".to_owned(),
+                    json!({
+                        "file_id": "video-note-1",
+                        "file_unique_id": "video-note-u-1",
+                        "length": 240,
+                        "duration": 8
+                    }),
+                );
+            }
+            MessageKind::Voice => {
+                object.insert(
+                    "voice".to_owned(),
+                    json!({
+                        "file_id": "voice-1",
+                        "file_unique_id": "voice-u-1",
+                        "duration": 5
+                    }),
+                );
+            }
             MessageKind::Text => {
                 object.insert("text".to_owned(), json!("hello"));
             }
@@ -1782,7 +2286,7 @@ mod tests {
                 object.insert("caption".to_owned(), json!("preview"));
             }
             MessageKind::Unknown => {
-                object.insert("sticker".to_owned(), json!({"file_id": "s-1"}));
+                object.insert("game".to_owned(), json!({"title": "demo"}));
             }
         }
 
@@ -1811,6 +2315,35 @@ mod tests {
         assert_eq!(message.kind(), MessageKind::Unknown);
         assert!(message.has_kind(MessageKind::Unknown));
         assert_eq!(message.kinds(), vec![MessageKind::Unknown]);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_forward_origin_and_automatic_forward_flag()
+    -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 42,
+            "date": 1700000042,
+            "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+            "is_automatic_forward": true,
+            "forward_origin": {
+                "type": "channel",
+                "date": 1700000000,
+                "chat": {"id": -1002, "type": "channel", "title": "announcements"},
+                "message_id": 777,
+                "author_signature": "admin"
+            }
+        }))?;
+
+        assert!(message.is_automatic_forward());
+        let Some(origin) = message.forward_origin() else {
+            return Err("missing forward origin".into());
+        };
+        assert_eq!(origin.date(), 1_700_000_000);
+        assert_eq!(origin.sender_name(), Some("announcements"));
+        assert_eq!(origin.message_id(), Some(MessageId(777)));
+        assert_eq!(origin.author_signature(), Some("admin"));
+
         Ok(())
     }
 

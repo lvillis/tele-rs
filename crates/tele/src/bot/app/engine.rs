@@ -124,12 +124,33 @@ where
         self
     }
 
-    pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
-        self.notify_event(EngineEvent::PollStarted).await;
+    pub fn poll_once(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<DispatchOutcome>>> + '_>> {
+        Box::pin(async move {
+            self.notify_event(EngineEvent::PollStarted).await;
 
-        let updates = match self.source.poll().await {
-            Ok(updates) => updates,
-            Err(error) => {
+            let updates = match self.source.poll().await {
+                Ok(updates) => updates,
+                Err(error) => {
+                    self.notify_event(EngineEvent::PollFailed {
+                        classification: error.classification(),
+                        retryable: error.is_retryable(),
+                        status: error.status().map(|status| status.as_u16()),
+                        error_code: error.error_code(),
+                        request_id: error.request_id().map(ToOwned::to_owned),
+                        message: error.to_string(),
+                    })
+                    .await;
+                    return Err(error);
+                }
+            };
+
+            if let Err(error) = self
+                .router
+                .prepare_for_updates(&self.client, &updates)
+                .await
+            {
                 self.notify_event(EngineEvent::PollFailed {
                     classification: error.classification(),
                     retryable: error.is_retryable(),
@@ -141,31 +162,14 @@ where
                 .await;
                 return Err(error);
             }
-        };
 
-        if let Err(error) = self
-            .router
-            .prepare_for_updates(&self.client, &updates)
-            .await
-        {
-            self.notify_event(EngineEvent::PollFailed {
-                classification: error.classification(),
-                retryable: error.is_retryable(),
-                status: error.status().map(|status| status.as_u16()),
-                error_code: error.error_code(),
-                request_id: error.request_id().map(ToOwned::to_owned),
-                message: error.to_string(),
+            self.notify_event(EngineEvent::PollCompleted {
+                update_count: updates.len(),
             })
             .await;
-            return Err(error);
-        }
 
-        self.notify_event(EngineEvent::PollCompleted {
-            update_count: updates.len(),
+            self.dispatch_updates(updates).await
         })
-        .await;
-
-        self.dispatch_updates(updates).await
     }
 
     pub async fn run(&mut self) -> Result<()> {

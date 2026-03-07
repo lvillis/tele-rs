@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -49,12 +51,12 @@ pub async fn dispatch_webhook_status(
 /// Ready-to-use axum handler helper.
 ///
 /// Route state must be `Arc<WebhookRunner>`.
-pub async fn webhook_handler(
+pub fn webhook_handler(
     State(runner): State<Arc<WebhookRunner>>,
     headers: HeaderMap,
     body: Bytes,
-) -> StatusCode {
-    dispatch_webhook_status(runner.as_ref(), &headers, body.as_ref()).await
+) -> Pin<Box<dyn Future<Output = StatusCode> + Send + 'static>> {
+    Box::pin(async move { dispatch_webhook_status(runner.as_ref(), &headers, body.as_ref()).await })
 }
 
 fn status_from_error(error: &Error) -> StatusCode {
