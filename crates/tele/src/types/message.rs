@@ -62,12 +62,105 @@ impl Chat {
     }
 }
 
+/// Telegram message entity kind.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum MessageEntityKind {
+    Mention,
+    Hashtag,
+    Cashtag,
+    BotCommand,
+    Url,
+    Email,
+    PhoneNumber,
+    Bold,
+    Italic,
+    Underline,
+    Strikethrough,
+    Spoiler,
+    Blockquote,
+    ExpandableBlockquote,
+    Code,
+    Pre,
+    TextLink,
+    TextMention,
+    CustomEmoji,
+    Unknown(String),
+}
+
+impl MessageEntityKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Mention => "mention",
+            Self::Hashtag => "hashtag",
+            Self::Cashtag => "cashtag",
+            Self::BotCommand => "bot_command",
+            Self::Url => "url",
+            Self::Email => "email",
+            Self::PhoneNumber => "phone_number",
+            Self::Bold => "bold",
+            Self::Italic => "italic",
+            Self::Underline => "underline",
+            Self::Strikethrough => "strikethrough",
+            Self::Spoiler => "spoiler",
+            Self::Blockquote => "blockquote",
+            Self::ExpandableBlockquote => "expandable_blockquote",
+            Self::Code => "code",
+            Self::Pre => "pre",
+            Self::TextLink => "text_link",
+            Self::TextMention => "text_mention",
+            Self::CustomEmoji => "custom_emoji",
+            Self::Unknown(kind) => kind.as_str(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageEntityKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let kind = String::deserialize(deserializer)?;
+        Ok(match kind.as_str() {
+            "mention" => Self::Mention,
+            "hashtag" => Self::Hashtag,
+            "cashtag" => Self::Cashtag,
+            "bot_command" => Self::BotCommand,
+            "url" => Self::Url,
+            "email" => Self::Email,
+            "phone_number" => Self::PhoneNumber,
+            "bold" => Self::Bold,
+            "italic" => Self::Italic,
+            "underline" => Self::Underline,
+            "strikethrough" => Self::Strikethrough,
+            "spoiler" => Self::Spoiler,
+            "blockquote" => Self::Blockquote,
+            "expandable_blockquote" => Self::ExpandableBlockquote,
+            "code" => Self::Code,
+            "pre" => Self::Pre,
+            "text_link" => Self::TextLink,
+            "text_mention" => Self::TextMention,
+            "custom_emoji" => Self::CustomEmoji,
+            _ => Self::Unknown(kind),
+        })
+    }
+}
+
+impl Serialize for MessageEntityKind {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// Telegram message entity.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
 pub struct MessageEntity {
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: MessageEntityKind,
     pub offset: u32,
     pub length: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -394,6 +487,48 @@ impl MessageOrigin {
     }
 }
 
+/// Telegram poll type.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum PollKind {
+    Regular,
+    Quiz,
+    Unknown(String),
+}
+
+impl PollKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Regular => "regular",
+            Self::Quiz => "quiz",
+            Self::Unknown(kind) => kind.as_str(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PollKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let kind = String::deserialize(deserializer)?;
+        Ok(match kind.as_str() {
+            "regular" => Self::Regular,
+            "quiz" => Self::Quiz,
+            _ => Self::Unknown(kind),
+        })
+    }
+}
+
+impl Serialize for PollKind {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// Telegram poll option.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -413,7 +548,7 @@ pub struct Poll {
     pub is_closed: bool,
     pub is_anonymous: bool,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: PollKind,
     pub allows_multiple_answers: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -2343,6 +2478,42 @@ mod tests {
         assert_eq!(origin.sender_name(), Some("announcements"));
         assert_eq!(origin.message_id(), Some(MessageId(777)));
         assert_eq!(origin.author_signature(), Some("admin"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn parses_typed_message_entity_and_poll_kinds() -> std::result::Result<(), Box<dyn StdError>> {
+        let message: Message = serde_json::from_value(json!({
+            "message_id": 43,
+            "date": 1700000043,
+            "chat": {"id": 1, "type": "private"},
+            "text": "/start hello",
+            "entities": [
+                {"type": "bot_command", "offset": 0, "length": 6},
+                {"type": "mystery_entity", "offset": 7, "length": 5}
+            ],
+            "poll": {
+                "id": "poll-2",
+                "question": "q?",
+                "options": [{"text": "a", "voter_count": 1}],
+                "total_voter_count": 1,
+                "is_closed": false,
+                "is_anonymous": false,
+                "type": "quiz",
+                "allows_multiple_answers": false
+            }
+        }))?;
+
+        let entities = message.entities.as_ref().ok_or("missing entities")?;
+        assert_eq!(entities[0].kind, MessageEntityKind::BotCommand);
+        assert_eq!(
+            entities[1].kind,
+            MessageEntityKind::Unknown("mystery_entity".to_owned())
+        );
+
+        let poll = message.poll.as_ref().ok_or("missing poll")?;
+        assert_eq!(poll.kind, PollKind::Quiz);
 
         Ok(())
     }

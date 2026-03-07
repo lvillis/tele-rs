@@ -22,13 +22,16 @@ macro_rules! impl_route_dsl_methods {
             self
         }
 
-        pub fn require_permissions(mut self, permissions: &[ChatMemberPermission]) -> Self {
-            self.config.require_permissions(permissions.to_vec());
+        pub fn require_capabilities(
+            mut self,
+            capabilities: &[ChatAdministratorCapability],
+        ) -> Self {
+            self.config.require_capabilities(capabilities.to_vec());
             self
         }
 
-        pub fn bot_can(mut self, permissions: &[ChatMemberPermission]) -> Self {
-            self.config.bot_can(permissions.to_vec());
+        pub fn bot_can(mut self, capabilities: &[ChatAdministratorCapability]) -> Self {
+            self.config.bot_can(capabilities.to_vec());
             self
         }
 

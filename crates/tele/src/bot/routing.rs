@@ -19,8 +19,8 @@ pub use extractors::{
     tokenize_command_args, update_chat_id,
 };
 pub use router::{
-    CallbackRouteBuilder, CommandInputRouteBuilder, CommandRouteBuilder,
-    CompactCallbackRouteBuilder, CurrentActorChatMember, CurrentBotChatMember, ErrorPolicy,
+    CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER, CallbackRouteBuilder,
+    CommandInputRouteBuilder, CommandRouteBuilder, CompactCallbackRouteBuilder, ErrorPolicy,
     ExtractedRouteBuilder, MappedExtractedRouteBuilder, ParsedCommandRouteBuilder, Router,
     ThrottleScope, TypedCallbackRouteBuilder, TypedCommandRouteBuilder, UpdateRouteBuilder,
 };

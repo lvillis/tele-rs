@@ -51,40 +51,15 @@ pub enum ErrorPolicy {
     ReplyUser { fallback_message: String },
 }
 
-/// Request-scoped chat-member cache for the acting user.
-#[derive(Clone, Debug)]
-pub struct CurrentActorChatMember(pub ChatMember);
+/// Request-state key for the acting member cache.
+pub const CURRENT_ACTOR_CHAT_MEMBER: RequestStateKey<ChatMember> =
+    RequestStateKey::new("current_actor_chat_member");
 
-impl CurrentActorChatMember {
-    pub fn into_inner(self) -> ChatMember {
-        self.0
-    }
-}
+/// Request-state key for the bot member cache.
+pub const CURRENT_BOT_CHAT_MEMBER: RequestStateKey<ChatMember> =
+    RequestStateKey::new("current_bot_chat_member");
 
-impl AsRef<ChatMember> for CurrentActorChatMember {
-    fn as_ref(&self) -> &ChatMember {
-        &self.0
-    }
-}
-
-/// Request-scoped chat-member cache for the bot account.
-#[derive(Clone, Debug)]
-pub struct CurrentBotChatMember(pub ChatMember);
-
-impl CurrentBotChatMember {
-    pub fn into_inner(self) -> ChatMember {
-        self.0
-    }
-}
-
-impl AsRef<ChatMember> for CurrentBotChatMember {
-    fn as_ref(&self) -> &ChatMember {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CurrentBotUser(User);
+const CURRENT_BOT_USER: RequestStateKey<User> = RequestStateKey::new("current_bot_user");
 
 #[derive(Clone)]
 enum RouteResolution {
@@ -156,9 +131,9 @@ async fn resolve_handler_result_with_policy(
 ) -> Result<()> {
     match outcome {
         Ok(()) => Ok(()),
-        Err(HandlerError::UserFacing { message }) => {
+        Err(HandlerError::Rejected(rejection)) => {
             context
-                .resolve_handler_error(&update, HandlerError::user(message))
+                .resolve_handler_error(&update, HandlerError::rejected(rejection))
                 .await
         }
         Err(HandlerError::Internal(error)) => {
@@ -193,74 +168,86 @@ async fn fetch_chat_member(
     context.chats().get_chat_member(&request).await
 }
 
-fn require_chat_context(update: &Update, message: &str) -> HandlerResult {
+fn require_group_chat(update: &Update) -> std::result::Result<(), RouteRejection> {
     let Some(chat) = extract_chat(update) else {
-        return Err(HandlerError::user(message));
+        return Err(RouteRejection::GroupOnly);
     };
     if chat.is_group_chat() {
         Ok(())
     } else {
-        Err(HandlerError::user(message))
+        Err(RouteRejection::GroupOnly)
     }
 }
 
-async fn current_actor_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
-    if let Some(member) = context.request_state().get::<CurrentActorChatMember>() {
-        return Ok(member.as_ref().0.clone());
+async fn current_actor_chat_member(
+    context: &BotContext,
+    update: &Update,
+) -> std::result::Result<Arc<ChatMember>, HandlerError> {
+    if let Some(member) = context
+        .request_state()
+        .slot(CURRENT_ACTOR_CHAT_MEMBER)
+        .read()
+    {
+        return Ok(member);
     }
 
     let Some(chat_id) = update_chat_id(update) else {
-        return Err(invalid_request(
-            "update does not contain a chat id for chat member lookup",
-        ));
+        return Err(RouteRejection::ChatContextRequired.into());
     };
     let Some(user) = extract_actor(update) else {
-        return Err(invalid_request(
-            "update does not contain an actor user for chat member lookup",
-        ));
+        return Err(RouteRejection::ActorRequired.into());
     };
 
     let member = fetch_chat_member(context, chat_id, user.id).await?;
+    let shared = Arc::new(member);
     let _ = context
         .request_state()
-        .insert(CurrentActorChatMember(member.clone()));
-    Ok(member)
+        .slot(CURRENT_ACTOR_CHAT_MEMBER)
+        .set_shared(shared.clone());
+    Ok(shared)
 }
 
-async fn current_bot_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
-    if let Some(member) = context.request_state().get::<CurrentBotChatMember>() {
-        return Ok(member.as_ref().0.clone());
+async fn current_bot_chat_member(
+    context: &BotContext,
+    update: &Update,
+) -> std::result::Result<Arc<ChatMember>, HandlerError> {
+    if let Some(member) = context.request_state().slot(CURRENT_BOT_CHAT_MEMBER).read() {
+        return Ok(member);
     }
 
     let Some(chat_id) = update_chat_id(update) else {
-        return Err(invalid_request(
-            "update does not contain a chat id for bot member lookup",
-        ));
+        return Err(RouteRejection::ChatContextRequired.into());
     };
 
-    let bot_user = if let Some(user) = context.request_state().get::<CurrentBotUser>() {
-        user.as_ref().0.clone()
+    let bot_user = if let Some(user) = context.request_state().slot(CURRENT_BOT_USER).read() {
+        user
     } else {
         let me = context.bot().get_me().await?;
-        let _ = context.request_state().insert(CurrentBotUser(me.clone()));
-        me
+        let shared = Arc::new(me);
+        let _ = context
+            .request_state()
+            .slot(CURRENT_BOT_USER)
+            .set_shared(shared.clone());
+        shared
     };
 
     let member = fetch_chat_member(context, chat_id, bot_user.id).await?;
+    let shared = Arc::new(member);
     let _ = context
         .request_state()
-        .insert(CurrentBotChatMember(member.clone()));
-    Ok(member)
+        .slot(CURRENT_BOT_CHAT_MEMBER)
+        .set_shared(shared.clone());
+    Ok(shared)
 }
 
-fn missing_permissions(
+fn missing_capabilities(
     member: &ChatMember,
-    permissions: &[ChatMemberPermission],
-) -> Vec<&'static str> {
-    permissions
+    capabilities: &[ChatAdministratorCapability],
+) -> Vec<ChatAdministratorCapability> {
+    capabilities
         .iter()
-        .filter(|permission| !member.has_permission(**permission))
-        .map(ChatMemberPermission::as_str)
+        .copied()
+        .filter(|capability| !member.has_capability(*capability))
         .collect()
 }
 
@@ -323,128 +310,98 @@ impl RouteThrottleStore {
 #[derive(Clone)]
 struct RouteDslConfig {
     guards: Vec<GuardFn>,
-    route_label: String,
+    route_label: Arc<str>,
 }
 
 impl RouteDslConfig {
     fn new(route_label: impl Into<String>) -> Self {
         Self {
             guards: Vec::new(),
-            route_label: route_label.into(),
+            route_label: Arc::<str>::from(route_label.into()),
         }
     }
 
-    fn push_guard<G, Fut>(&mut self, guard: G)
+    fn push_guard<G>(&mut self, guard: G)
     where
-        G: Fn(BotContext, Update) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = HandlerResult> + Send + 'static,
+        G: for<'a> Fn(&'a BotContext, &'a Update) -> GuardFuture<'a> + Send + Sync + 'static,
     {
-        self.guards.push(Arc::new(move |context, update| {
-            Box::pin(guard(context, update))
-        }));
+        self.guards.push(Arc::new(guard));
     }
 
     fn group_only(&mut self) {
-        self.push_guard(|_context, update| async move {
-            let Some(chat) = extract_chat(&update) else {
-                return Err(HandlerError::user(
-                    "this route is only available in group chats",
-                ));
-            };
-            if chat.is_group_chat() {
-                Ok(())
-            } else {
-                Err(HandlerError::user(
-                    "this route is only available in group chats",
-                ))
-            }
+        self.push_guard(|_context, update| {
+            Box::pin(std::future::ready(
+                require_group_chat(update).map_err(HandlerError::from),
+            ))
         });
     }
 
     fn supergroup_only(&mut self) {
-        self.push_guard(|_context, update| async move {
-            let Some(chat) = extract_chat(&update) else {
-                return Err(HandlerError::user(
-                    "this route is only available in supergroups",
-                ));
-            };
-            if chat.is_supergroup() {
-                Ok(())
-            } else {
-                Err(HandlerError::user(
-                    "this route is only available in supergroups",
-                ))
-            }
+        self.push_guard(|_context, update| {
+            Box::pin(std::future::ready(match extract_chat(update) {
+                Some(chat) if chat.is_supergroup() => Ok(()),
+                _ => Err(RouteRejection::SupergroupOnly.into()),
+            }))
         });
     }
 
     fn admin_only(&mut self) {
-        self.push_guard(|context, update| async move {
-            require_chat_context(&update, "this route is only available in group chats")?;
-            let member = current_actor_chat_member(&context, &update)
-                .await
-                .map_err(HandlerError::from)?;
-            if member.is_admin() {
-                Ok(())
-            } else {
-                Err(HandlerError::user("chat administrators only"))
-            }
+        self.push_guard(|context, update| {
+            Box::pin(async move {
+                require_group_chat(update)?;
+                let member = current_actor_chat_member(context, update).await?;
+                if member.is_admin() {
+                    Ok(())
+                } else {
+                    Err(RouteRejection::AdminOnly.into())
+                }
+            })
         });
     }
 
     fn owner_only(&mut self) {
-        self.push_guard(|context, update| async move {
-            require_chat_context(&update, "this route is only available in group chats")?;
-            let member = current_actor_chat_member(&context, &update)
-                .await
-                .map_err(HandlerError::from)?;
-            if member.is_owner() {
-                Ok(())
-            } else {
-                Err(HandlerError::user("chat owner only"))
-            }
+        self.push_guard(|context, update| {
+            Box::pin(async move {
+                require_group_chat(update)?;
+                let member = current_actor_chat_member(context, update).await?;
+                if member.is_owner() {
+                    Ok(())
+                } else {
+                    Err(RouteRejection::OwnerOnly.into())
+                }
+            })
         });
     }
 
-    fn require_permissions(&mut self, permissions: Vec<ChatMemberPermission>) {
+    fn require_capabilities(&mut self, capabilities: Vec<ChatAdministratorCapability>) {
         self.push_guard(move |context, update| {
-            let permissions = permissions.clone();
-            async move {
-                require_chat_context(&update, "this route is only available in group chats")?;
-                let member = current_actor_chat_member(&context, &update)
-                    .await
-                    .map_err(HandlerError::from)?;
-                let missing = missing_permissions(&member, permissions.as_slice());
+            let capabilities = capabilities.clone();
+            Box::pin(async move {
+                require_group_chat(update)?;
+                let member = current_actor_chat_member(context, update).await?;
+                let missing = missing_capabilities(member.as_ref(), capabilities.as_slice());
                 if missing.is_empty() {
                     Ok(())
                 } else {
-                    Err(HandlerError::user(format!(
-                        "missing required permissions: {}",
-                        missing.join(", ")
-                    )))
+                    Err(RouteRejection::MissingActorCapabilities(missing).into())
                 }
-            }
+            })
         });
     }
 
-    fn bot_can(&mut self, permissions: Vec<ChatMemberPermission>) {
+    fn bot_can(&mut self, capabilities: Vec<ChatAdministratorCapability>) {
         self.push_guard(move |context, update| {
-            let permissions = permissions.clone();
-            async move {
-                require_chat_context(&update, "this route is only available in group chats")?;
-                let member = current_bot_chat_member(&context, &update)
-                    .await
-                    .map_err(HandlerError::from)?;
-                let missing = missing_permissions(&member, permissions.as_slice());
+            let capabilities = capabilities.clone();
+            Box::pin(async move {
+                require_group_chat(update)?;
+                let member = current_bot_chat_member(context, update).await?;
+                let missing = missing_capabilities(member.as_ref(), capabilities.as_slice());
                 if missing.is_empty() {
                     Ok(())
                 } else {
-                    Err(HandlerError::user(format!(
-                        "bot is missing required permissions: {}",
-                        missing.join(", ")
-                    )))
+                    Err(RouteRejection::MissingBotCapabilities(missing).into())
                 }
-            }
+            })
         });
     }
 
@@ -459,16 +416,18 @@ impl RouteDslConfig {
         self.push_guard(move |_context, update| {
             let store = store.clone();
             let route_label = route_label.clone();
-            async move {
-                let key = throttle_key(scope, &update, route_label.as_str())?;
-                if store.allow(key, limit, window) {
-                    Ok(())
-                } else {
-                    Err(HandlerError::user(
-                        "too many matching requests, please retry shortly",
-                    ))
-                }
-            }
+            Box::pin(std::future::ready(
+                match throttle_key(scope, update, route_label.as_ref()) {
+                    Ok(key) => {
+                        if store.allow(key, limit, window) {
+                            Ok(())
+                        } else {
+                            Err(RouteRejection::Throttled.into())
+                        }
+                    }
+                    Err(rejection) => Err(rejection.into()),
+                },
+            ))
         });
     }
 }
@@ -477,29 +436,23 @@ fn throttle_key(
     scope: ThrottleScope,
     update: &Update,
     route_label: &str,
-) -> std::result::Result<String, HandlerError> {
+) -> std::result::Result<String, RouteRejection> {
     match scope {
         ThrottleScope::Actor => {
             let Some(actor_id) = extract_actor_id(update) else {
-                return Err(HandlerError::user(
-                    "this route requires an actor for throttling",
-                ));
+                return Err(RouteRejection::ActorRequired);
             };
             Ok(format!("{route_label}:actor:{actor_id}"))
         }
         ThrottleScope::Subject => {
             let Some(subject_id) = extract_subject_id(update) else {
-                return Err(HandlerError::user(
-                    "this route requires a subject user for throttling",
-                ));
+                return Err(RouteRejection::SubjectRequired);
             };
             Ok(format!("{route_label}:subject:{subject_id}"))
         }
         ThrottleScope::Chat => {
             let Some(chat_id) = update_chat_id(update) else {
-                return Err(HandlerError::user(
-                    "this route requires a chat context for throttling",
-                ));
+                return Err(RouteRejection::ChatContextRequired);
             };
             Ok(format!("{route_label}:chat:{chat_id}"))
         }
@@ -509,11 +462,11 @@ fn throttle_key(
 
 async fn run_route_guards(
     guards: &[GuardFn],
-    context: BotContext,
-    update: Update,
+    context: &BotContext,
+    update: &Update,
 ) -> HandlerResult {
     for guard in guards {
-        guard(context.clone(), update.clone()).await?;
+        guard(context, update).await?;
     }
     Ok(())
 }
@@ -551,7 +504,7 @@ where
     H: FnOnce(BotContext, Update, T) -> Fut,
     Fut: Future<Output = HandlerResult>,
 {
-    run_route_guards(guards, context.clone(), update.clone()).await?;
+    run_route_guards(guards, &context, &update).await?;
     let Some(input) = input(&update)? else {
         return Ok(());
     };

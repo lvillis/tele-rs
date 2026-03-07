@@ -23,7 +23,7 @@ use crate::api::{
 };
 use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
 use crate::types::bot::User;
-use crate::types::chat::{ChatMember, ChatMemberPermission, GetChatMemberRequest};
+use crate::types::chat::{ChatAdministratorCapability, ChatMember, GetChatMemberRequest};
 use crate::types::command::{BotCommand, BotCommandScope, SetMyCommandsRequest};
 use crate::types::common::{ChatId, UserId};
 use crate::types::message::{
@@ -38,7 +38,7 @@ use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
 
 type HandlerFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
-type GuardFuture = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'static>>;
+type GuardFuture<'a> = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>>;
 type SessionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 type SourceFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<Update>>> + Send + 'a>>;
 
@@ -49,7 +49,8 @@ pub type HandlerFn = Arc<dyn Fn(BotContext, Update) -> HandlerFuture + Send + Sy
 pub type MiddlewareFn =
     Arc<dyn Fn(BotContext, Update, HandlerFn) -> HandlerFuture + Send + Sync + 'static>;
 
-type GuardFn = Arc<dyn Fn(BotContext, Update) -> GuardFuture + Send + Sync + 'static>;
+type GuardFn =
+    Arc<dyn for<'a> Fn(&'a BotContext, &'a Update) -> GuardFuture<'a> + Send + Sync + 'static>;
 
 /// Hook called whenever update source polling fails.
 pub type SourceErrorHook = Arc<dyn Fn(&Error) + Send + Sync + 'static>;

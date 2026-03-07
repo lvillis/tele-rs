@@ -1,31 +1,224 @@
 use super::*;
 
-type ContextExtensionValue = Arc<dyn Any + Send + Sync>;
-type ContextExtensions = Arc<StdRwLock<HashMap<TypeId, ContextExtensionValue>>>;
+type RequestStateValue = Arc<dyn Any + Send + Sync>;
+type ContextExtensions = Arc<StdRwLock<HashMap<RequestStateSlotId, RequestStateValue>>>;
 
-fn downcast_extension<T>(value: ContextExtensionValue) -> Option<Arc<T>>
+const DEFAULT_REQUEST_STATE_SLOT: &str = "";
+
+fn downcast_request_state<T>(value: RequestStateValue) -> Option<Arc<T>>
 where
     T: Send + Sync + 'static,
 {
     Arc::downcast::<T>(value).ok()
 }
 
-/// Handler error type that separates user-facing errors from internal failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+struct RequestStateSlotId {
+    type_id: TypeId,
+    slot: &'static str,
+}
+
+fn request_state_slot_id<T>(key: RequestStateKey<T>) -> RequestStateSlotId
+where
+    T: Send + Sync + 'static,
+{
+    RequestStateSlotId {
+        type_id: TypeId::of::<T>(),
+        slot: key.slot,
+    }
+}
+
+/// Typed request-state slot descriptor.
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct RequestStateKey<T> {
+    slot: &'static str,
+    _marker: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for RequestStateKey<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for RequestStateKey<T> {}
+
+impl<T> RequestStateKey<T> {
+    pub const fn new(slot: &'static str) -> Self {
+        Self {
+            slot,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub const fn slot(self) -> &'static str {
+        self.slot
+    }
+}
+
+/// Borrowed access to one typed request-state slot.
+pub struct RequestStateSlot<'a, T> {
+    state: &'a RequestState,
+    key: RequestStateKey<T>,
+}
+
+impl<'a, T> RequestStateSlot<'a, T>
+where
+    T: Send + Sync + 'static,
+{
+    pub fn set(&self, value: T) -> Option<Arc<T>> {
+        self.set_shared(Arc::new(value))
+    }
+
+    pub fn set_shared(&self, value: Arc<T>) -> Option<Arc<T>> {
+        let previous = self
+            .state
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(request_state_slot_id(self.key), value);
+        previous.and_then(downcast_request_state::<T>)
+    }
+
+    pub fn read_or_init_with(&self, init: impl FnOnce() -> T) -> Arc<T> {
+        if let Some(value) = self.read() {
+            return value;
+        }
+
+        let mut state = self
+            .state
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = state
+            .get(&request_state_slot_id(self.key))
+            .cloned()
+            .and_then(downcast_request_state::<T>)
+        {
+            return value;
+        }
+
+        let value = Arc::new(init());
+        let _ = state.insert(request_state_slot_id(self.key), value.clone());
+        value
+    }
+
+    pub fn read(&self) -> Option<Arc<T>> {
+        self.state
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&request_state_slot_id(self.key))
+            .cloned()
+            .and_then(downcast_request_state::<T>)
+    }
+
+    pub fn cloned(&self) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.read().map(|value| value.as_ref().clone())
+    }
+
+    pub fn with<R>(&self, map: impl FnOnce(&T) -> R) -> Option<R> {
+        self.read().map(|value| map(value.as_ref()))
+    }
+
+    pub fn contains(&self) -> bool {
+        self.state
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&request_state_slot_id(self.key))
+    }
+
+    pub fn remove(&self) -> Option<Arc<T>> {
+        self.state
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&request_state_slot_id(self.key))
+            .and_then(downcast_request_state::<T>)
+    }
+}
+
+/// Structured route-level rejection reason.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RouteRejection {
+    Message(String),
+    GroupOnly,
+    SupergroupOnly,
+    AdminOnly,
+    OwnerOnly,
+    ActorRequired,
+    SubjectRequired,
+    ChatContextRequired,
+    MissingActorCapabilities(Vec<ChatAdministratorCapability>),
+    MissingBotCapabilities(Vec<ChatAdministratorCapability>),
+    Throttled,
+}
+
+impl RouteRejection {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Message(message) => message.clone(),
+            Self::GroupOnly => "this route is only available in group chats".to_owned(),
+            Self::SupergroupOnly => "this route is only available in supergroups".to_owned(),
+            Self::AdminOnly => "chat administrators only".to_owned(),
+            Self::OwnerOnly => "chat owner only".to_owned(),
+            Self::ActorRequired => "this route requires an actor user".to_owned(),
+            Self::SubjectRequired => "this route requires a subject user".to_owned(),
+            Self::ChatContextRequired => "this route requires a chat context".to_owned(),
+            Self::MissingActorCapabilities(missing) => format!(
+                "missing required capabilities: {}",
+                missing
+                    .iter()
+                    .map(ChatAdministratorCapability::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::MissingBotCapabilities(missing) => format!(
+                "bot is missing required capabilities: {}",
+                missing
+                    .iter()
+                    .map(ChatAdministratorCapability::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Throttled => "too many matching requests, please retry shortly".to_owned(),
+        }
+    }
+
+    pub fn custom(message: impl Into<String>) -> Self {
+        Self::Message(message.into())
+    }
+}
+
+/// Handler error type that separates route rejections from internal failures.
 #[derive(Debug)]
 pub enum HandlerError {
-    UserFacing { message: String },
+    Rejected(RouteRejection),
     Internal(Error),
 }
 
 impl HandlerError {
     pub fn user(message: impl Into<String>) -> Self {
-        Self::UserFacing {
-            message: message.into(),
-        }
+        Self::Rejected(RouteRejection::custom(message))
+    }
+
+    pub fn rejected(rejection: RouteRejection) -> Self {
+        Self::Rejected(rejection)
     }
 
     pub fn internal(error: Error) -> Self {
         Self::Internal(error)
+    }
+}
+
+impl From<RouteRejection> for HandlerError {
+    fn from(value: RouteRejection) -> Self {
+        Self::Rejected(value)
     }
 }
 
@@ -45,81 +238,67 @@ pub struct RequestState {
 }
 
 impl RequestState {
+    pub fn slot<T>(&self, key: RequestStateKey<T>) -> RequestStateSlot<'_, T>
+    where
+        T: Send + Sync + 'static,
+    {
+        RequestStateSlot { state: self, key }
+    }
+
     pub fn insert<T>(&self, value: T) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
-        self.insert_shared(Arc::new(value))
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .set(value)
     }
 
     pub fn insert_shared<T>(&self, value: Arc<T>) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
-        let previous = self
-            .inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(TypeId::of::<T>(), value);
-        previous.and_then(downcast_extension::<T>)
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .set_shared(value)
     }
 
     pub fn get_or_insert_with<T>(&self, init: impl FnOnce() -> T) -> Arc<T>
     where
         T: Send + Sync + 'static,
     {
-        if let Some(value) = self.get::<T>() {
-            return value;
-        }
-
-        let mut state = self
-            .inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(value) = state
-            .get(&TypeId::of::<T>())
-            .cloned()
-            .and_then(downcast_extension::<T>)
-        {
-            return value;
-        }
-
-        let value = Arc::new(init());
-        let _ = state.insert(TypeId::of::<T>(), value.clone());
-        value
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .read_or_init_with(init)
     }
 
     pub fn get<T>(&self) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
-        self.inner
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&TypeId::of::<T>())
-            .cloned()
-            .and_then(downcast_extension::<T>)
+    }
+
+    pub fn with<T, R>(&self, map: impl FnOnce(&T) -> R) -> Option<R>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .with(map)
     }
 
     pub fn contains<T>(&self) -> bool
     where
         T: Send + Sync + 'static,
     {
-        self.inner
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains_key(&TypeId::of::<T>())
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .contains()
     }
 
     pub fn remove<T>(&self) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
-        self.inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&TypeId::of::<T>())
-            .and_then(downcast_extension::<T>)
+        self.slot(RequestStateKey::<T>::new(DEFAULT_REQUEST_STATE_SLOT))
+            .remove()
     }
 
     pub fn clear(&self) {
@@ -241,8 +420,8 @@ impl BotContext {
     /// Converts high-level handler error into transportable SDK result.
     pub async fn resolve_handler_error(&self, update: &Update, error: HandlerError) -> Result<()> {
         match error {
-            HandlerError::UserFacing { message } => {
-                let _ = self.reply_text(update, message).await?;
+            HandlerError::Rejected(rejection) => {
+                let _ = self.reply_text(update, rejection.message()).await?;
                 Ok(())
             }
             HandlerError::Internal(error) => Err(error),

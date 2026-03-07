@@ -15,11 +15,12 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, ChatJoinRequestInput,
-    ChatMemberUpdatedInput, ChatSession, CommandData, CurrentActorChatMember, CurrentBotChatMember,
-    DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
-    JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, PollingConfig,
-    Router, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
+    BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
+    CURRENT_BOT_CHAT_MEMBER, CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput,
+    ChatSession, CommandData, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy,
+    HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
+    MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey, Router,
+    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
     WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
     extract_callback_data, extract_callback_json, extract_chat_join_request,
     extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
@@ -34,7 +35,7 @@ use tele::types::telegram::{
     WebAppInfo,
 };
 use tele::types::update::Update;
-use tele::types::{ChatMember, ChatMemberPermission, MessageKind, UpdateKind};
+use tele::types::{ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind};
 use tele::{Error, ErrorClass};
 
 type DynError = Box<dyn std::error::Error>;
@@ -329,31 +330,31 @@ fn callback_update(update_id: i64, chat_id: i64, data: &str) -> serde_json::Valu
     })
 }
 
-fn permission_field(permission: ChatMemberPermission) -> &'static str {
-    match permission {
-        ChatMemberPermission::ManageChat => "can_manage_chat",
-        ChatMemberPermission::DeleteMessages => "can_delete_messages",
-        ChatMemberPermission::ManageVideoChats => "can_manage_video_chats",
-        ChatMemberPermission::RestrictMembers => "can_restrict_members",
-        ChatMemberPermission::PromoteMembers => "can_promote_members",
-        ChatMemberPermission::ChangeInfo => "can_change_info",
-        ChatMemberPermission::InviteUsers => "can_invite_users",
-        ChatMemberPermission::PostStories => "can_post_stories",
-        ChatMemberPermission::EditStories => "can_edit_stories",
-        ChatMemberPermission::DeleteStories => "can_delete_stories",
-        ChatMemberPermission::PostMessages => "can_post_messages",
-        ChatMemberPermission::EditMessages => "can_edit_messages",
-        ChatMemberPermission::PinMessages => "can_pin_messages",
-        ChatMemberPermission::ManageTopics => "can_manage_topics",
+fn capability_field(capability: ChatAdministratorCapability) -> &'static str {
+    match capability {
+        ChatAdministratorCapability::ManageChat => "can_manage_chat",
+        ChatAdministratorCapability::DeleteMessages => "can_delete_messages",
+        ChatAdministratorCapability::ManageVideoChats => "can_manage_video_chats",
+        ChatAdministratorCapability::RestrictMembers => "can_restrict_members",
+        ChatAdministratorCapability::PromoteMembers => "can_promote_members",
+        ChatAdministratorCapability::ChangeInfo => "can_change_info",
+        ChatAdministratorCapability::InviteUsers => "can_invite_users",
+        ChatAdministratorCapability::PostStories => "can_post_stories",
+        ChatAdministratorCapability::EditStories => "can_edit_stories",
+        ChatAdministratorCapability::DeleteStories => "can_delete_stories",
+        ChatAdministratorCapability::PostMessages => "can_post_messages",
+        ChatAdministratorCapability::EditMessages => "can_edit_messages",
+        ChatAdministratorCapability::PinMessages => "can_pin_messages",
+        ChatAdministratorCapability::ManageTopics => "can_manage_topics",
         _ => "unknown_permission",
     }
 }
 
-fn chat_member_with_permissions(
+fn chat_member_with_capabilities(
     user_id: i64,
     is_bot: bool,
     status: &str,
-    permissions: &[ChatMemberPermission],
+    capabilities: &[ChatAdministratorCapability],
 ) -> Result<ChatMember, DynError> {
     let mut value = serde_json::Map::new();
     let mut user = serde_json::Map::new();
@@ -368,8 +369,8 @@ fn chat_member_with_permissions(
     );
     let _ = value.insert("user".to_owned(), serde_json::Value::Object(user));
 
-    for permission in permissions {
-        let field = permission_field(*permission);
+    for capability in capabilities {
+        let field = capability_field(*capability);
         if field == "can_manage_chat" {
             manage_chat = Some(true);
         } else if field != "unknown_permission" {
@@ -760,9 +761,12 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError> {
+async fn bot_context_request_state_flows_through_middleware() -> Result<(), DynError> {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct TraceId(u64);
+
+    const TRACE_ID: RequestStateKey<TraceId> = RequestStateKey::new("trace_id");
+    const SECOND_TRACE_ID: RequestStateKey<TraceId> = RequestStateKey::new("second_trace_id");
 
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -771,7 +775,11 @@ async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError
 
     let mut router = Router::new();
     router.middleware(|context, update, next| async move {
-        let _ = context.request_state().insert(TraceId(42));
+        let _ = context.request_state().slot(TRACE_ID).set(TraceId(42));
+        let _ = context
+            .request_state()
+            .slot(SECOND_TRACE_ID)
+            .set(TraceId(7));
         next(context, update).await
     });
     {
@@ -784,10 +792,18 @@ async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError
                     assert_eq!(
                         context
                             .request_state()
-                            .get::<TraceId>()
-                            .as_deref()
+                            .slot(TRACE_ID)
+                            .cloned()
                             .map(|value| value.0),
                         Some(42)
+                    );
+                    assert_eq!(
+                        context
+                            .request_state()
+                            .slot(SECOND_TRACE_ID)
+                            .cloned()
+                            .map(|value| value.0),
+                        Some(7)
                     );
                     hits.fetch_add(1, Ordering::SeqCst);
                     Ok(())
@@ -935,8 +951,8 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
             .command_route("ban")
             .group_only()
             .admin_only()
-            .require_permissions(&[ChatMemberPermission::DeleteMessages])
-            .bot_can(&[ChatMemberPermission::RestrictMembers])
+            .require_capabilities(&[ChatAdministratorCapability::DeleteMessages])
+            .bot_can(&[ChatAdministratorCapability::RestrictMembers])
             .throttle_actor(Duration::from_secs(30))
             .parse::<Vec<String>>()
             .handle(move |context: BotContext, _update: Update, args| {
@@ -946,14 +962,14 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
                     assert!(
                         context
                             .request_state()
-                            .get::<CurrentActorChatMember>()
-                            .is_some()
+                            .slot(CURRENT_ACTOR_CHAT_MEMBER)
+                            .contains()
                     );
                     assert!(
                         context
                             .request_state()
-                            .get::<CurrentBotChatMember>()
-                            .is_some()
+                            .slot(CURRENT_BOT_CHAT_MEMBER)
+                            .contains()
                     );
                     hits.fetch_add(1, Ordering::SeqCst);
                     Ok(())
@@ -961,22 +977,22 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
             });
     }
 
-    let user_member = chat_member_with_permissions(
+    let user_member = chat_member_with_capabilities(
         123,
         false,
         "administrator",
         &[
-            ChatMemberPermission::ManageChat,
-            ChatMemberPermission::DeleteMessages,
+            ChatAdministratorCapability::ManageChat,
+            ChatAdministratorCapability::DeleteMessages,
         ],
     )?;
-    let bot_member = chat_member_with_permissions(
+    let bot_member = chat_member_with_capabilities(
         1,
         true,
         "administrator",
         &[
-            ChatMemberPermission::ManageChat,
-            ChatMemberPermission::RestrictMembers,
+            ChatAdministratorCapability::ManageChat,
+            ChatAdministratorCapability::RestrictMembers,
         ],
     )?;
 
@@ -984,10 +1000,12 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
         let context = BotContext::new(client.clone());
         let _ = context
             .request_state()
-            .insert(CurrentActorChatMember(user_member.clone()));
+            .slot(CURRENT_ACTOR_CHAT_MEMBER)
+            .set(user_member.clone());
         let _ = context
             .request_state()
-            .insert(CurrentBotChatMember(bot_member.clone()));
+            .slot(CURRENT_BOT_CHAT_MEMBER)
+            .set(bot_member.clone());
         context
     };
 

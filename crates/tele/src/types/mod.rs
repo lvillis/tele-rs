@@ -16,9 +16,9 @@ pub mod webhook;
 
 pub use bot::{GetUserProfilePhotosRequest, User, UserProfilePhotos};
 pub use chat::{
-    BanChatMemberRequest, BanChatSenderChatRequest, ChatAdministratorRights, ChatInviteLink,
-    ChatMember, ChatMemberAdministrator, ChatMemberBanned, ChatMemberLeft, ChatMemberOwner,
-    ChatMemberPermission, ChatMemberRegular, ChatMemberRestricted, ChatMemberStatus,
+    BanChatMemberRequest, BanChatSenderChatRequest, ChatAdministratorCapability,
+    ChatAdministratorRights, ChatInviteLink, ChatMember, ChatMemberAdministrator, ChatMemberBanned,
+    ChatMemberLeft, ChatMemberOwner, ChatMemberRegular, ChatMemberRestricted, ChatMemberStatus,
     ChatPermissions, CreateChatInviteLinkRequest, DeleteChatPhotoRequest,
     DeleteChatStickerSetRequest, EditChatInviteLinkRequest, ExportChatInviteLinkRequest,
     GetChatAdministratorsRequest, GetChatMemberCountRequest, GetChatMemberRequest, GetChatRequest,
@@ -42,12 +42,13 @@ pub use message::{
     EditMessageCaptionRequest, EditMessageLiveLocationRequest, EditMessageReplyMarkupRequest,
     EditMessageResult, EditMessageTextRequest, ForwardMessageRequest, InputMedia,
     InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo,
-    Location, Message, MessageEntity, MessageIdObject, MessageKind, MessageOrigin, PhotoSize, Poll,
-    PollOption, SendAnimationRequest, SendAudioRequest, SendChatActionRequest, SendContactRequest,
-    SendDiceRequest, SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest,
-    SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
-    SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest,
-    StopPollRequest, Story, Venue, Video, VideoNote, VideoQuality, Voice, WriteAccessAllowed,
+    Location, Message, MessageEntity, MessageEntityKind, MessageIdObject, MessageKind,
+    MessageOrigin, PhotoSize, Poll, PollKind, PollOption, SendAnimationRequest, SendAudioRequest,
+    SendChatActionRequest, SendContactRequest, SendDiceRequest, SendDocumentRequest,
+    SendLocationRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
+    SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest,
+    SentWebAppMessage, StopMessageLiveLocationRequest, StopPollRequest, Story, Venue, Video,
+    VideoNote, VideoQuality, Voice, WriteAccessAllowed,
 };
 pub use payment::{
     AnswerPreCheckoutQueryRequest, AnswerShippingQueryRequest, CreateInvoiceLinkRequest,

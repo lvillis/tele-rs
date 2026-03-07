@@ -153,22 +153,30 @@ pub struct ChatAdministratorRights {
 }
 
 impl ChatAdministratorRights {
-    pub fn has_permission(&self, permission: ChatMemberPermission) -> bool {
-        match permission {
-            ChatMemberPermission::ManageChat => self.can_manage_chat.unwrap_or(false),
-            ChatMemberPermission::DeleteMessages => self.can_delete_messages.unwrap_or(false),
-            ChatMemberPermission::ManageVideoChats => self.can_manage_video_chats.unwrap_or(false),
-            ChatMemberPermission::RestrictMembers => self.can_restrict_members.unwrap_or(false),
-            ChatMemberPermission::PromoteMembers => self.can_promote_members.unwrap_or(false),
-            ChatMemberPermission::ChangeInfo => self.can_change_info.unwrap_or(false),
-            ChatMemberPermission::InviteUsers => self.can_invite_users.unwrap_or(false),
-            ChatMemberPermission::PostStories => self.can_post_stories.unwrap_or(false),
-            ChatMemberPermission::EditStories => self.can_edit_stories.unwrap_or(false),
-            ChatMemberPermission::DeleteStories => self.can_delete_stories.unwrap_or(false),
-            ChatMemberPermission::PostMessages => self.can_post_messages.unwrap_or(false),
-            ChatMemberPermission::EditMessages => self.can_edit_messages.unwrap_or(false),
-            ChatMemberPermission::PinMessages => self.can_pin_messages.unwrap_or(false),
-            ChatMemberPermission::ManageTopics => self.can_manage_topics.unwrap_or(false),
+    pub fn has_capability(&self, capability: ChatAdministratorCapability) -> bool {
+        match capability {
+            ChatAdministratorCapability::ManageChat => self.can_manage_chat.unwrap_or(false),
+            ChatAdministratorCapability::DeleteMessages => {
+                self.can_delete_messages.unwrap_or(false)
+            }
+            ChatAdministratorCapability::ManageVideoChats => {
+                self.can_manage_video_chats.unwrap_or(false)
+            }
+            ChatAdministratorCapability::RestrictMembers => {
+                self.can_restrict_members.unwrap_or(false)
+            }
+            ChatAdministratorCapability::PromoteMembers => {
+                self.can_promote_members.unwrap_or(false)
+            }
+            ChatAdministratorCapability::ChangeInfo => self.can_change_info.unwrap_or(false),
+            ChatAdministratorCapability::InviteUsers => self.can_invite_users.unwrap_or(false),
+            ChatAdministratorCapability::PostStories => self.can_post_stories.unwrap_or(false),
+            ChatAdministratorCapability::EditStories => self.can_edit_stories.unwrap_or(false),
+            ChatAdministratorCapability::DeleteStories => self.can_delete_stories.unwrap_or(false),
+            ChatAdministratorCapability::PostMessages => self.can_post_messages.unwrap_or(false),
+            ChatAdministratorCapability::EditMessages => self.can_edit_messages.unwrap_or(false),
+            ChatAdministratorCapability::PinMessages => self.can_pin_messages.unwrap_or(false),
+            ChatAdministratorCapability::ManageTopics => self.can_manage_topics.unwrap_or(false),
         }
     }
 }
@@ -283,10 +291,10 @@ pub enum ChatMember {
     Banned(ChatMemberBanned),
 }
 
-/// Administrative permission flags exposed by `getChatMember`.
+/// Administrative capabilities exposed by `getChatMember`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
-pub enum ChatMemberPermission {
+pub enum ChatAdministratorCapability {
     ManageChat,
     DeleteMessages,
     ManageVideoChats,
@@ -303,7 +311,7 @@ pub enum ChatMemberPermission {
     ManageTopics,
 }
 
-impl ChatMemberPermission {
+impl ChatAdministratorCapability {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ManageChat => "manage_chat",
@@ -404,10 +412,10 @@ impl ChatMember {
         matches!(self, Self::Owner(_) | Self::Administrator(_))
     }
 
-    pub fn has_permission(&self, permission: ChatMemberPermission) -> bool {
+    pub fn has_capability(&self, capability: ChatAdministratorCapability) -> bool {
         match self {
             Self::Owner(_) => true,
-            Self::Administrator(member) => member.rights.has_permission(permission),
+            Self::Administrator(member) => member.rights.has_capability(capability),
             Self::Member(_) | Self::Restricted(_) | Self::Left(_) | Self::Banned(_) => false,
         }
     }
@@ -669,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_member_permissions_are_fully_typed()
+    fn chat_member_capabilities_are_fully_typed()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let member: ChatMember = serde_json::from_value(json!({
             "status": "administrator",
@@ -692,20 +700,20 @@ mod tests {
 
         assert_eq!(member.status(), ChatMemberStatus::Administrator);
         assert_eq!(member.user().id.0, 1);
-        assert!(member.has_permission(ChatMemberPermission::ManageChat));
-        assert!(member.has_permission(ChatMemberPermission::DeleteMessages));
-        assert!(member.has_permission(ChatMemberPermission::ManageVideoChats));
-        assert!(member.has_permission(ChatMemberPermission::RestrictMembers));
-        assert!(!member.has_permission(ChatMemberPermission::PromoteMembers));
-        assert!(member.has_permission(ChatMemberPermission::ChangeInfo));
-        assert!(member.has_permission(ChatMemberPermission::InviteUsers));
-        assert!(member.has_permission(ChatMemberPermission::PostStories));
-        assert!(!member.has_permission(ChatMemberPermission::EditStories));
-        assert!(member.has_permission(ChatMemberPermission::DeleteStories));
-        assert!(!member.has_permission(ChatMemberPermission::PostMessages));
-        assert!(!member.has_permission(ChatMemberPermission::EditMessages));
-        assert!(member.has_permission(ChatMemberPermission::PinMessages));
-        assert!(member.has_permission(ChatMemberPermission::ManageTopics));
+        assert!(member.has_capability(ChatAdministratorCapability::ManageChat));
+        assert!(member.has_capability(ChatAdministratorCapability::DeleteMessages));
+        assert!(member.has_capability(ChatAdministratorCapability::ManageVideoChats));
+        assert!(member.has_capability(ChatAdministratorCapability::RestrictMembers));
+        assert!(!member.has_capability(ChatAdministratorCapability::PromoteMembers));
+        assert!(member.has_capability(ChatAdministratorCapability::ChangeInfo));
+        assert!(member.has_capability(ChatAdministratorCapability::InviteUsers));
+        assert!(member.has_capability(ChatAdministratorCapability::PostStories));
+        assert!(!member.has_capability(ChatAdministratorCapability::EditStories));
+        assert!(member.has_capability(ChatAdministratorCapability::DeleteStories));
+        assert!(!member.has_capability(ChatAdministratorCapability::PostMessages));
+        assert!(!member.has_capability(ChatAdministratorCapability::EditMessages));
+        assert!(member.has_capability(ChatAdministratorCapability::PinMessages));
+        assert!(member.has_capability(ChatAdministratorCapability::ManageTopics));
 
         Ok(())
     }
