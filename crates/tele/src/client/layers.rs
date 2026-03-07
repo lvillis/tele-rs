@@ -40,6 +40,7 @@ pub use ergo::ErgoApi;
 pub use raw::BlockingRawApi;
 #[cfg(feature = "_async")]
 pub use raw::RawApi;
+pub(crate) use support::reply_chat_id;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;
 #[cfg(feature = "_async")]

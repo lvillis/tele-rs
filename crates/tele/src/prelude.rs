@@ -15,8 +15,9 @@ pub use crate::client::{ErgoApi, RawApi, TypedApi};
 
 pub use crate::types::{
     BotCommand, CallbackCodec, CallbackPayload, ChatId, ChatJoinRequest, ChatMemberPermission,
-    ChatMemberUpdated, ChatPermissions, CompactCallbackPayload, Message, MessageId, MessageKind,
-    MessageOrigin, ParseMode, ReplyMarkup, ReplyParameters, Update, UpdateKind,
+    ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload, Message,
+    MessageId, MessageKind, MessageOrigin, ParseMode, ReplyMarkup, ReplyParameters, Update,
+    UpdateKind,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]
@@ -27,8 +28,8 @@ pub use crate::bot::RedisSessionStore;
 pub use crate::bot::{
     BotApp, BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, CallbackRouteBuilder,
     ChannelUpdateSource, ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandArgs,
-    CommandRouteBuilder, CompactCallbackInput, CompactCallbackRouteBuilder, CurrentBotChatMember,
-    CurrentUserChatMember, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError,
+    CommandRouteBuilder, CompactCallbackInput, CompactCallbackRouteBuilder, CurrentActorChatMember,
+    CurrentBotChatMember, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError,
     InMemorySessionStore, JsonCallback, JsonFileSessionStore, LongPollingSource,
     MyChatMemberUpdatedInput, OutboxConfig, ParsedCommandRouteBuilder, PollingConfig, Router,
     SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,

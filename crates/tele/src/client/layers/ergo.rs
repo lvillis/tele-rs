@@ -7,7 +7,7 @@ use super::bootstrap::{retry_blocking, retry_fetch_blocking};
 use super::support::typed_commands_request;
 use super::support::{
     callback_query_id, commands_get_request, desired_menu_button, menu_button_get_request,
-    parse_web_app_query_payload, update_chat_id,
+    parse_web_app_query_payload, reply_chat_id,
 };
 use super::*;
 
@@ -18,12 +18,6 @@ mod blocking_api;
 pub use async_api::ErgoApi;
 #[cfg(feature = "_blocking")]
 pub use blocking_api::BlockingErgoApi;
-
-fn reply_chat_id(update: &Update) -> Result<i64> {
-    update_chat_id(update).ok_or_else(|| {
-        super::support::invalid_request("update does not contain a chat id for reply")
-    })
-}
 
 fn callback_answer_request(
     callback_query_id: impl Into<String>,

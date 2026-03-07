@@ -37,8 +37,12 @@ macro_rules! impl_route_dsl_methods {
             self
         }
 
-        pub fn throttle_user(self, window: Duration) -> Self {
-            self.throttle(ThrottleScope::User, 1, window)
+        pub fn throttle_actor(self, window: Duration) -> Self {
+            self.throttle(ThrottleScope::Actor, 1, window)
+        }
+
+        pub fn throttle_subject(self, window: Duration) -> Self {
+            self.throttle(ThrottleScope::Subject, 1, window)
         }
 
         pub fn throttle_chat(self, window: Duration) -> Self {

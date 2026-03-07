@@ -503,10 +503,21 @@ pub fn extract_chat(update: &Update) -> Option<&Chat> {
     extract_chat_join_request(update).map(|request| &request.chat)
 }
 
-/// Returns the acting Telegram user for the update when available.
-pub fn extract_user(update: &Update) -> Option<&User> {
+/// Returns the actor that caused this update when available.
+pub fn extract_actor(update: &Update) -> Option<&User> {
     if let Some(query) = update.callback_query.as_ref() {
         return Some(&query.from);
+    }
+    if let Some(query) = update.inline_query.as_ref() {
+        return Some(&query.from);
+    }
+    if let Some(result) = update.chosen_inline_result.as_ref() {
+        return Some(&result.from);
+    }
+    if let Some(answer) = update.poll_answer.as_ref()
+        && let Some(user) = answer.user.as_ref()
+    {
+        return Some(user);
     }
     if let Some(message) = update.message.as_ref() {
         return message.from_user();
@@ -532,9 +543,36 @@ pub fn extract_user(update: &Update) -> Option<&User> {
     None
 }
 
-/// Returns acting Telegram user id for the update when available.
+/// Returns the subject user this update is primarily about when available.
+pub fn extract_subject(update: &Update) -> Option<&User> {
+    if let Some(member_update) = update.chat_member.as_ref() {
+        return Some(member_update.subject());
+    }
+    if let Some(member_update) = update.my_chat_member.as_ref() {
+        return Some(member_update.subject());
+    }
+
+    extract_actor(update)
+}
+
+/// Backward-compatible alias for `extract_actor`.
+pub fn extract_user(update: &Update) -> Option<&User> {
+    extract_actor(update)
+}
+
+/// Returns actor id for the update when available.
+pub fn extract_actor_id(update: &Update) -> Option<i64> {
+    Some(extract_actor(update)?.id.0)
+}
+
+/// Returns subject user id for the update when available.
+pub fn extract_subject_id(update: &Update) -> Option<i64> {
+    Some(extract_subject(update)?.id.0)
+}
+
+/// Backward-compatible alias for `extract_actor_id`.
 pub fn extract_user_id(update: &Update) -> Option<i64> {
-    Some(extract_user(update)?.id.0)
+    extract_actor_id(update)
 }
 
 /// Returns primary kind of extracted message.
@@ -766,9 +804,17 @@ pub trait UpdateExt {
     fn typed_command<C>(&self) -> Option<C>
     where
         C: BotCommands;
+    fn actor(&self) -> Option<&User>;
+    fn actor_id(&self) -> Option<i64> {
+        self.actor().map(|user| user.id.0)
+    }
+    fn subject(&self) -> Option<&User>;
+    fn subject_id(&self) -> Option<i64> {
+        self.subject().map(|user| user.id.0)
+    }
     fn user(&self) -> Option<&User>;
     fn user_id(&self) -> Option<i64> {
-        self.user().map(|user| user.id.0)
+        self.actor_id()
     }
     fn chat_id(&self) -> Option<i64>;
 }
@@ -865,8 +911,16 @@ impl UpdateExt for Update {
         parse_typed_command(self)
     }
 
+    fn actor(&self) -> Option<&User> {
+        extract_actor(self)
+    }
+
+    fn subject(&self) -> Option<&User> {
+        extract_subject(self)
+    }
+
     fn user(&self) -> Option<&User> {
-        extract_user(self)
+        self.actor()
     }
 
     fn chat_id(&self) -> Option<i64> {

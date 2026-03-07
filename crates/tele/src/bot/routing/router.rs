@@ -53,15 +53,15 @@ pub enum ErrorPolicy {
 
 /// Request-scoped chat-member cache for the acting user.
 #[derive(Clone, Debug)]
-pub struct CurrentUserChatMember(pub ChatMember);
+pub struct CurrentActorChatMember(pub ChatMember);
 
-impl CurrentUserChatMember {
+impl CurrentActorChatMember {
     pub fn into_inner(self) -> ChatMember {
         self.0
     }
 }
 
-impl AsRef<ChatMember> for CurrentUserChatMember {
+impl AsRef<ChatMember> for CurrentActorChatMember {
     fn as_ref(&self) -> &ChatMember {
         &self.0
     }
@@ -204,8 +204,8 @@ fn require_chat_context(update: &Update, message: &str) -> HandlerResult {
     }
 }
 
-async fn current_user_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
-    if let Some(member) = context.get_extension::<CurrentUserChatMember>() {
+async fn current_actor_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
+    if let Some(member) = context.request_state().get::<CurrentActorChatMember>() {
         return Ok(member.as_ref().0.clone());
     }
 
@@ -214,19 +214,21 @@ async fn current_user_chat_member(context: &BotContext, update: &Update) -> Resu
             "update does not contain a chat id for chat member lookup",
         ));
     };
-    let Some(user) = extract_user(update) else {
+    let Some(user) = extract_actor(update) else {
         return Err(invalid_request(
-            "update does not contain an acting user for chat member lookup",
+            "update does not contain an actor user for chat member lookup",
         ));
     };
 
     let member = fetch_chat_member(context, chat_id, user.id).await?;
-    let _ = context.insert_extension(CurrentUserChatMember(member.clone()));
+    let _ = context
+        .request_state()
+        .insert(CurrentActorChatMember(member.clone()));
     Ok(member)
 }
 
 async fn current_bot_chat_member(context: &BotContext, update: &Update) -> Result<ChatMember> {
-    if let Some(member) = context.get_extension::<CurrentBotChatMember>() {
+    if let Some(member) = context.request_state().get::<CurrentBotChatMember>() {
         return Ok(member.as_ref().0.clone());
     }
 
@@ -236,16 +238,18 @@ async fn current_bot_chat_member(context: &BotContext, update: &Update) -> Resul
         ));
     };
 
-    let bot_user = if let Some(user) = context.get_extension::<CurrentBotUser>() {
+    let bot_user = if let Some(user) = context.request_state().get::<CurrentBotUser>() {
         user.as_ref().0.clone()
     } else {
         let me = context.bot().get_me().await?;
-        let _ = context.insert_extension(CurrentBotUser(me.clone()));
+        let _ = context.request_state().insert(CurrentBotUser(me.clone()));
         me
     };
 
     let member = fetch_chat_member(context, chat_id, bot_user.id).await?;
-    let _ = context.insert_extension(CurrentBotChatMember(member.clone()));
+    let _ = context
+        .request_state()
+        .insert(CurrentBotChatMember(member.clone()));
     Ok(member)
 }
 
@@ -273,7 +277,8 @@ pub struct Router {
 /// Route-level in-memory throttle key scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThrottleScope {
-    User,
+    Actor,
+    Subject,
     Chat,
     Command,
 }
@@ -376,7 +381,7 @@ impl RouteDslConfig {
     fn admin_only(&mut self) {
         self.push_guard(|context, update| async move {
             require_chat_context(&update, "this route is only available in group chats")?;
-            let member = current_user_chat_member(&context, &update)
+            let member = current_actor_chat_member(&context, &update)
                 .await
                 .map_err(HandlerError::from)?;
             if member.is_admin() {
@@ -390,7 +395,7 @@ impl RouteDslConfig {
     fn owner_only(&mut self) {
         self.push_guard(|context, update| async move {
             require_chat_context(&update, "this route is only available in group chats")?;
-            let member = current_user_chat_member(&context, &update)
+            let member = current_actor_chat_member(&context, &update)
                 .await
                 .map_err(HandlerError::from)?;
             if member.is_owner() {
@@ -406,7 +411,7 @@ impl RouteDslConfig {
             let permissions = permissions.clone();
             async move {
                 require_chat_context(&update, "this route is only available in group chats")?;
-                let member = current_user_chat_member(&context, &update)
+                let member = current_actor_chat_member(&context, &update)
                     .await
                     .map_err(HandlerError::from)?;
                 let missing = missing_permissions(&member, permissions.as_slice());
@@ -474,13 +479,21 @@ fn throttle_key(
     route_label: &str,
 ) -> std::result::Result<String, HandlerError> {
     match scope {
-        ThrottleScope::User => {
-            let Some(user_id) = extract_user_id(update) else {
+        ThrottleScope::Actor => {
+            let Some(actor_id) = extract_actor_id(update) else {
                 return Err(HandlerError::user(
-                    "this route requires an acting user for throttling",
+                    "this route requires an actor for throttling",
                 ));
             };
-            Ok(format!("{route_label}:user:{user_id}"))
+            Ok(format!("{route_label}:actor:{actor_id}"))
+        }
+        ThrottleScope::Subject => {
+            let Some(subject_id) = extract_subject_id(update) else {
+                return Err(HandlerError::user(
+                    "this route requires a subject user for throttling",
+                ));
+            };
+            Ok(format!("{route_label}:subject:{subject_id}"))
         }
         ThrottleScope::Chat => {
             let Some(chat_id) = update_chat_id(update) else {

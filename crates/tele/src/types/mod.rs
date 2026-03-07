@@ -17,14 +17,16 @@ pub mod webhook;
 pub use bot::{GetUserProfilePhotosRequest, User, UserProfilePhotos};
 pub use chat::{
     BanChatMemberRequest, BanChatSenderChatRequest, ChatAdministratorRights, ChatInviteLink,
-    ChatMember, ChatMemberPermission, ChatPermissions, CreateChatInviteLinkRequest,
-    DeleteChatPhotoRequest, DeleteChatStickerSetRequest, EditChatInviteLinkRequest,
-    ExportChatInviteLinkRequest, GetChatAdministratorsRequest, GetChatMemberCountRequest,
-    GetChatMemberRequest, GetChatRequest, LeaveChatRequest, PinChatMessageRequest,
-    PromoteChatMemberRequest, RestrictChatMemberRequest, RevokeChatInviteLinkRequest,
-    SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest, SetChatPermissionsRequest,
-    SetChatStickerSetRequest, SetChatTitleRequest, UnbanChatMemberRequest,
-    UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest, UnpinChatMessageRequest,
+    ChatMember, ChatMemberAdministrator, ChatMemberBanned, ChatMemberLeft, ChatMemberOwner,
+    ChatMemberPermission, ChatMemberRegular, ChatMemberRestricted, ChatMemberStatus,
+    ChatPermissions, CreateChatInviteLinkRequest, DeleteChatPhotoRequest,
+    DeleteChatStickerSetRequest, EditChatInviteLinkRequest, ExportChatInviteLinkRequest,
+    GetChatAdministratorsRequest, GetChatMemberCountRequest, GetChatMemberRequest, GetChatRequest,
+    LeaveChatRequest, PinChatMessageRequest, PromoteChatMemberRequest, RestrictChatMemberRequest,
+    RevokeChatInviteLinkRequest, SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest,
+    SetChatPermissionsRequest, SetChatStickerSetRequest, SetChatTitleRequest,
+    UnbanChatMemberRequest, UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest,
+    UnpinChatMessageRequest,
 };
 pub use command::{
     BotCommand, BotCommandScope, BotDescription, BotName, BotShortDescription,

@@ -16,7 +16,7 @@ use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
     BotContext, BotControl, BotEngine, BotOutbox, CallbackInput, ChatJoinRequestInput,
-    ChatMemberUpdatedInput, ChatSession, CommandData, CurrentBotChatMember, CurrentUserChatMember,
+    ChatMemberUpdatedInput, ChatSession, CommandData, CurrentActorChatMember, CurrentBotChatMember,
     DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy, HandlerError, InMemorySessionStore,
     JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, PollingConfig,
     Router, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
@@ -642,9 +642,10 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
 
     assert_eq!(chat_member_update.update_kind(), UpdateKind::ChatMember);
     assert_eq!(chat_member_update.chat_id(), Some(-1002));
-    assert_eq!(chat_member_update.user_id(), Some(12));
+    assert_eq!(chat_member_update.actor_id(), Some(12));
+    assert_eq!(chat_member_update.subject_id(), Some(78));
     assert_eq!(
-        extract_chat_member_update(&chat_member_update).map(|update| update.member_user().id.0),
+        extract_chat_member_update(&chat_member_update).map(|update| update.subject().id.0),
         Some(78)
     );
     assert!(
@@ -687,10 +688,10 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         UpdateKind::MyChatMember
     );
     assert_eq!(my_chat_member_update.chat_id(), Some(-1003));
-    assert_eq!(my_chat_member_update.user_id(), Some(13));
+    assert_eq!(my_chat_member_update.actor_id(), Some(13));
+    assert_eq!(my_chat_member_update.subject_id(), Some(999));
     assert_eq!(
-        extract_my_chat_member_update(&my_chat_member_update)
-            .map(|update| update.member_user().id.0),
+        extract_my_chat_member_update(&my_chat_member_update).map(|update| update.subject().id.0),
         Some(999)
     );
     assert!(
@@ -705,6 +706,55 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
             .map(|update| update.0.chat.id),
         Some(-1003)
     );
+
+    let maybe_inline_query = parse_update(serde_json::json!({
+        "update_id": 207,
+        "inline_query": {
+            "id": "inline-1",
+            "from": {"id": 88, "is_bot": false, "first_name": "inline"},
+            "query": "lookup",
+            "offset": ""
+        }
+    }));
+    assert!(maybe_inline_query.is_some());
+    let Some(inline_query) = maybe_inline_query else {
+        return Ok(());
+    };
+    assert_eq!(inline_query.update_kind(), UpdateKind::InlineQuery);
+    assert_eq!(inline_query.user_id(), Some(88));
+
+    let maybe_chosen_inline_result = parse_update(serde_json::json!({
+        "update_id": 208,
+        "chosen_inline_result": {
+            "result_id": "result-1",
+            "from": {"id": 89, "is_bot": false, "first_name": "chooser"},
+            "query": "lookup"
+        }
+    }));
+    assert!(maybe_chosen_inline_result.is_some());
+    let Some(chosen_inline_result) = maybe_chosen_inline_result else {
+        return Ok(());
+    };
+    assert_eq!(
+        chosen_inline_result.update_kind(),
+        UpdateKind::ChosenInlineResult
+    );
+    assert_eq!(chosen_inline_result.user_id(), Some(89));
+
+    let maybe_poll_answer = parse_update(serde_json::json!({
+        "update_id": 209,
+        "poll_answer": {
+            "poll_id": "poll-1",
+            "user": {"id": 90, "is_bot": false, "first_name": "voter"},
+            "option_ids": [1]
+        }
+    }));
+    assert!(maybe_poll_answer.is_some());
+    let Some(poll_answer) = maybe_poll_answer else {
+        return Ok(());
+    };
+    assert_eq!(poll_answer.update_kind(), UpdateKind::PollAnswer);
+    assert_eq!(poll_answer.user_id(), Some(90));
 
     Ok(())
 }
@@ -721,7 +771,7 @@ async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError
 
     let mut router = Router::new();
     router.middleware(|context, update, next| async move {
-        let _ = context.insert_extension(TraceId(42));
+        let _ = context.request_state().insert(TraceId(42));
         next(context, update).await
     });
     {
@@ -733,7 +783,8 @@ async fn bot_context_extensions_flow_through_middleware() -> Result<(), DynError
                 async move {
                     assert_eq!(
                         context
-                            .get_extension::<TraceId>()
+                            .request_state()
+                            .get::<TraceId>()
                             .as_deref()
                             .map(|value| value.0),
                         Some(42)
@@ -886,14 +937,24 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
             .admin_only()
             .require_permissions(&[ChatMemberPermission::DeleteMessages])
             .bot_can(&[ChatMemberPermission::RestrictMembers])
-            .throttle_user(Duration::from_secs(30))
+            .throttle_actor(Duration::from_secs(30))
             .parse::<Vec<String>>()
             .handle(move |context: BotContext, _update: Update, args| {
                 let hits = Arc::clone(&hits);
                 async move {
                     assert_eq!(args, vec!["@spam".to_owned()]);
-                    assert!(context.get_extension::<CurrentUserChatMember>().is_some());
-                    assert!(context.get_extension::<CurrentBotChatMember>().is_some());
+                    assert!(
+                        context
+                            .request_state()
+                            .get::<CurrentActorChatMember>()
+                            .is_some()
+                    );
+                    assert!(
+                        context
+                            .request_state()
+                            .get::<CurrentBotChatMember>()
+                            .is_some()
+                    );
                     hits.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 }
@@ -921,8 +982,12 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
 
     let make_context = || {
         let context = BotContext::new(client.clone());
-        let _ = context.insert_extension(CurrentUserChatMember(user_member.clone()));
-        let _ = context.insert_extension(CurrentBotChatMember(bot_member.clone()));
+        let _ = context
+            .request_state()
+            .insert(CurrentActorChatMember(user_member.clone()));
+        let _ = context
+            .request_state()
+            .insert(CurrentBotChatMember(bot_member.clone()));
         context
     };
 
@@ -2124,8 +2189,7 @@ async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
             move |_context: BotContext, _update: Update, member_update: ChatMemberUpdatedInput| {
                 let chat_member_hits = Arc::clone(&chat_member_hits);
                 async move {
-                    if member_update.0.member_user().id.0 == 601 && member_update.0.chat.id == -2101
-                    {
+                    if member_update.0.subject().id.0 == 601 && member_update.0.chat.id == -2101 {
                         chat_member_hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -2141,8 +2205,7 @@ async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
                   member_update: MyChatMemberUpdatedInput| {
                 let my_chat_member_hits = Arc::clone(&my_chat_member_hits);
                 async move {
-                    if member_update.0.member_user().id.0 == 999 && member_update.0.chat.id == -2102
-                    {
+                    if member_update.0.subject().id.0 == 999 && member_update.0.chat.id == -2102 {
                         my_chat_member_hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -2347,6 +2410,51 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
     );
 
     let Some(update) = parse_update(message_update(4101, 10, "/start")) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn join_request_error_reply_targets_user_chat_id() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":121,"date":1710000010,"chat":{"id":7001,"type":"private"},"text":"temporary failure"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"chat_id\":7001", "\"text\":\"temporary failure\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router.chat_join_request_route().handle_with_policy(
+        ErrorPolicy::ReplyUser {
+            fallback_message: "temporary failure".to_owned(),
+        },
+        |_context: BotContext, _update: Update, _request| async move {
+            Err(HandlerError::internal(Error::Transport {
+                method: "sendMessage".to_owned(),
+                status: Some(502),
+                request_id: None,
+                retry_after: None,
+                request_path: None,
+                message: "upstream unavailable".into(),
+            }))
+        },
+    );
+
+    let Some(update) = parse_update(serde_json::json!({
+        "update_id": 4102,
+        "chat_join_request": {
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "user_chat_id": 7001,
+            "date": 1700000412
+        }
+    })) else {
         return Ok(());
     };
 
@@ -2615,6 +2723,50 @@ async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), 
     assert!(captured.contains(&EngineEvent::DispatchCompleted {
         outcome: DispatchOutcome::Handled { update_id: 4302 }
     }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn testing_harness_uses_fresh_request_context_per_dispatch() -> Result<(), DynError> {
+    #[derive(Clone, Debug)]
+    struct HarnessMarker;
+
+    let leaked = Arc::new(AtomicUsize::new(0));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let leaked = Arc::clone(&leaked);
+        let hits = Arc::clone(&hits);
+        router
+            .message_route()
+            .handle(move |context: BotContext, _update: Update| {
+                let leaked = Arc::clone(&leaked);
+                let hits = Arc::clone(&hits);
+                async move {
+                    if context.request_state().contains::<HarnessMarker>() {
+                        leaked.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let _ = context.request_state().insert(HarnessMarker);
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+    }
+
+    let harness = tele::bot::testing::BotHarness::new(router)?;
+    let first = tele::bot::testing::message_update(4303, 1, "hello")?;
+    let second = tele::bot::testing::message_update(4304, 1, "world")?;
+    assert_eq!(
+        harness.dispatch(first).await?,
+        DispatchOutcome::Handled { update_id: 4303 }
+    );
+    assert_eq!(
+        harness.dispatch(second).await?,
+        DispatchOutcome::Handled { update_id: 4304 }
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    assert_eq!(leaked.load(Ordering::SeqCst), 0);
 
     Ok(())
 }

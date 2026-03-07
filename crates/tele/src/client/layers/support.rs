@@ -81,6 +81,15 @@ pub(crate) fn update_chat_id(update: &Update) -> Option<i64> {
         .map(|message| message.chat.id)
 }
 
+pub(crate) fn reply_chat_id(update: &Update) -> Result<i64> {
+    if let Some(request) = update.chat_join_request.as_ref() {
+        return Ok(request.user_chat_id);
+    }
+
+    update_chat_id(update)
+        .ok_or_else(|| invalid_request("update does not contain a chat id for reply"))
+}
+
 pub(crate) fn callback_query_id(update: &Update) -> Option<String> {
     update.callback_query.as_ref().map(|query| query.id.clone())
 }

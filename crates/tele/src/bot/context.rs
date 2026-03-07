@@ -38,18 +38,110 @@ impl From<Error> for HandlerError {
 /// Ergonomic result type for bot handlers.
 pub type HandlerResult = std::result::Result<(), HandlerError>;
 
+/// Typed request-scoped state store shared across middlewares and handlers for one dispatch.
+#[derive(Clone, Default)]
+pub struct RequestState {
+    inner: ContextExtensions,
+}
+
+impl RequestState {
+    pub fn insert<T>(&self, value: T) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.insert_shared(Arc::new(value))
+    }
+
+    pub fn insert_shared<T>(&self, value: Arc<T>) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let previous = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(TypeId::of::<T>(), value);
+        previous.and_then(downcast_extension::<T>)
+    }
+
+    pub fn get_or_insert_with<T>(&self, init: impl FnOnce() -> T) -> Arc<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        if let Some(value) = self.get::<T>() {
+            return value;
+        }
+
+        let mut state = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = state
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .and_then(downcast_extension::<T>)
+        {
+            return value;
+        }
+
+        let value = Arc::new(init());
+        let _ = state.insert(TypeId::of::<T>(), value.clone());
+        value
+    }
+
+    pub fn get<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&TypeId::of::<T>())
+            .cloned()
+            .and_then(downcast_extension::<T>)
+    }
+
+    pub fn contains<T>(&self) -> bool
+    where
+        T: Send + Sync + 'static,
+    {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn remove<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&TypeId::of::<T>())
+            .and_then(downcast_extension::<T>)
+    }
+
+    pub fn clear(&self) {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+}
+
 /// Request-scoped dispatch context passed to handlers and middlewares.
 #[derive(Clone)]
 pub struct BotContext {
     client: Client,
-    extensions: ContextExtensions,
+    request_state: RequestState,
 }
 
 impl BotContext {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            extensions: Arc::new(StdRwLock::new(HashMap::new())),
+            request_state: RequestState::default(),
         }
     }
 
@@ -62,88 +154,8 @@ impl BotContext {
         BotControl::new(self.client.clone())
     }
 
-    pub fn insert_extension<T>(&self, value: T) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.insert_extension_shared(Arc::new(value))
-    }
-
-    pub fn insert_extension_shared<T>(&self, value: Arc<T>) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let previous = self
-            .extensions
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(TypeId::of::<T>(), value);
-        previous.and_then(downcast_extension::<T>)
-    }
-
-    pub fn get_or_insert_extension_with<T>(&self, init: impl FnOnce() -> T) -> Arc<T>
-    where
-        T: Send + Sync + 'static,
-    {
-        if let Some(value) = self.get_extension::<T>() {
-            return value;
-        }
-
-        let mut extensions = self
-            .extensions
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(value) = extensions
-            .get(&TypeId::of::<T>())
-            .cloned()
-            .and_then(downcast_extension::<T>)
-        {
-            return value;
-        }
-
-        let value = Arc::new(init());
-        let _ = extensions.insert(TypeId::of::<T>(), value.clone());
-        value
-    }
-
-    pub fn get_extension<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.extensions
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&TypeId::of::<T>())
-            .cloned()
-            .and_then(downcast_extension::<T>)
-    }
-
-    pub fn contains_extension<T>(&self) -> bool
-    where
-        T: Send + Sync + 'static,
-    {
-        self.extensions
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains_key(&TypeId::of::<T>())
-    }
-
-    pub fn remove_extension<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.extensions
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&TypeId::of::<T>())
-            .and_then(downcast_extension::<T>)
-    }
-
-    pub fn clear_extensions(&self) {
-        self.extensions
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
+    pub fn request_state(&self) -> &RequestState {
+        &self.request_state
     }
 
     pub fn bot(&self) -> BotService {
@@ -190,12 +202,7 @@ impl BotContext {
 
     /// Replies with plain text using the canonical chat id extracted from update.
     pub async fn reply_text(&self, update: &Update, text: impl Into<String>) -> Result<Message> {
-        let Some(chat_id) = crate::bot::update_chat_id(update) else {
-            return Err(invalid_request(
-                "update does not contain a chat id for reply",
-            ));
-        };
-
+        let chat_id = crate::client::reply_chat_id(update)?;
         self.send_text(chat_id, text).await
     }
 

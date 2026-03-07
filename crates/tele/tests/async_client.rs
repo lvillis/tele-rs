@@ -12,7 +12,7 @@ use tele::types::advanced::{
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
     GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice, MenuButton,
-    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, WebAppData,
+    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, UploadFile};
 
@@ -341,6 +341,34 @@ async fn ergo_send_text_success() -> Result<(), DynError> {
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let sent = client.ergo().send_text(1_i64, "hello").await?;
     assert_eq!(sent.message_id.0, 7);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ergo_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":8,"date":1710000001,"chat":{"id":7001,"type":"private"},"text":"hello"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"chat_id\":7001", "\"text\":\"hello\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 43,
+        "chat_join_request": {
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "user_chat_id": 7001,
+            "date": 1710000001
+        }
+    }))?;
+
+    let sent = client.ergo().reply_text(&update, "hello").await?;
+    assert_eq!(sent.message_id.0, 8);
 
     join_server(handle)?;
     Ok(())

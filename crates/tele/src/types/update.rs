@@ -155,6 +155,10 @@ impl ChatMemberUpdated {
         self.chat.id
     }
 
+    pub fn actor(&self) -> &User {
+        &self.from
+    }
+
     pub fn actor_id(&self) -> i64 {
         self.from.id.0
     }
@@ -163,8 +167,16 @@ impl ChatMemberUpdated {
         &self.new_chat_member
     }
 
+    pub fn subject(&self) -> &User {
+        self.new_chat_member.user()
+    }
+
+    pub fn subject_id(&self) -> i64 {
+        self.subject().id.0
+    }
+
     pub fn member_user(&self) -> &User {
-        &self.new_chat_member.user
+        self.subject()
     }
 }
 
@@ -675,7 +687,7 @@ mod tests {
         };
         assert_eq!(chat_member.chat_id(), -1001);
         assert_eq!(chat_member.actor_id(), 1);
-        assert_eq!(chat_member.member_user().id.0, 55);
+        assert_eq!(chat_member.subject_id(), 55);
         assert!(chat_member.via_join_request);
 
         let Some(my_chat_member) = my_member_update.my_chat_member() else {

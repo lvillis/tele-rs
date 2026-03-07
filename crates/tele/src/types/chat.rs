@@ -152,48 +152,135 @@ pub struct ChatAdministratorRights {
     pub can_manage_topics: Option<bool>,
 }
 
-/// Telegram chat member object.
+impl ChatAdministratorRights {
+    pub fn has_permission(&self, permission: ChatMemberPermission) -> bool {
+        match permission {
+            ChatMemberPermission::ManageChat => self.can_manage_chat.unwrap_or(false),
+            ChatMemberPermission::DeleteMessages => self.can_delete_messages.unwrap_or(false),
+            ChatMemberPermission::ManageVideoChats => self.can_manage_video_chats.unwrap_or(false),
+            ChatMemberPermission::RestrictMembers => self.can_restrict_members.unwrap_or(false),
+            ChatMemberPermission::PromoteMembers => self.can_promote_members.unwrap_or(false),
+            ChatMemberPermission::ChangeInfo => self.can_change_info.unwrap_or(false),
+            ChatMemberPermission::InviteUsers => self.can_invite_users.unwrap_or(false),
+            ChatMemberPermission::PostStories => self.can_post_stories.unwrap_or(false),
+            ChatMemberPermission::EditStories => self.can_edit_stories.unwrap_or(false),
+            ChatMemberPermission::DeleteStories => self.can_delete_stories.unwrap_or(false),
+            ChatMemberPermission::PostMessages => self.can_post_messages.unwrap_or(false),
+            ChatMemberPermission::EditMessages => self.can_edit_messages.unwrap_or(false),
+            ChatMemberPermission::PinMessages => self.can_pin_messages.unwrap_or(false),
+            ChatMemberPermission::ManageTopics => self.can_manage_topics.unwrap_or(false),
+        }
+    }
+}
+
+/// Strongly typed chat member status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub enum ChatMemberStatus {
+    #[serde(rename = "creator")]
+    Owner,
+    #[serde(rename = "administrator")]
+    Administrator,
+    #[serde(rename = "member")]
+    Member,
+    #[serde(rename = "restricted")]
+    Restricted,
+    #[serde(rename = "left")]
+    Left,
+    #[serde(rename = "kicked")]
+    Banned,
+}
+
+/// Telegram chat owner payload.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
-pub struct ChatMember {
-    pub status: String,
+pub struct ChatMemberOwner {
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub until_date: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_anonymous: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_manage_chat: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_delete_messages: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_manage_video_chats: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_restrict_members: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_promote_members: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_change_info: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_invite_users: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_post_stories: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_edit_stories: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_delete_stories: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_post_messages: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_edit_messages: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_pin_messages: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub can_manage_topics: Option<bool>,
+    pub custom_title: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram chat administrator payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberAdministrator {
+    pub user: User,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_be_edited: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_anonymous: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_title: Option<String>,
+    #[serde(flatten)]
+    pub rights: ChatAdministratorRights,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram regular member payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberRegular {
+    pub user: User,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram restricted member payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberRestricted {
+    pub user: User,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_member: Option<bool>,
+    #[serde(flatten)]
+    pub permissions: ChatPermissions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_date: Option<i64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram left member payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberLeft {
+    pub user: User,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram banned member payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatMemberBanned {
+    pub user: User,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_date: Option<i64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram chat member object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "status")]
+#[non_exhaustive]
+pub enum ChatMember {
+    #[serde(rename = "creator")]
+    Owner(ChatMemberOwner),
+    #[serde(rename = "administrator")]
+    Administrator(ChatMemberAdministrator),
+    #[serde(rename = "member")]
+    Member(ChatMemberRegular),
+    #[serde(rename = "restricted")]
+    Restricted(ChatMemberRestricted),
+    #[serde(rename = "left")]
+    Left(ChatMemberLeft),
+    #[serde(rename = "kicked")]
+    Banned(ChatMemberBanned),
 }
 
 /// Administrative permission flags exposed by `getChatMember`.
@@ -238,34 +325,90 @@ impl ChatMemberPermission {
 }
 
 impl ChatMember {
+    pub fn status(&self) -> ChatMemberStatus {
+        match self {
+            Self::Owner(_) => ChatMemberStatus::Owner,
+            Self::Administrator(_) => ChatMemberStatus::Administrator,
+            Self::Member(_) => ChatMemberStatus::Member,
+            Self::Restricted(_) => ChatMemberStatus::Restricted,
+            Self::Left(_) => ChatMemberStatus::Left,
+            Self::Banned(_) => ChatMemberStatus::Banned,
+        }
+    }
+
+    pub fn user(&self) -> &User {
+        match self {
+            Self::Owner(member) => &member.user,
+            Self::Administrator(member) => &member.user,
+            Self::Member(member) => &member.user,
+            Self::Restricted(member) => &member.user,
+            Self::Left(member) => &member.user,
+            Self::Banned(member) => &member.user,
+        }
+    }
+
+    pub fn custom_title(&self) -> Option<&str> {
+        match self {
+            Self::Owner(member) => member.custom_title.as_deref(),
+            Self::Administrator(member) => member.custom_title.as_deref(),
+            Self::Member(_) | Self::Restricted(_) | Self::Left(_) | Self::Banned(_) => None,
+        }
+    }
+
+    pub fn administrator_rights(&self) -> Option<&ChatAdministratorRights> {
+        match self {
+            Self::Administrator(member) => Some(&member.rights),
+            Self::Owner(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_) => None,
+        }
+    }
+
+    pub fn permissions(&self) -> Option<&ChatPermissions> {
+        match self {
+            Self::Restricted(member) => Some(&member.permissions),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Left(_)
+            | Self::Banned(_) => None,
+        }
+    }
+
+    pub fn until_date(&self) -> Option<i64> {
+        match self {
+            Self::Restricted(member) => member.until_date,
+            Self::Banned(member) => member.until_date,
+            Self::Owner(_) | Self::Administrator(_) | Self::Member(_) | Self::Left(_) => None,
+        }
+    }
+
+    pub fn extra(&self) -> &BTreeMap<String, Value> {
+        match self {
+            Self::Owner(member) => &member.extra,
+            Self::Administrator(member) => &member.extra,
+            Self::Member(member) => &member.extra,
+            Self::Restricted(member) => &member.extra,
+            Self::Left(member) => &member.extra,
+            Self::Banned(member) => &member.extra,
+        }
+    }
+
     pub fn is_owner(&self) -> bool {
-        self.status.eq_ignore_ascii_case("creator")
+        matches!(self, Self::Owner(_))
     }
 
     pub fn is_admin(&self) -> bool {
-        self.is_owner() || self.status.eq_ignore_ascii_case("administrator")
+        matches!(self, Self::Owner(_) | Self::Administrator(_))
     }
 
     pub fn has_permission(&self, permission: ChatMemberPermission) -> bool {
-        if self.is_owner() {
-            return true;
-        }
-
-        match permission {
-            ChatMemberPermission::ManageChat => self.can_manage_chat.unwrap_or(false),
-            ChatMemberPermission::DeleteMessages => self.can_delete_messages.unwrap_or(false),
-            ChatMemberPermission::ManageVideoChats => self.can_manage_video_chats.unwrap_or(false),
-            ChatMemberPermission::RestrictMembers => self.can_restrict_members.unwrap_or(false),
-            ChatMemberPermission::PromoteMembers => self.can_promote_members.unwrap_or(false),
-            ChatMemberPermission::ChangeInfo => self.can_change_info.unwrap_or(false),
-            ChatMemberPermission::InviteUsers => self.can_invite_users.unwrap_or(false),
-            ChatMemberPermission::PostStories => self.can_post_stories.unwrap_or(false),
-            ChatMemberPermission::EditStories => self.can_edit_stories.unwrap_or(false),
-            ChatMemberPermission::DeleteStories => self.can_delete_stories.unwrap_or(false),
-            ChatMemberPermission::PostMessages => self.can_post_messages.unwrap_or(false),
-            ChatMemberPermission::EditMessages => self.can_edit_messages.unwrap_or(false),
-            ChatMemberPermission::PinMessages => self.can_pin_messages.unwrap_or(false),
-            ChatMemberPermission::ManageTopics => self.can_manage_topics.unwrap_or(false),
+        match self {
+            Self::Owner(_) => true,
+            Self::Administrator(member) => member.rights.has_permission(permission),
+            Self::Member(_) | Self::Restricted(_) | Self::Left(_) | Self::Banned(_) => false,
         }
     }
 }
@@ -547,6 +690,8 @@ mod tests {
             "can_manage_topics": true
         }))?;
 
+        assert_eq!(member.status(), ChatMemberStatus::Administrator);
+        assert_eq!(member.user().id.0, 1);
         assert!(member.has_permission(ChatMemberPermission::ManageChat));
         assert!(member.has_permission(ChatMemberPermission::DeleteMessages));
         assert!(member.has_permission(ChatMemberPermission::ManageVideoChats));

@@ -41,7 +41,7 @@ pub fn callback_update(update_id: i64, chat_id: i64, data: &str) -> Result<Updat
 
 /// Lightweight router harness for fast bot handler tests.
 pub struct BotHarness {
-    context: BotContext,
+    client: Client,
     router: Router,
 }
 
@@ -54,10 +54,7 @@ impl BotHarness {
     }
 
     pub fn with_client(client: Client, router: Router) -> Self {
-        Self {
-            context: BotContext::new(client),
-            router,
-        }
+        Self { client, router }
     }
 
     pub fn dispatch(
@@ -66,11 +63,8 @@ impl BotHarness {
     ) -> Pin<Box<dyn Future<Output = Result<DispatchOutcome>> + Send + '_>> {
         Box::pin(async move {
             let update_id = update.update_id;
-            match self
-                .router
-                .dispatch_prepared(self.context.clone(), update)
-                .await?
-            {
+            let context = BotContext::new(self.client.clone());
+            match self.router.dispatch_prepared(context, update).await? {
                 true => Ok(DispatchOutcome::Handled { update_id }),
                 false => Ok(DispatchOutcome::Ignored { update_id }),
             }
