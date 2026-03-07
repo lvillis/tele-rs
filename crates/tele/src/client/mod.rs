@@ -11,9 +11,12 @@ pub use async_client::Client;
 #[cfg(feature = "_blocking")]
 pub use blocking_client::BlockingClient;
 pub use config::{ClientBuilder, RateLimitConfig, RequestDefaults, RetryConfig};
+#[cfg(feature = "bot")]
 pub(crate) use layers::reply_chat_id;
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
-pub use layers::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+pub use layers::{
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+};
 #[cfg(feature = "_async")]
 pub use layers::{ErgoApi, RawApi, TypedApi};

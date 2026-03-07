@@ -49,7 +49,9 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
-pub use client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+pub use client::{
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+};
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 #[cfg(feature = "_async")]
 pub use client::{ErgoApi, RawApi, TypedApi};

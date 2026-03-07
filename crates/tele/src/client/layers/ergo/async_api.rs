@@ -115,16 +115,103 @@ impl ErgoApi {
         .await
     }
 
-    /// Applies a chat menu button with retry/backoff.
-    pub async fn set_chat_menu_button_with_retry(
+    /// Reads the default menu button configuration.
+    pub async fn get_menu_button(&self) -> Result<MenuButton> {
+        self.client
+            .advanced()
+            .get_chat_menu_button_typed(
+                &crate::types::advanced::AdvancedGetChatMenuButtonRequest::new(),
+            )
+            .await
+    }
+
+    /// Reads the menu button configuration for a specific chat.
+    pub async fn get_chat_menu_button(&self, chat_id: i64) -> Result<MenuButton> {
+        let request = crate::types::advanced::AdvancedGetChatMenuButtonRequest {
+            chat_id: Some(chat_id),
+        };
+        self.client
+            .advanced()
+            .get_chat_menu_button_typed(&request)
+            .await
+    }
+
+    /// Applies a menu button configuration without dropping into `advanced()`.
+    pub async fn set_menu_button(&self, config: impl Into<MenuButtonConfig>) -> Result<bool> {
+        let config = config.into();
+        let request: crate::types::advanced::AdvancedSetChatMenuButtonRequest = (&config).into();
+        self.client
+            .advanced()
+            .set_chat_menu_button_typed(&request)
+            .await
+    }
+
+    /// Applies a menu button for a specific chat.
+    pub async fn set_chat_menu_button(
         &self,
-        request: &AdvancedSetChatMenuButtonRequest,
+        chat_id: i64,
+        menu_button: impl Into<MenuButton>,
+    ) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::for_chat(chat_id, menu_button))
+            .await
+    }
+
+    /// Restores the default menu button.
+    pub async fn set_default_menu_button(&self) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::default_button())
+            .await
+    }
+
+    /// Restores the default menu button for a specific chat.
+    pub async fn set_chat_default_menu_button(&self, chat_id: i64) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::for_chat_default(chat_id))
+            .await
+    }
+
+    /// Sets the commands menu button.
+    pub async fn set_commands_menu_button(&self) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::commands()).await
+    }
+
+    /// Sets the commands menu button for a specific chat.
+    pub async fn set_chat_commands_menu_button(&self, chat_id: i64) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::for_chat_commands(chat_id))
+            .await
+    }
+
+    /// Sets a Web App menu button.
+    pub async fn set_web_app_menu_button(
+        &self,
+        text: impl Into<String>,
+        web_app: impl Into<WebAppInfo>,
+    ) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::web_app(text, web_app))
+            .await
+    }
+
+    /// Sets a Web App menu button for a specific chat.
+    pub async fn set_chat_web_app_menu_button(
+        &self,
+        chat_id: i64,
+        text: impl Into<String>,
+        web_app: impl Into<WebAppInfo>,
+    ) -> Result<bool> {
+        self.set_menu_button(MenuButtonConfig::for_chat_web_app(chat_id, text, web_app))
+            .await
+    }
+
+    /// Applies a menu button configuration with retry/backoff.
+    pub async fn set_menu_button_with_retry(
+        &self,
+        config: impl Into<MenuButtonConfig>,
         policy: BootstrapRetryPolicy,
     ) -> Result<bool> {
+        let config = config.into();
+        let request: crate::types::advanced::AdvancedSetChatMenuButtonRequest = (&config).into();
         retry_async(policy, || async {
             self.client
                 .advanced()
-                .set_chat_menu_button_typed(request)
+                .set_chat_menu_button_typed(&request)
                 .await
         })
         .await
@@ -164,8 +251,11 @@ impl ErgoApi {
             }
         }
         if let Some(menu_button) = plan.menu_button.as_ref() {
-            let get_request = menu_button_get_request(menu_button);
-            let desired_button = desired_menu_button(menu_button);
+            let get_request: crate::types::advanced::AdvancedGetChatMenuButtonRequest =
+                menu_button.into();
+            let set_request: crate::types::advanced::AdvancedSetChatMenuButtonRequest =
+                menu_button.into();
+            let desired_button = menu_button.menu_button.clone();
             let current = retry_fetch_async(policy, || {
                 let get_request = get_request.clone();
                 async move {
@@ -186,7 +276,7 @@ impl ErgoApi {
                 let applied = retry_async(policy, || async {
                     self.client
                         .advanced()
-                        .set_chat_menu_button_typed(menu_button)
+                        .set_chat_menu_button_typed(&set_request)
                         .await
                 })
                 .await?;

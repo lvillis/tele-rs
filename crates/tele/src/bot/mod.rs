@@ -21,7 +21,9 @@ use crate::api::{
     AdvancedService, BotService, ChatsService, FilesService, MessagesService, PaymentsService,
     StickersService, UpdatesService,
 };
-use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+use crate::client::{
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+};
 use crate::types::bot::User;
 use crate::types::chat::{ChatAdministratorCapability, ChatMember, GetChatMemberRequest};
 use crate::types::command::{BotCommand, BotCommandScope, SetMyCommandsRequest};
@@ -31,7 +33,7 @@ use crate::types::message::{
 };
 use crate::types::telegram::{
     CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
-    CompactCallbackPayload, InlineQueryResult, WebAppData,
+    CompactCallbackPayload, InlineQueryResult, MenuButton, WebAppData, WebAppInfo,
 };
 use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};

@@ -3,8 +3,8 @@ use std::env;
 use serde::Deserialize;
 use tele::Client;
 use tele::Error;
+use tele::MenuButtonConfig;
 use tele::bot::{BotApp, BotContext, Router, WebAppInput};
-use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedSetChatMenuButtonRequest};
 use tele::types::telegram::{InlineQueryResult, WebAppInfo};
 use tele::types::update::Update;
 
@@ -42,12 +42,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bot_token(token)?
         .build()?;
 
-    let set_menu_button = AdvancedSetChatMenuButtonRequest::new()
-        .chat_id(chat_id)
-        .menu_button_web_app("Open Mini App", WebAppInfo::new(mini_app_url));
     let _ = client
-        .advanced()
-        .set_chat_menu_button_typed(&set_menu_button)
+        .ergo()
+        .set_menu_button(MenuButtonConfig::for_chat_web_app(
+            chat_id,
+            "Open Mini App",
+            WebAppInfo::new(mini_app_url),
+        ))
         .await?;
 
     let mut router = Router::new();
@@ -82,10 +83,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|source| Error::InvalidRequest {
                     reason: format!("failed to serialize Mini App inline result: {source}"),
                 })?;
-                let request = AdvancedAnswerWebAppQueryRequest::new(query_id, result);
                 let _ = context
-                    .advanced()
-                    .answer_web_app_query_typed(&request)
+                    .answer_web_app_query_result(query_id, result)
                     .await?;
             }
 

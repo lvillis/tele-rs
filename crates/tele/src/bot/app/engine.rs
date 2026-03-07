@@ -124,33 +124,13 @@ where
         self
     }
 
-    pub fn poll_once(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<DispatchOutcome>>> + '_>> {
-        Box::pin(async move {
-            self.notify_event(EngineEvent::PollStarted).await;
+    /// Runs one poll/prepare/dispatch cycle.
+    pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
+        self.notify_event(EngineEvent::PollStarted).await;
 
-            let updates = match self.source.poll().await {
-                Ok(updates) => updates,
-                Err(error) => {
-                    self.notify_event(EngineEvent::PollFailed {
-                        classification: error.classification(),
-                        retryable: error.is_retryable(),
-                        status: error.status().map(|status| status.as_u16()),
-                        error_code: error.error_code(),
-                        request_id: error.request_id().map(ToOwned::to_owned),
-                        message: error.to_string(),
-                    })
-                    .await;
-                    return Err(error);
-                }
-            };
-
-            if let Err(error) = self
-                .router
-                .prepare_for_updates(&self.client, &updates)
-                .await
-            {
+        let updates = match self.source.poll().await {
+            Ok(updates) => updates,
+            Err(error) => {
                 self.notify_event(EngineEvent::PollFailed {
                     classification: error.classification(),
                     retryable: error.is_retryable(),
@@ -162,14 +142,31 @@ where
                 .await;
                 return Err(error);
             }
+        };
 
-            self.notify_event(EngineEvent::PollCompleted {
-                update_count: updates.len(),
+        if let Err(error) = self
+            .router
+            .prepare_for_updates(&self.client, &updates)
+            .await
+        {
+            self.notify_event(EngineEvent::PollFailed {
+                classification: error.classification(),
+                retryable: error.is_retryable(),
+                status: error.status().map(|status| status.as_u16()),
+                error_code: error.error_code(),
+                request_id: error.request_id().map(ToOwned::to_owned),
+                message: error.to_string(),
             })
             .await;
+            return Err(error);
+        }
 
-            self.dispatch_updates(updates).await
+        self.notify_event(EngineEvent::PollCompleted {
+            update_count: updates.len(),
         })
+        .await;
+
+        self.dispatch_updates(updates).await
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -180,6 +177,9 @@ where
         }
     }
 
+    /// Runs until `shutdown` resolves.
+    ///
+    /// The returned future is `Send`, so it can be spawned on a multi-threaded Tokio runtime.
     pub async fn run_until<F>(&mut self, shutdown: F) -> Result<()>
     where
         F: Future<Output = ()> + Send,
@@ -202,7 +202,7 @@ where
         }
     }
 
-    async fn dispatch_updates(&self, updates: Vec<Update>) -> Result<Vec<DispatchOutcome>> {
+    async fn dispatch_updates(&mut self, updates: Vec<Update>) -> Result<Vec<DispatchOutcome>> {
         if self.config.max_handler_concurrency <= 1 {
             return self.dispatch_updates_sequential(updates).await;
         }
@@ -210,7 +210,7 @@ where
     }
 
     async fn dispatch_updates_sequential(
-        &self,
+        &mut self,
         updates: Vec<Update>,
     ) -> Result<Vec<DispatchOutcome>> {
         let mut outcomes = Vec::with_capacity(updates.len());
@@ -256,7 +256,7 @@ where
     }
 
     async fn dispatch_updates_concurrent(
-        &self,
+        &mut self,
         updates: Vec<Update>,
     ) -> Result<Vec<DispatchOutcome>> {
         let max_concurrency = self.config.max_handler_concurrency.max(1);
@@ -374,7 +374,7 @@ where
         }
     }
 
-    async fn notify_source_error(&self, error: &Error) {
+    async fn notify_source_error(&mut self, error: &Error) {
         if let Some(hook) = self.on_source_error.as_ref() {
             hook(error);
         }
@@ -383,7 +383,7 @@ where
         }
     }
 
-    async fn notify_handler_error(&self, update_id: i64, error: &Error) {
+    async fn notify_handler_error(&mut self, update_id: i64, error: &Error) {
         if let Some(hook) = self.on_handler_error.as_ref() {
             hook(update_id, error);
         }
@@ -392,7 +392,7 @@ where
         }
     }
 
-    async fn notify_unknown_kinds(&self, update: &Update) {
+    async fn notify_unknown_kinds(&mut self, update: &Update) {
         let update_kind = update.kind();
         let message_kind = extract_message_kind(update);
         if update_kind != UpdateKind::Unknown && message_kind != Some(MessageKind::Unknown) {
@@ -407,7 +407,7 @@ where
         .await;
     }
 
-    async fn notify_event(&self, event: EngineEvent) {
+    async fn notify_event(&mut self, event: EngineEvent) {
         if let Some(hook) = self.on_event.as_ref() {
             hook(&event);
         }
@@ -550,6 +550,9 @@ where
         self.engine.run().await
     }
 
+    /// Runs until `shutdown` resolves.
+    ///
+    /// This delegates to `BotEngine::run_until`, so the returned future is also `Send`.
     pub async fn run_until<F>(&mut self, shutdown: F) -> Result<()>
     where
         F: Future<Output = ()> + Send,

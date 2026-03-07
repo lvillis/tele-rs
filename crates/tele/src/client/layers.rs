@@ -4,15 +4,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::client::RetryConfig;
-use crate::types::advanced::{
-    AdvancedAnswerWebAppQueryRequest, AdvancedGetChatMenuButtonRequest, AdvancedRequest,
-    AdvancedSetChatMenuButtonRequest,
-};
+use crate::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedRequest};
 use crate::types::bot::User;
 use crate::types::command::{BotCommand, GetMyCommandsRequest, SetMyCommandsRequest};
 use crate::types::common::ChatId;
 use crate::types::message::{Message, SendMessageRequest, SentWebAppMessage};
-use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData};
+use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData, WebAppInfo};
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::UploadFile;
 use crate::{Error, Result};
@@ -31,7 +28,9 @@ mod raw;
 mod support;
 mod typed;
 
-pub use bootstrap::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+pub use bootstrap::{
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+};
 #[cfg(feature = "_blocking")]
 pub use ergo::BlockingErgoApi;
 #[cfg(feature = "_async")]
@@ -40,6 +39,7 @@ pub use ergo::ErgoApi;
 pub use raw::BlockingRawApi;
 #[cfg(feature = "_async")]
 pub use raw::RawApi;
+#[cfg(feature = "bot")]
 pub(crate) use support::reply_chat_id;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;

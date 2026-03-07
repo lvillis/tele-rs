@@ -6,8 +6,7 @@ use super::bootstrap::{retry_blocking, retry_fetch_blocking};
 #[cfg(feature = "bot")]
 use super::support::typed_commands_request;
 use super::support::{
-    callback_query_id, commands_get_request, desired_menu_button, menu_button_get_request,
-    parse_web_app_query_payload, reply_chat_id,
+    callback_query_id, commands_get_request, parse_web_app_query_payload, reply_chat_id,
 };
 use super::*;
 

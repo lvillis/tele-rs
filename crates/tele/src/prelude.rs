@@ -9,7 +9,9 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
-pub use crate::client::{BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, WebAppQueryPayload};
+pub use crate::client::{
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+};
 #[cfg(feature = "_async")]
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
 

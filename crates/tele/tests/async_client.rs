@@ -5,16 +5,15 @@ use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
-use tele::types::advanced::{
-    AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest,
-    AdvancedSetChatMenuButtonRequest,
-};
+use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
-    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice, MenuButton,
+    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice,
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
-use tele::{BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, UploadFile};
+use tele::{
+    BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, MenuButtonConfig, UploadFile,
+};
 
 #[cfg(feature = "bot")]
 use tele::types::BotCommandScope;
@@ -464,9 +463,7 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
             "start",
             "start the bot",
         )?])?),
-        menu_button: Some(
-            AdvancedSetChatMenuButtonRequest::new().menu_button(MenuButton::commands()),
-        ),
+        menu_button: Some(MenuButtonConfig::commands()),
     };
 
     let report = client.ergo().bootstrap(&plan).await?;
@@ -579,6 +576,29 @@ async fn ergo_answer_web_app_query_from_payload() -> Result<(), DynError> {
         .answer_web_app_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
     assert_eq!(sent.inline_message_id, "inline-42");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ergo_set_chat_web_app_menu_button_uses_high_level_helper() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 4] = [
+        "\"chat_id\":42",
+        "\"menu_button\":{\"type\":\"web_app\"",
+        "\"text\":\"Open Mini App\"",
+        "\"url\":\"https://example.com/mini-app\"",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/setChatMenuButton", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let applied = client
+        .ergo()
+        .set_chat_web_app_menu_button(42, "Open Mini App", "https://example.com/mini-app")
+        .await?;
+    assert!(applied);
 
     join_server(handle)?;
     Ok(())

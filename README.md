@@ -25,7 +25,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - Chats: member/admin queries, permissions, moderation, invite links, pin/title/description
 - Updates: polling, webhook config, callback/inline query answer
 - API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.ergo()` (high-level helpers)
-- Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
+- Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, spawn-safe `run`/`run_until`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
 - Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`WebAppInput`/`WriteAccessAllowedInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
 - Kind routing (`feature = "bot"`): `UpdateKind` / `MessageKind` classification, `on_update_kind` / `on_message_kind` / `on_any_message_kind`, `UnknownKindsDetected` runtime event. Guide: [`crates/tele/docs/kind-routing.md`](crates/tele/docs/kind-routing.md)
 - Reliability (`feature = "bot"`): `BotOutbox` send queue with retry/backoff/429 handling, idempotency dedupe, optional on-disk queue persistence/replay, dead-letter recording, and message max-age expiration
@@ -39,6 +39,12 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
   `client.advanced()` / `blocking_client.advanced()` with typed request models.
 - First-class strong-typed domains: `client.stickers()` and `client.payments()`
   (also available for blocking client), with typed request/response models and upload helpers.
+
+## Guides
+
+- Runtime integration and graceful shutdown: [`crates/tele/docs/runtime-integration.md`](crates/tele/docs/runtime-integration.md)
+- Kind routing: [`crates/tele/docs/kind-routing.md`](crates/tele/docs/kind-routing.md)
+- `0.1.8` migration notes: [`crates/tele/docs/migration-0.1.8.md`](crates/tele/docs/migration-0.1.8.md)
 
 ## Quick Start (async)
 
@@ -135,6 +141,9 @@ async fn main() -> Result<(), tele::Error> {
     app.run().await
 }
 ```
+
+For service-style integration patterns (`tokio::spawn`, graceful shutdown, bot + HTTP in one app),
+see [`crates/tele/docs/runtime-integration.md`](crates/tele/docs/runtime-integration.md).
 
 ## API Layers (Raw / Typed / Ergo)
 

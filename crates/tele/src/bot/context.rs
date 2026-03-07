@@ -417,6 +417,46 @@ impl BotContext {
         self.answer_callback(callback_query_id, text).await
     }
 
+    /// Answers `answerWebAppQuery` with a typed inline result payload.
+    pub async fn answer_web_app_query<T>(
+        &self,
+        web_app_query_id: impl Into<String>,
+        result: T,
+    ) -> Result<SentWebAppMessage>
+    where
+        T: Serialize,
+    {
+        self.control()
+            .answer_web_app_query(web_app_query_id, result)
+            .await
+    }
+
+    /// Answers `answerWebAppQuery` with a pre-built inline result payload.
+    pub async fn answer_web_app_query_result(
+        &self,
+        web_app_query_id: impl Into<String>,
+        result: InlineQueryResult,
+    ) -> Result<SentWebAppMessage> {
+        self.control()
+            .answer_web_app_query_result(web_app_query_id, result)
+            .await
+    }
+
+    /// Parses WebApp payload and answers `answerWebAppQuery` in one step.
+    pub async fn answer_web_app_query_from_payload<T, R>(
+        &self,
+        web_app_data: &WebAppData,
+        result: R,
+    ) -> Result<SentWebAppMessage>
+    where
+        T: DeserializeOwned,
+        R: Serialize,
+    {
+        self.control()
+            .answer_web_app_query_from_payload::<T, R>(web_app_data, result)
+            .await
+    }
+
     /// Converts high-level handler error into transportable SDK result.
     pub async fn resolve_handler_error(&self, update: &Update, error: HandlerError) -> Result<()> {
         match error {
@@ -501,15 +541,93 @@ impl BotControl {
             .await
     }
 
-    /// Applies chat menu button with retry/backoff.
-    pub async fn set_chat_menu_button_with_retry(
+    /// Reads the default menu button configuration.
+    pub async fn get_menu_button(&self) -> Result<MenuButton> {
+        self.client.ergo().get_menu_button().await
+    }
+
+    /// Reads the menu button configuration for a specific chat.
+    pub async fn get_chat_menu_button(&self, chat_id: i64) -> Result<MenuButton> {
+        self.client.ergo().get_chat_menu_button(chat_id).await
+    }
+
+    /// Applies a menu button configuration.
+    pub async fn set_menu_button(&self, config: impl Into<MenuButtonConfig>) -> Result<bool> {
+        self.client.ergo().set_menu_button(config).await
+    }
+
+    /// Applies a menu button for a specific chat.
+    pub async fn set_chat_menu_button(
         &self,
-        request: &crate::types::advanced::AdvancedSetChatMenuButtonRequest,
+        chat_id: i64,
+        menu_button: impl Into<MenuButton>,
+    ) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_chat_menu_button(chat_id, menu_button)
+            .await
+    }
+
+    /// Restores the default menu button.
+    pub async fn set_default_menu_button(&self) -> Result<bool> {
+        self.client.ergo().set_default_menu_button().await
+    }
+
+    /// Restores the default menu button for a specific chat.
+    pub async fn set_chat_default_menu_button(&self, chat_id: i64) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_chat_default_menu_button(chat_id)
+            .await
+    }
+
+    /// Sets the commands menu button.
+    pub async fn set_commands_menu_button(&self) -> Result<bool> {
+        self.client.ergo().set_commands_menu_button().await
+    }
+
+    /// Sets the commands menu button for a specific chat.
+    pub async fn set_chat_commands_menu_button(&self, chat_id: i64) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_chat_commands_menu_button(chat_id)
+            .await
+    }
+
+    /// Sets a Web App menu button.
+    pub async fn set_web_app_menu_button(
+        &self,
+        text: impl Into<String>,
+        web_app: impl Into<WebAppInfo>,
+    ) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_web_app_menu_button(text, web_app)
+            .await
+    }
+
+    /// Sets a Web App menu button for a specific chat.
+    pub async fn set_chat_web_app_menu_button(
+        &self,
+        chat_id: i64,
+        text: impl Into<String>,
+        web_app: impl Into<WebAppInfo>,
+    ) -> Result<bool> {
+        self.client
+            .ergo()
+            .set_chat_web_app_menu_button(chat_id, text, web_app)
+            .await
+    }
+
+    /// Applies a menu button configuration with retry/backoff.
+    pub async fn set_menu_button_with_retry(
+        &self,
+        config: impl Into<MenuButtonConfig>,
         policy: BootstrapRetryPolicy,
     ) -> Result<bool> {
         self.client
             .ergo()
-            .set_chat_menu_button_with_retry(request, policy)
+            .set_menu_button_with_retry(config, policy)
             .await
     }
 

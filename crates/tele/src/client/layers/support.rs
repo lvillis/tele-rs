@@ -25,18 +25,6 @@ pub(crate) fn commands_get_request(request: &SetMyCommandsRequest) -> GetMyComma
     }
 }
 
-pub(crate) fn desired_menu_button(request: &AdvancedSetChatMenuButtonRequest) -> MenuButton {
-    request.menu_button.clone().unwrap_or_default()
-}
-
-pub(crate) fn menu_button_get_request(
-    request: &AdvancedSetChatMenuButtonRequest,
-) -> AdvancedGetChatMenuButtonRequest {
-    AdvancedGetChatMenuButtonRequest {
-        chat_id: request.chat_id,
-    }
-}
-
 #[cfg(feature = "bot")]
 pub(crate) fn typed_commands_request<C>(
     scope: Option<BotCommandScope>,

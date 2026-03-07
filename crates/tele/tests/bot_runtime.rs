@@ -15,7 +15,7 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
+    BotApp, BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
     CURRENT_BOT_CHAT_MEMBER, CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput,
     ChatSession, CommandData, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy,
     HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
@@ -36,7 +36,7 @@ use tele::types::telegram::{
 };
 use tele::types::update::Update;
 use tele::types::{ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind};
-use tele::{Error, ErrorClass};
+use tele::{Error, ErrorClass, MenuButtonConfig};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -1439,6 +1439,18 @@ async fn web_app_typed_builders_serialize() -> Result<(), DynError> {
         "https://example.com/menu"
     );
 
+    let menu_button_config =
+        MenuButtonConfig::for_chat_web_app(10002, "Launch", "https://example.com/menu-config");
+    let menu_button_request: AdvancedSetChatMenuButtonRequest = (&menu_button_config).into();
+    let menu_button_request_json = serde_json::to_value(&menu_button_request)?;
+    assert_eq!(menu_button_request_json["chat_id"], 10002);
+    assert_eq!(menu_button_request_json["menu_button"]["type"], "web_app");
+    assert_eq!(menu_button_request_json["menu_button"]["text"], "Launch");
+    assert_eq!(
+        menu_button_request_json["menu_button"]["web_app"]["url"],
+        "https://example.com/menu-config"
+    );
+
     let inline_query_button = InlineQueryResultsButton::web_app(
         "Open Mini App",
         "https://example.com/inline-button-mini-app",
@@ -1832,6 +1844,41 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
     };
 
     let result = engine.run_until(shutdown).await;
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_run_until_can_be_spawned_on_tokio() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let handle = tokio::spawn(async move {
+        let (_sink, source) = channel_source(1);
+        let mut engine = BotEngine::new(client, source, Router::new());
+        engine.run_until(async {}).await
+    });
+
+    let result = handle.await?;
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_app_run_until_can_be_spawned_on_tokio() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let handle = tokio::spawn(async move {
+        let (_sink, source) = channel_source(1);
+        let engine = BotEngine::new(client, source, Router::new());
+        let mut app = BotApp::from_engine(engine);
+        app.run_until(async {}).await
+    });
+
+    let result = handle.await?;
     assert!(result.is_ok());
     Ok(())
 }
