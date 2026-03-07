@@ -2817,7 +2817,7 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
             "message_id": 4303,
             "date": 1700004303,
             "chat": {"id": 1, "type": "private"},
-            "game": {"title": "demo"}
+            "gift": {"kind": "mystery"}
         }
     }));
     assert!(maybe_update.is_some());

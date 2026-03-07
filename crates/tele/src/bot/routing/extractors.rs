@@ -469,23 +469,23 @@ pub fn tokenize_command_args(args: &str) -> Option<Vec<String>> {
 
 /// Returns canonical message object from update, prioritizing incoming message variants.
 pub fn extract_message(update: &Update) -> Option<&Message> {
-    if let Some(message) = update.message.as_ref() {
+    if let Some(message) = update.message.as_deref() {
         return Some(message);
     }
-    if let Some(message) = update.edited_message.as_ref() {
+    if let Some(message) = update.edited_message.as_deref() {
         return Some(message);
     }
-    if let Some(message) = update.channel_post.as_ref() {
+    if let Some(message) = update.channel_post.as_deref() {
         return Some(message);
     }
-    if let Some(message) = update.edited_channel_post.as_ref() {
+    if let Some(message) = update.edited_channel_post.as_deref() {
         return Some(message);
     }
 
     update
         .callback_query
         .as_ref()
-        .and_then(|query| query.message.as_ref())
+        .and_then(|query| query.message.as_deref())
 }
 
 /// Returns canonical chat extracted from the update.
@@ -519,16 +519,16 @@ pub fn extract_actor(update: &Update) -> Option<&User> {
     {
         return Some(user);
     }
-    if let Some(message) = update.message.as_ref() {
+    if let Some(message) = update.message.as_deref() {
         return message.from_user();
     }
-    if let Some(message) = update.edited_message.as_ref() {
+    if let Some(message) = update.edited_message.as_deref() {
         return message.from_user();
     }
-    if let Some(message) = update.channel_post.as_ref() {
+    if let Some(message) = update.channel_post.as_deref() {
         return message.from_user();
     }
-    if let Some(message) = update.edited_channel_post.as_ref() {
+    if let Some(message) = update.edited_channel_post.as_deref() {
         return message.from_user();
     }
     if let Some(request) = update.chat_join_request.as_ref() {

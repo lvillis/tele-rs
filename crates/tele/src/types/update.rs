@@ -49,7 +49,7 @@ pub struct CallbackQuery {
     pub id: String,
     pub from: User,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<Message>,
+    pub message: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,13 +186,13 @@ impl ChatMemberUpdated {
 pub struct Update {
     pub update_id: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<Message>,
+    pub message: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edited_message: Option<Message>,
+    pub edited_message: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_post: Option<Message>,
+    pub channel_post: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edited_channel_post: Option<Message>,
+    pub edited_channel_post: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback_query: Option<CallbackQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,7 +200,7 @@ pub struct Update {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_inline_result: Option<ChosenInlineResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub poll: Option<Poll>,
+    pub poll: Option<Box<Poll>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll_answer: Option<PollAnswer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -281,22 +281,22 @@ impl Update {
 
     /// Returns Mini App payload from the first available message-like field.
     pub fn web_app_data(&self) -> Option<&WebAppData> {
-        if let Some(message) = self.message.as_ref() {
+        if let Some(message) = self.message.as_deref() {
             return message.web_app_data();
         }
-        if let Some(message) = self.edited_message.as_ref() {
+        if let Some(message) = self.edited_message.as_deref() {
             return message.web_app_data();
         }
-        if let Some(message) = self.channel_post.as_ref() {
+        if let Some(message) = self.channel_post.as_deref() {
             return message.web_app_data();
         }
-        if let Some(message) = self.edited_channel_post.as_ref() {
+        if let Some(message) = self.edited_channel_post.as_deref() {
             return message.web_app_data();
         }
 
         self.callback_query
             .as_ref()
-            .and_then(|query| query.message.as_ref())
+            .and_then(|query| query.message.as_deref())
             .and_then(|message| message.web_app_data())
     }
 
