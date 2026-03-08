@@ -9,12 +9,16 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
+#[cfg(feature = "_blocking")]
+pub use crate::client::{BlockingStartupApi, BlockingWebAppApi};
 pub use crate::client::{
-    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, ClientMetric, ClientMetricHook,
-    MenuButtonConfig, WebAppQueryPayload,
+    BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
+    BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
+    BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric, ClientMetricHook, MenuButtonConfig,
+    WebAppQueryPayload,
 };
 #[cfg(feature = "_async")]
-pub use crate::client::{ErgoApi, RawApi, TypedApi};
+pub use crate::client::{ErgoApi, RawApi, StartupApi, TypedApi, WebAppApi};
 
 pub use crate::types::{
     BotCommand, CallbackCodec, CallbackPayload, ChatAdministratorCapability, ChatId,

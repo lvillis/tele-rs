@@ -36,7 +36,7 @@ use tele::types::telegram::{
 };
 use tele::types::update::Update;
 use tele::types::{ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind};
-use tele::{Error, ErrorClass, MenuButtonConfig};
+use tele::{BootstrapStepStatus, Error, ErrorClass, MenuButtonConfig};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -1114,6 +1114,7 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
 
     let mut targeted_router = Router::new();
     let _ = targeted_router.set_command_target("ThisBot")?;
+    let _ = targeted_router.disable_auto_command_target();
     targeted_router
         .command_route("start")
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
@@ -1203,18 +1204,16 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
             });
     }
 
-    let report = control
-        .bootstrap_router(
-            &router,
-            &tele::BootstrapPlan {
-                verify_get_me: true,
-                commands: None,
-                menu_button: None,
-            },
-        )
-        .await?;
+    let outcome = control
+        .bootstrap_router(&router, &tele::BootstrapPlan::new().fail_fast_get_me())
+        .await;
+    let report = outcome.into_result()?;
     assert_eq!(
-        report.me.as_ref().and_then(|me| me.username.as_deref()),
+        report
+            .me
+            .value
+            .as_ref()
+            .and_then(|me| me.username.as_deref()),
         Some("ThisBot")
     );
 
@@ -1225,6 +1224,62 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
     };
     assert!(router.dispatch(BotContext::new(client), update).await?);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_router_respects_warn_get_me_policy_without_refetch() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(40))
+        .total_timeout(Some(Duration::from_millis(120)))
+        .build()?;
+    let control = BotControl::new(client);
+    let router = Router::new();
+
+    let outcome = control
+        .bootstrap_router(
+            &router,
+            &tele::BootstrapPlan::new().warn_and_continue_on_retryable_get_me(),
+        )
+        .await;
+
+    assert!(outcome.is_success());
+    assert_eq!(
+        outcome.report.me.diagnostics.status,
+        BootstrapStepStatus::Warned
+    );
+    assert!(outcome.report.me.value.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_router_warn_policy_disables_later_auto_get_me() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(40))
+        .total_timeout(Some(Duration::from_millis(120)))
+        .build()?;
+    let control = BotControl::new(client.clone());
+    let mut router = Router::new();
+    router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
+
+    let outcome = control
+        .bootstrap_router(
+            &router,
+            &tele::BootstrapPlan::new().warn_and_continue_on_retryable_get_me(),
+        )
+        .await;
+    assert!(outcome.is_success());
+
+    let Some(update) = parse_update(message_update(214, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(!router.dispatch(BotContext::new(client), update).await?);
+
     Ok(())
 }
 

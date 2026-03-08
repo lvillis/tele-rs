@@ -11,8 +11,8 @@ use tele::types::{
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
-    BootstrapPlan, BootstrapRetryPolicy, Client, ClientMetric, Error, ErrorClass, MenuButtonConfig,
-    UploadFile,
+    BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus, Client,
+    ClientMetric, Error, ErrorClass, MenuButtonConfig, UploadFile,
 };
 
 #[cfg(feature = "bot")]
@@ -286,20 +286,25 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
     let (base_url, handle) = spawn_server_script(script)?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
-    let plan = BootstrapPlan {
-        verify_get_me: false,
-        commands: Some(SetMyCommandsRequest::new(vec![BotCommand::new(
+    let plan = BootstrapPlan::new()
+        .commands_request(SetMyCommandsRequest::new(vec![BotCommand::new(
             "start",
             "start the bot",
-        )?])?),
-        menu_button: Some(MenuButtonConfig::commands()),
-    };
+        )?])?)
+        .menu_button(MenuButtonConfig::commands());
 
-    let report = client.ergo().bootstrap(&plan).await?;
-    assert_eq!(report.commands_applied, Some(false));
-    assert_eq!(report.commands_synced, Some(true));
-    assert_eq!(report.menu_button_applied, Some(false));
-    assert_eq!(report.menu_button_synced, Some(true));
+    let outcome = client.startup().bootstrap(&plan).await;
+    assert!(outcome.is_success());
+    let Some(commands) = outcome.report.commands.as_ref() else {
+        return Err("expected commands step report".into());
+    };
+    assert_eq!(commands.applied, Some(false));
+    assert_eq!(commands.synced, Some(true));
+    let Some(menu_button) = outcome.report.menu_button.as_ref() else {
+        return Err("expected menu button step report".into());
+    };
+    assert_eq!(menu_button.applied, Some(false));
+    assert_eq!(menu_button.synced, Some(true));
 
     join_server(handle)?;
     Ok(())
@@ -331,7 +336,7 @@ impl tele::bot::BotCommands for DemoCommand {
 
 #[cfg(feature = "bot")]
 #[tokio::test]
-async fn ergo_set_typed_commands_with_scope_and_language() -> Result<(), DynError> {
+async fn startup_set_typed_commands_with_scope_and_language() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     const CHECKS: [&str; 4] = [
         "\"commands\":[{\"command\":\"start\",\"description\":\"start command\"}]",
@@ -344,7 +349,7 @@ async fn ergo_set_typed_commands_with_scope_and_language() -> Result<(), DynErro
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
-        .ergo()
+        .startup()
         .set_typed_commands_with_options::<DemoCommand>(
             Some(BotCommandScope::AllPrivateChats),
             Some("zh-hans".to_owned()),
@@ -365,13 +370,9 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
         .build()?;
 
     let commands = SetMyCommandsRequest::new(vec![BotCommand::new("start", "start bot")?])?;
-    let plan = BootstrapPlan {
-        verify_get_me: false,
-        commands: Some(commands),
-        menu_button: None,
-    };
-    let report = client
-        .ergo()
+    let plan = BootstrapPlan::new().commands_request(commands);
+    let outcome = client
+        .startup()
         .bootstrap_with_retry(
             &plan,
             BootstrapRetryPolicy {
@@ -380,14 +381,121 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
                 ..BootstrapRetryPolicy::default()
             },
         )
-        .await?;
-    assert_eq!(report.commands_applied, Some(false));
+        .await;
+    assert!(outcome.is_success());
+    let Some(commands) = outcome.report.commands.as_ref() else {
+        return Err("expected commands step report".into());
+    };
+    assert_eq!(commands.applied, Some(false));
+    assert_eq!(commands.diagnostics.status, BootstrapStepStatus::Warned);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn ergo_answer_web_app_query_from_payload() -> Result<(), DynError> {
+async fn startup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .request_timeout(Duration::from_millis(40))
+        .total_timeout(Some(Duration::from_millis(120)))
+        .build()?;
+    let plan = BootstrapPlan::new().warn_and_continue_on_retryable_get_me();
+    let outcome = client
+        .startup()
+        .bootstrap_with_retry(
+            &plan,
+            BootstrapRetryPolicy {
+                max_attempts: 2,
+                base_backoff: Duration::from_millis(1),
+                max_backoff: Duration::from_millis(5),
+                continue_on_failure: false,
+                ..BootstrapRetryPolicy::default()
+            },
+        )
+        .await;
+
+    assert!(outcome.is_success());
+    assert!(outcome.error.is_none());
+    assert!(outcome.report.me.value.is_none());
+    assert_eq!(
+        outcome.report.me.diagnostics.status,
+        BootstrapStepStatus::Warned
+    );
+    assert_eq!(
+        outcome.report.me.diagnostics.phase,
+        Some(BootstrapStepPhase::Fetch)
+    );
+    assert_eq!(
+        outcome.report.me.diagnostics.classification,
+        Some(ErrorClass::Transport)
+    );
+    assert!(outcome.report.me.diagnostics.retryable);
+    assert_eq!(outcome.report.me.diagnostics.attempt_count, 2);
+    assert!(outcome.report.me.diagnostics.request_id.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn startup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
+    let script = vec![
+        (
+            "/bot123:abc/getMyCommands",
+            200,
+            r#"{"ok":true,"result":[{"command":"start","description":"start the bot"}]}"#,
+        ),
+        (
+            "/bot123:abc/getChatMenuButton",
+            200,
+            r#"{"ok":true,"result":{"type":"commands"}}"#,
+        ),
+    ];
+    let (base_url, handle) = spawn_server_script(script)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let plan = BootstrapPlan::new()
+        .commands_request(SetMyCommandsRequest::new(vec![BotCommand::new(
+            "start",
+            "start the bot",
+        )?])?)
+        .menu_button(MenuButtonConfig::commands());
+
+    let outcome = client
+        .startup()
+        .bootstrap_with_retry(&plan, BootstrapRetryPolicy::default())
+        .await;
+
+    assert!(outcome.is_success());
+    let Some(commands) = outcome.report.commands.as_ref() else {
+        return Err("expected commands step report".into());
+    };
+    assert_eq!(commands.applied, Some(false));
+    assert_eq!(commands.synced, Some(true));
+    assert_eq!(commands.diagnostics.status, BootstrapStepStatus::Unchanged);
+    assert_eq!(commands.diagnostics.phase, Some(BootstrapStepPhase::Check));
+    assert_eq!(commands.diagnostics.attempt_count, 1);
+
+    let Some(menu_button) = outcome.report.menu_button.as_ref() else {
+        return Err("expected menu button step report".into());
+    };
+    assert_eq!(menu_button.applied, Some(false));
+    assert_eq!(menu_button.synced, Some(true));
+    assert_eq!(
+        menu_button.diagnostics.status,
+        BootstrapStepStatus::Unchanged
+    );
+    assert_eq!(
+        menu_button.diagnostics.phase,
+        Some(BootstrapStepPhase::Check)
+    );
+    assert_eq!(menu_button.diagnostics.attempt_count, 1);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn web_app_answer_query_from_payload() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"inline_message_id":"inline-42"}}"#;
     const CHECKS: [&str; 3] = [
         "\"web_app_query_id\":\"query-42\"",
@@ -401,8 +509,8 @@ async fn ergo_answer_web_app_query_from_payload() -> Result<(), DynError> {
     let web_app_data = WebAppData::new("{\"query_id\":\"query-42\",\"item\":\"coffee\"}", "Open");
     let result = InlineQueryResult::article("r-42", "From Payload", "ok")?;
     let sent = client
-        .ergo()
-        .answer_web_app_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
+        .web_app()
+        .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
     assert_eq!(sent.inline_message_id, "inline-42");
 
@@ -411,7 +519,45 @@ async fn ergo_answer_web_app_query_from_payload() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn ergo_set_chat_web_app_menu_button_uses_high_level_helper() -> Result<(), DynError> {
+async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    let answer_response = r#"{"ok":true,"result":{"inline_message_id":"inline-99"}}"#;
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/setChatMenuButton")
+            .contains_case_insensitive("\"chat_id\":42")
+            .contains_case_insensitive("\"menu_button\":{\"type\":\"web_app\"")
+            .contains_case_insensitive("\"url\":\"https://example.com/mini-app\"")
+            .respond_json(200, response),
+        RequestExpectation::post("/bot123:abc/answerWebAppQuery")
+            .contains_case_insensitive("\"web_app_query_id\":\"query-99\"")
+            .contains_case_insensitive("\"title\":\"Facade Answer\"")
+            .respond_json(200, answer_response),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let applied = client
+        .web_app()
+        .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
+        .await?;
+    assert!(applied);
+
+    let web_app_data = WebAppData::new("{\"query_id\":\"query-99\",\"item\":\"tea\"}", "Open");
+    let result = InlineQueryResult::article("article-99", "Facade Answer", "done")?;
+    let sent = client
+        .web_app()
+        .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
+        .await?;
+    assert_eq!(sent.inline_message_id, "inline-99");
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn web_app_set_chat_menu_button_uses_high_level_helper() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     const CHECKS: [&str; 4] = [
         "\"chat_id\":42",
@@ -424,8 +570,8 @@ async fn ergo_set_chat_web_app_menu_button_uses_high_level_helper() -> Result<()
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
-        .ergo()
-        .set_chat_web_app_menu_button(42, "Open Mini App", "https://example.com/mini-app")
+        .web_app()
+        .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
         .await?;
     assert!(applied);
 

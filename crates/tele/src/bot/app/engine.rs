@@ -64,7 +64,7 @@ where
     }
 
     /// Runs startup bootstrap and prepares router runtime state.
-    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> BootstrapOutcome {
         super::bootstrap_router(&self.client, &self.router, plan).await
     }
 
@@ -73,7 +73,7 @@ where
         &self,
         plan: &BootstrapPlan,
         policy: BootstrapRetryPolicy,
-    ) -> Result<BootstrapReport> {
+    ) -> BootstrapOutcome {
         super::bootstrap_router_with_retry(&self.client, &self.router, plan, policy).await
     }
 
@@ -630,7 +630,7 @@ where
     }
 
     /// Runs startup bootstrap and prepares router runtime state.
-    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> Result<BootstrapReport> {
+    pub async fn bootstrap(&self, plan: &BootstrapPlan) -> BootstrapOutcome {
         self.engine.bootstrap(plan).await
     }
 
@@ -639,7 +639,7 @@ where
         &self,
         plan: &BootstrapPlan,
         policy: BootstrapRetryPolicy,
-    ) -> Result<BootstrapReport> {
+    ) -> BootstrapOutcome {
         self.engine.bootstrap_with_retry(plan, policy).await
     }
 

@@ -50,13 +50,17 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
+#[cfg(feature = "_blocking")]
+pub use client::{BlockingStartupApi, BlockingWebAppApi};
 pub use client::{
-    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, ClientMetric, ClientMetricHook,
-    MenuButtonConfig, WebAppQueryPayload,
+    BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
+    BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
+    BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric, ClientMetricHook, MenuButtonConfig,
+    WebAppQueryPayload,
 };
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 #[cfg(feature = "_async")]
-pub use client::{ErgoApi, RawApi, TypedApi};
+pub use client::{ErgoApi, RawApi, StartupApi, TypedApi, WebAppApi};
 pub use error::{Error, ErrorClass, Result};
 #[cfg(feature = "macros")]
 pub use tele_macros::BotCommands;

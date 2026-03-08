@@ -24,6 +24,11 @@ impl BotContext {
         BotControl::new(self.client.clone())
     }
 
+    /// Returns the stable high-level Web App facade scoped to this bot client.
+    pub fn web_app(&self) -> crate::client::WebAppApi {
+        self.client.web_app()
+    }
+
     pub fn request_state(&self) -> &RequestState {
         &self.request_state
     }
@@ -106,46 +111,6 @@ impl BotContext {
         };
 
         self.answer_callback(callback_query_id, text).await
-    }
-
-    /// Answers `answerWebAppQuery` with a typed inline result payload.
-    pub async fn answer_web_app_query<T>(
-        &self,
-        web_app_query_id: impl Into<String>,
-        result: T,
-    ) -> Result<SentWebAppMessage>
-    where
-        T: Serialize,
-    {
-        self.control()
-            .answer_web_app_query(web_app_query_id, result)
-            .await
-    }
-
-    /// Answers `answerWebAppQuery` with a pre-built inline result payload.
-    pub async fn answer_web_app_query_result(
-        &self,
-        web_app_query_id: impl Into<String>,
-        result: InlineQueryResult,
-    ) -> Result<SentWebAppMessage> {
-        self.control()
-            .answer_web_app_query_result(web_app_query_id, result)
-            .await
-    }
-
-    /// Parses WebApp payload and answers `answerWebAppQuery` in one step.
-    pub async fn answer_web_app_query_from_payload<T, R>(
-        &self,
-        web_app_data: &WebAppData,
-        result: R,
-    ) -> Result<SentWebAppMessage>
-    where
-        T: DeserializeOwned,
-        R: Serialize,
-    {
-        self.control()
-            .answer_web_app_query_from_payload::<T, R>(web_app_data, result)
-            .await
     }
 
     /// Converts high-level handler error into transportable SDK result.

@@ -775,13 +775,13 @@ impl Router {
     }
 
     /// Sets command target bot username used by command routes.
-    pub fn command_target(mut self, bot_username: impl Into<String>) -> Result<Self> {
+    pub fn command_target(self, bot_username: impl Into<String>) -> Result<Self> {
         let _ = self.set_command_target(bot_username)?;
         Ok(self)
     }
 
     /// Sets command target bot username used by command routes.
-    pub fn set_command_target(&mut self, bot_username: impl Into<String>) -> Result<&mut Self> {
+    pub fn set_command_target(&self, bot_username: impl Into<String>) -> Result<&Self> {
         let raw = bot_username.into();
         let bot_username = normalize_bot_username(raw.as_str())
             .ok_or_else(|| invalid_request("command target bot username cannot be empty"))?;
@@ -789,20 +789,21 @@ impl Router {
         Ok(self)
     }
 
-    /// Clears manual command target and re-enables lazy auto-resolution.
-    pub fn clear_command_target(&mut self) -> &mut Self {
+    /// Clears command target state and re-enables lazy auto-resolution.
+    pub fn clear_command_target(&self) -> &Self {
         let _ = self.set_command_target_config(None, true);
         self
     }
 
     /// Disables lazy auto-resolution for mentioned commands.
-    pub fn disable_auto_command_target(&mut self) -> &mut Self {
-        let _ = self.set_command_target_config(None, false);
+    pub fn disable_auto_command_target(&self) -> &Self {
+        let username = self.command_target_username();
+        let _ = self.set_command_target_config(username, false);
         self
     }
 
     /// Enables lazy auto-resolution for mentioned commands.
-    pub fn enable_auto_command_target(&mut self) -> &mut Self {
+    pub fn enable_auto_command_target(&self) -> &Self {
         let username = self.command_target_username();
         let _ = self.set_command_target_config(username, true);
         self

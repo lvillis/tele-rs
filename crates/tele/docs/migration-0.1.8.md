@@ -32,9 +32,9 @@ Menu button ergonomics are now centered on `MenuButtonConfig` instead of forcing
 
 Prefer:
 
-- `client.ergo().set_menu_button(...)`
-- `client.ergo().set_chat_web_app_menu_button(...)`
-- `context.control().set_menu_button(...)`
+- `client.startup().set_menu_button(...)`
+- `client.web_app().set_chat_menu_button(...)`
+- `context.control().startup().set_menu_button(...)`
 
 Instead of building raw advanced requests in application code.
 
@@ -42,14 +42,14 @@ Instead of building raw advanced requests in application code.
 
 ## Web App reply ergonomics
 
-Inside handlers, prefer the high-level `BotContext` helpers:
+Inside handlers, prefer the dedicated `WebAppApi` facade:
 
-- `context.answer_web_app_query(...)`
-- `context.answer_web_app_query_result(...)`
-- `context.answer_web_app_query_from_payload(...)`
+- `context.web_app().answer_query(...)`
+- `context.web_app().answer_query_result(...)`
+- `context.web_app().answer_query_from_payload(...)`
 
-This keeps Web App handler code on the same high-level layer as `reply_text(...)` and
-`answer_callback(...)`.
+This keeps Web App code on one stable high-level layer instead of spreading it across context
+helpers and generic ergonomics.
 
 ## Bootstrap diff/sync
 

@@ -25,11 +25,15 @@ use crate::Client;
 mod bootstrap;
 mod ergo;
 mod raw;
+mod startup;
 mod support;
 mod typed;
+mod web_app;
 
 pub use bootstrap::{
-    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+    BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
+    BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
+    BootstrapStepStatus, BootstrapSyncStepReport, MenuButtonConfig, WebAppQueryPayload,
 };
 #[cfg(feature = "_blocking")]
 pub use ergo::BlockingErgoApi;
@@ -39,9 +43,17 @@ pub use ergo::ErgoApi;
 pub use raw::BlockingRawApi;
 #[cfg(feature = "_async")]
 pub use raw::RawApi;
+#[cfg(feature = "_blocking")]
+pub use startup::BlockingStartupApi;
+#[cfg(feature = "_async")]
+pub use startup::StartupApi;
 #[cfg(feature = "bot")]
 pub(crate) use support::reply_chat_id;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;
 #[cfg(feature = "_async")]
 pub use typed::TypedApi;
+#[cfg(feature = "_blocking")]
+pub use web_app::BlockingWebAppApi;
+#[cfg(feature = "_async")]
+pub use web_app::WebAppApi;

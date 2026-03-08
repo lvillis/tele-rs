@@ -5,7 +5,7 @@ use tele::Client;
 use tele::Error;
 use tele::MenuButtonConfig;
 use tele::bot::{BotApp, BotContext, Router, WebAppInput};
-use tele::types::telegram::{InlineQueryResult, WebAppInfo};
+use tele::types::telegram::InlineQueryResult;
 use tele::types::update::Update;
 
 #[derive(Debug, Deserialize)]
@@ -43,11 +43,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let _ = client
-        .ergo()
+        .startup()
         .set_menu_button(MenuButtonConfig::for_chat_web_app(
             chat_id,
             "Open Mini App",
-            WebAppInfo::new(mini_app_url),
+            mini_app_url,
         ))
         .await?;
 
@@ -84,7 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reason: format!("failed to serialize Mini App inline result: {source}"),
                 })?;
                 let _ = context
-                    .answer_web_app_query_result(query_id, result)
+                    .web_app()
+                    .answer_query_result(query_id, result)
                     .await?;
             }
 
