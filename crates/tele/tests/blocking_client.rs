@@ -5,7 +5,7 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
 use tele::types::{CreateInvoiceLinkRequest, GetChatMemberCountRequest, LabeledPrice, WebAppData};
-use tele::{BlockingClient, Error, ErrorClass};
+use tele::{BlockingClient, Error, ErrorClass, MenuButtonConfig};
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 type TestServer = FakeTelegramServer;
@@ -93,7 +93,8 @@ async fn blocking_advanced_get_available_gifts_success() -> Result<(), DynError>
 }
 
 #[tokio::test]
-async fn blocking_web_app_facade_handles_menu_button_and_query_answer() -> Result<(), DynError> {
+async fn blocking_setup_and_web_app_facades_handle_menu_button_and_query_answer()
+-> Result<(), DynError> {
     let expectations = vec![
         RequestExpectation::post("/bot123:abc/setChatMenuButton")
             .contains_case_insensitive("\"chat_id\":42")
@@ -113,11 +114,14 @@ async fn blocking_web_app_facade_handles_menu_button_and_query_answer() -> Resul
     let client = BlockingClient::builder(server.base_url())?
         .bot_token("123:abc")?
         .build_blocking()?;
-    let applied = client.app().web_app().set_chat_menu_button(
-        42,
-        "Open Mini App",
-        "https://example.com/mini-app",
-    )?;
+    let applied = client
+        .control()
+        .setup()
+        .set_menu_button(MenuButtonConfig::for_chat_web_app(
+            42,
+            "Open Mini App",
+            "https://example.com/mini-app",
+        ))?;
     assert!(applied);
 
     let web_app_data = WebAppData::new("{\"query_id\":\"query-77\",\"item\":\"tea\"}", "Open");

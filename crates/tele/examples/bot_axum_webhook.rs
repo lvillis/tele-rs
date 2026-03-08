@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .handle(|context: BotContext, update: Update| async move {
             let text = update.text().unwrap_or("non-text message");
             let _sent = context
+                .app()
                 .reply_text(&update, format!("webhook echo: {text}"))
                 .await?;
             Ok(())

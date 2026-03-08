@@ -35,7 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if text == "/cancel" {
                         session.clear(&update).await?;
-                        let _ = context.reply_text(&update, "dialog cancelled").await?;
+                        let _ = context
+                            .app()
+                            .reply_text(&update, "dialog cancelled")
+                            .await?;
                         return Ok(());
                     }
 
@@ -43,11 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         None => {
                             session.save(&update, "awaiting_name".to_owned()).await?;
                             let _ = context
+                                .app()
                                 .reply_text(&update, "What is your name? Send /cancel to reset.")
                                 .await?;
                         }
                         Some("awaiting_name") => {
                             let _ = context
+                                .app()
                                 .reply_text(&update, format!("Nice to meet you, {text}!"))
                                 .await?;
                             session.clear(&update).await?;

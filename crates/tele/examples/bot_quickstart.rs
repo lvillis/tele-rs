@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use tele::Client;
 use tele::bot::{
-    BotApp, BotContext, BotControl, EngineConfig, EngineEvent, ErrorPolicy, OutboxConfig, Router,
-    UpdateExt,
+    BotApp, BotContext, EngineConfig, EngineEvent, ErrorPolicy, OutboxConfig, Router, UpdateExt,
 };
 use tele::types::update::Update;
 
@@ -24,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) => OutboxConfig::default().with_persistence_path(path),
         Err(_error) => OutboxConfig::default(),
     };
-    let outbox = BotControl::new(client.clone()).spawn_outbox(outbox_config);
+    let outbox = client.control().spawn_outbox(outbox_config);
 
     let mut router = Router::new();
     router.command_route("start").handle_with_policy(
@@ -33,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         |context: BotContext, update: Update| async move {
             let _ = context
+                .app()
                 .reply_text(&update, "tele quickstart bot is running")
                 .await?;
             Ok(())

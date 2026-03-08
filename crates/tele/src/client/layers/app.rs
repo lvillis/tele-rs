@@ -27,12 +27,7 @@ impl AppApi {
         Self { client }
     }
 
-    /// App setup helpers for commands, menu buttons and bootstrap.
-    pub fn setup(&self) -> SetupApi {
-        SetupApi::new(self.client.clone())
-    }
-
-    /// Dedicated Web App facade.
+    /// Dedicated Web App runtime facade.
     pub fn web_app(&self) -> WebAppApi {
         WebAppApi::new(self.client.clone())
     }
@@ -89,10 +84,6 @@ pub struct BlockingAppApi {
 impl BlockingAppApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
-    }
-
-    pub fn setup(&self) -> BlockingSetupApi {
-        BlockingSetupApi::new(self.client.clone())
     }
 
     pub fn web_app(&self) -> BlockingWebAppApi {

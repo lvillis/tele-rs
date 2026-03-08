@@ -9,7 +9,7 @@ use crate::types::bot::User;
 use crate::types::command::{BotCommand, GetMyCommandsRequest, SetMyCommandsRequest};
 use crate::types::common::ChatId;
 use crate::types::message::{Message, SendMessageRequest, SentWebAppMessage};
-use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData, WebAppInfo};
+use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData};
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::UploadFile;
 use crate::{Error, Result};
@@ -24,6 +24,7 @@ use crate::Client;
 
 mod app;
 mod bootstrap;
+mod control;
 mod menu;
 mod raw;
 mod setup;
@@ -40,6 +41,10 @@ pub use bootstrap::{
     BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
     BootstrapStepStatus, BootstrapSyncStepReport, WebAppQueryPayload,
 };
+#[cfg(feature = "_blocking")]
+pub use control::BlockingControlApi;
+#[cfg(feature = "_async")]
+pub use control::ControlApi;
 pub use menu::MenuButtonConfig;
 #[cfg(feature = "_blocking")]
 pub use raw::BlockingRawApi;
@@ -49,8 +54,6 @@ pub use raw::RawApi;
 pub use setup::BlockingSetupApi;
 #[cfg(feature = "_async")]
 pub use setup::SetupApi;
-#[cfg(feature = "bot")]
-pub(crate) use support::reply_chat_id;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;
 #[cfg(feature = "_async")]

@@ -15,12 +15,12 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotApp, BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
-    CURRENT_BOT_CHAT_MEMBER, CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput,
-    ChatSession, CommandData, DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent,
-    EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore, JsonFileSessionStore,
-    LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey,
-    Router, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
+    BotApp, BotContext, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
+    CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandData,
+    DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy,
+    HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
+    MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey, Router,
+    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
     WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
     extract_callback_data, extract_callback_json, extract_chat_join_request,
     extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
@@ -1187,7 +1187,7 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
         r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
     )?;
     let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
-    let control = BotControl::new(client.clone());
+    let control = client.control();
 
     let hits = Arc::new(AtomicUsize::new(0));
     let mut router = Router::new();
@@ -1228,13 +1228,41 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
 }
 
 #[tokio::test]
+async fn client_control_exposes_setup_facade() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
+    let control = client.control();
+
+    let outcome = control
+        .setup()
+        .bootstrap(&tele::BootstrapPlan::new().fail_fast_get_me())
+        .await;
+    let report = outcome.into_result()?;
+    assert_eq!(
+        report
+            .me
+            .value
+            .as_ref()
+            .and_then(|me| me.username.as_deref()),
+        Some("ThisBot")
+    );
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn bootstrap_router_respects_warn_get_me_policy_without_refetch() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
         .request_timeout(Duration::from_millis(40))
         .total_timeout(Some(Duration::from_millis(120)))
         .build()?;
-    let control = BotControl::new(client);
+    let control = client.control();
     let router = Router::new();
 
     let outcome = control
@@ -1261,7 +1289,7 @@ async fn bootstrap_router_warn_policy_disables_later_auto_get_me() -> Result<(),
         .request_timeout(Duration::from_millis(40))
         .total_timeout(Some(Duration::from_millis(120)))
         .build()?;
-    let control = BotControl::new(client.clone());
+    let control = client.control();
     let mut router = Router::new();
     router
         .command_route("start")
@@ -2080,7 +2108,7 @@ async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn bot_context_answers_callback_from_update() -> Result<(), DynError> {
+async fn bot_context_app_answers_callback_from_update() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/answerCallbackQuery", 200, response)?;
 
@@ -2094,6 +2122,7 @@ async fn bot_context_answers_callback_from_update() -> Result<(), DynError> {
     };
 
     let answered = context
+        .app()
         .answer_callback_from_update(&update, Some("received".to_owned()))
         .await?;
     assert!(answered);

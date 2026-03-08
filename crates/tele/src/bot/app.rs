@@ -30,7 +30,8 @@ async fn bootstrap_router_with_retry(
     plan: &BootstrapPlan,
     policy: BootstrapRetryPolicy,
 ) -> BootstrapOutcome {
-    BotControl::new(client.clone())
+    client
+        .control()
         .bootstrap_router_with_retry(router, plan, policy)
         .await
 }

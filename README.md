@@ -25,7 +25,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - Messaging: text/media send, forward/copy, live location, poll, dice, edit/delete
 - Chats: member/admin queries, permissions, moderation, invite links, pin/title/description
 - Updates: polling, webhook config, callback/inline query answer
-- API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.ergo()` (high-level helpers)
+- API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.app()` (request helpers), `client.control()` (setup/bootstrap)
 - Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, spawn-safe `run`/`run_until`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
 - Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`WebAppInput`/`WriteAccessAllowedInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
 - Kind routing (`feature = "bot"`): `UpdateKind` / `MessageKind` classification, `on_update_kind` / `on_message_kind` / `on_any_message_kind`, `UnknownKindsDetected` runtime event. Guide: [`crates/tele/docs/kind-routing.md`](crates/tele/docs/kind-routing.md)
@@ -123,14 +123,17 @@ async fn main() -> Result<(), tele::Error> {
 
     let mut router = Router::new();
     router.on_command("start", |context: BotContext, update: Update| async move {
-        let _ = context.reply_text(&update, "bot is running").await?;
+        let _ = context.app().reply_text(&update, "bot is running").await?;
         Ok(())
     });
     router.on_extracted::<TextInput, _, _>(|context: BotContext, update: Update, text| async move {
         let Some(chat_id) = update.chat_id() else {
             return Ok(());
         };
-        let _ = context.send_text(chat_id, format!("echo: {}", text.into_inner())).await?;
+        let _ = context
+            .app()
+            .send_text(chat_id, format!("echo: {}", text.into_inner()))
+            .await?;
         Ok(())
     });
 
@@ -143,10 +146,13 @@ async fn main() -> Result<(), tele::Error> {
 }
 ```
 
+Inside handlers, prefer `context.app()`. For startup/bootstrap/outbox orchestration, prefer
+`client.control()`.
+
 For service-style integration patterns (`tokio::spawn`, graceful shutdown, bot + HTTP in one app),
 see [`crates/tele/docs/runtime-integration.md`](crates/tele/docs/runtime-integration.md).
 
-## API Layers (Raw / Typed / Ergo)
+## API Layers (Raw / Typed / App)
 
 ```rust,no_run
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
@@ -163,7 +169,7 @@ async fn main() -> Result<(), tele::Error> {
         .typed()
         .call(&AdvancedGetAvailableGiftsRequest::new())
         .await?;
-    let _sent = client.ergo().send_text(123456789_i64, "hello from ergo layer").await?;
+    let _sent = client.app().send_text(123456789_i64, "hello from app layer").await?;
     Ok(())
 }
 ```
@@ -240,7 +246,7 @@ enum Command {
 
 ## Design Targets
 
-- Keep `client.raw()` / `client.typed()` / `client.ergo()` API stable and discoverable.
+- Keep `client.raw()` / `client.typed()` / `client.app()` / `client.control()` API stable and discoverable.
 - Keep webhook core framework-agnostic (`WebhookRunner` + `DispatchOutcome`), adapters as optional features.
 - Prefer strong request/response models over ad-hoc JSON values for public request fields.
 - Keep runtime defaults robust (timeout/retry/concurrency/rate-limit controls).

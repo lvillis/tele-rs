@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some("ping") => "pong".to_owned(),
                 _ => format!("echo: {text}"),
             };
-            let _ = context.reply_text(&update, reply).await?;
+            let _ = context.app().reply_text(&update, reply).await?;
             Ok(())
         });
 

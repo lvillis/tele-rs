@@ -293,7 +293,7 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
         )?])?)
         .menu_button(MenuButtonConfig::commands());
 
-    let outcome = client.app().setup().bootstrap(&plan).await;
+    let outcome = client.control().setup().bootstrap(&plan).await;
     assert!(outcome.is_success());
     let Some(commands) = outcome.report.commands.as_ref() else {
         return Err("expected commands step report".into());
@@ -349,7 +349,7 @@ async fn setup_set_typed_commands_with_scope_and_language() -> Result<(), DynErr
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
-        .app()
+        .control()
         .setup()
         .set_typed_commands_with_options::<DemoCommand>(
             Some(BotCommandScope::AllPrivateChats),
@@ -373,7 +373,7 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
     let commands = SetMyCommandsRequest::new(vec![BotCommand::new("start", "start bot")?])?;
     let plan = BootstrapPlan::new().commands_request(commands);
     let outcome = client
-        .app()
+        .control()
         .setup()
         .bootstrap_with_retry(
             &plan,
@@ -403,7 +403,7 @@ async fn setup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(),
         .build()?;
     let plan = BootstrapPlan::new().warn_and_continue_on_retryable_get_me();
     let outcome = client
-        .app()
+        .control()
         .setup()
         .bootstrap_with_retry(
             &plan,
@@ -464,7 +464,7 @@ async fn setup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
         .menu_button(MenuButtonConfig::commands());
 
     let outcome = client
-        .app()
+        .control()
         .setup()
         .bootstrap_with_retry(&plan, BootstrapRetryPolicy::default())
         .await;
@@ -524,7 +524,7 @@ async fn web_app_answer_query_from_payload() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), DynError> {
+async fn setup_and_web_app_facades_handle_menu_button_and_query_answer() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     let answer_response = r#"{"ok":true,"result":{"inline_message_id":"inline-99"}}"#;
     let expectations = vec![
@@ -544,9 +544,13 @@ async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), Dyn
         .bot_token("123:abc")?
         .build()?;
     let applied = client
-        .app()
-        .web_app()
-        .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
+        .control()
+        .setup()
+        .set_menu_button(MenuButtonConfig::for_chat_web_app(
+            42,
+            "Open Mini App",
+            "https://example.com/mini-app",
+        ))
         .await?;
     assert!(applied);
 
@@ -564,7 +568,7 @@ async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), Dyn
 }
 
 #[tokio::test]
-async fn web_app_set_chat_menu_button_uses_high_level_helper() -> Result<(), DynError> {
+async fn setup_set_chat_menu_button_uses_high_level_helper() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     const CHECKS: [&str; 4] = [
         "\"chat_id\":42",
@@ -577,9 +581,13 @@ async fn web_app_set_chat_menu_button_uses_high_level_helper() -> Result<(), Dyn
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
-        .app()
-        .web_app()
-        .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
+        .control()
+        .setup()
+        .set_menu_button(MenuButtonConfig::for_chat_web_app(
+            42,
+            "Open Mini App",
+            "https://example.com/mini-app",
+        ))
         .await?;
     assert!(applied);
 

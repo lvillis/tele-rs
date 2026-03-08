@@ -32,9 +32,7 @@ Menu button ergonomics are now centered on `MenuButtonConfig` instead of forcing
 
 Prefer:
 
-- `client.app().setup().set_menu_button(...)`
-- `client.app().web_app().set_chat_menu_button(...)`
-- `context.control().setup().set_menu_button(...)`
+- `client.control().setup().set_menu_button(...)`
 
 Instead of building raw advanced requests in application code.
 
@@ -44,12 +42,12 @@ Instead of building raw advanced requests in application code.
 
 Inside handlers, prefer the dedicated `WebAppApi` facade:
 
-- `context.web_app().answer_query(...)`
-- `context.web_app().answer_query_result(...)`
-- `context.web_app().answer_query_from_payload(...)`
+- `context.app().web_app().answer_query(...)`
+- `context.app().web_app().answer_query_result(...)`
+- `context.app().web_app().answer_query_from_payload(...)`
 
 This keeps Web App code on one stable high-level layer instead of spreading it across context
-helpers and generic ergonomics.
+helpers. Menu button setup should stay on `client.control().setup()`.
 
 ## Bootstrap diff/sync
 

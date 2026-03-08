@@ -17,8 +17,8 @@ use crate::{Error, Result};
 
 use super::config::BuilderParts;
 use super::{
-    BlockingAppApi, BlockingRawApi, BlockingTypedApi, ClientBuilder, ClientObservability,
-    RequestDefaults, emit_client_metric,
+    BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi, ClientBuilder,
+    ClientObservability, RequestDefaults, emit_client_metric,
 };
 
 #[derive(Clone)]
@@ -104,6 +104,11 @@ impl BlockingClient {
     /// Stable app-facing high-level facade.
     pub fn app(&self) -> BlockingAppApi {
         BlockingAppApi::new(self.clone())
+    }
+
+    /// Stable control-plane facade for setup orchestration.
+    pub fn control(&self) -> BlockingControlApi {
+        BlockingControlApi::new(self.clone())
     }
 
     pub fn call_method<R, P>(&self, method: &str, payload: &P) -> Result<R>

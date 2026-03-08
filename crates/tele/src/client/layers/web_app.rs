@@ -35,35 +35,6 @@ impl WebAppApi {
         WebAppQueryPayload::parse(web_app_data)
     }
 
-    pub async fn set_menu_button(
-        &self,
-        text: impl Into<String>,
-        web_app: impl Into<WebAppInfo>,
-    ) -> Result<bool> {
-        let request = crate::types::advanced::AdvancedSetChatMenuButtonRequest::from(
-            MenuButtonConfig::web_app(text, web_app),
-        );
-        self.client
-            .advanced()
-            .set_chat_menu_button_typed(&request)
-            .await
-    }
-
-    pub async fn set_chat_menu_button(
-        &self,
-        chat_id: i64,
-        text: impl Into<String>,
-        web_app: impl Into<WebAppInfo>,
-    ) -> Result<bool> {
-        let request = crate::types::advanced::AdvancedSetChatMenuButtonRequest::from(
-            MenuButtonConfig::for_chat_web_app(chat_id, text, web_app),
-        );
-        self.client
-            .advanced()
-            .set_chat_menu_button_typed(&request)
-            .await
-    }
-
     pub async fn answer_query<T>(
         &self,
         web_app_query_id: impl Into<String>,
@@ -122,29 +93,6 @@ impl BlockingWebAppApi {
         T: DeserializeOwned,
     {
         WebAppQueryPayload::parse(web_app_data)
-    }
-
-    pub fn set_menu_button(
-        &self,
-        text: impl Into<String>,
-        web_app: impl Into<WebAppInfo>,
-    ) -> Result<bool> {
-        let request = crate::types::advanced::AdvancedSetChatMenuButtonRequest::from(
-            MenuButtonConfig::web_app(text, web_app),
-        );
-        self.client.advanced().set_chat_menu_button_typed(&request)
-    }
-
-    pub fn set_chat_menu_button(
-        &self,
-        chat_id: i64,
-        text: impl Into<String>,
-        web_app: impl Into<WebAppInfo>,
-    ) -> Result<bool> {
-        let request = crate::types::advanced::AdvancedSetChatMenuButtonRequest::from(
-            MenuButtonConfig::for_chat_web_app(chat_id, text, web_app),
-        );
-        self.client.advanced().set_chat_menu_button_typed(&request)
     }
 
     pub fn answer_query<T>(

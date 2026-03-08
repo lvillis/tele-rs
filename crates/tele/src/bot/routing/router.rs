@@ -106,7 +106,7 @@ async fn resolve_error_with_policy(
         ErrorPolicy::Ignore => Ok(()),
         ErrorPolicy::ReplyUser { fallback_message } => {
             let message = user_message_for_error(&error, &fallback_message);
-            let _ = context.reply_text(&update, message).await?;
+            let _ = context.app().reply_text(&update, message).await?;
             Ok(())
         }
     }

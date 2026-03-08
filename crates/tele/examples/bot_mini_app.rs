@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let _ = client
-        .app()
+        .control()
         .setup()
         .set_menu_button(MenuButtonConfig::for_chat_web_app(
             chat_id,
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         web_app_data.button_text, web_app_data.data
                     )
                 });
-            let _ = context.reply_text(&update, echoed_text).await?;
+            let _ = context.app().reply_text(&update, echoed_text).await?;
             let result_title = parsed_payload
                 .as_ref()
                 .and_then(|payload| payload.title.clone())
@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reason: format!("failed to serialize Mini App inline result: {source}"),
                 })?;
                 let _ = context
+                    .app()
                     .web_app()
                     .answer_query_result(query_id, result)
                     .await?;

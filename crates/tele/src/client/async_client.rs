@@ -18,7 +18,7 @@ use crate::{Error, Result};
 
 use super::config::BuilderParts;
 use super::{
-    AppApi, ClientBuilder, ClientObservability, RawApi, RequestDefaults, TypedApi,
+    AppApi, ClientBuilder, ClientObservability, ControlApi, RawApi, RequestDefaults, TypedApi,
     emit_client_metric,
 };
 
@@ -105,6 +105,11 @@ impl Client {
     /// Stable app-facing high-level facade.
     pub fn app(&self) -> AppApi {
         AppApi::new(self.clone())
+    }
+
+    /// Stable control-plane facade for setup and runtime orchestration.
+    pub fn control(&self) -> ControlApi {
+        ControlApi::new(self.clone())
     }
 
     pub async fn call_method<R, P>(&self, method: &str, payload: &P) -> Result<R>

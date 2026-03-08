@@ -8,9 +8,9 @@ pub use crate::{ClientBuilder, Error, Result};
 pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_init_data};
 
 #[cfg(feature = "_async")]
-pub use crate::client::{AppApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use crate::client::{AppApi, ControlApi, RawApi, SetupApi, TypedApi, WebAppApi};
 #[cfg(feature = "_blocking")]
-pub use crate::client::{BlockingAppApi, BlockingRawApi, BlockingTypedApi};
+pub use crate::client::{BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi};
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};
 pub use crate::client::{
@@ -33,10 +33,10 @@ pub use crate::bot::PostgresSessionStore;
 pub use crate::bot::RedisSessionStore;
 #[cfg(feature = "bot")]
 pub use crate::bot::{
-    BotApp, BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
-    CURRENT_BOT_CHAT_MEMBER, CallbackInput, CallbackRouteBuilder, ChannelUpdateSource,
-    ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandRouteBuilder,
-    CompactCallbackInput, CompactCallbackRouteBuilder, DispatchMetricOutcome, DispatchOutcome,
+    BotApp, BotContext, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
+    CallbackInput, CallbackRouteBuilder, ChannelUpdateSource, ChatJoinRequestInput,
+    ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandRouteBuilder, CompactCallbackInput,
+    CompactCallbackRouteBuilder, ContextAppApi, DispatchMetricOutcome, DispatchOutcome,
     EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore,
     JsonCallback, JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig,
     ParsedCommandRouteBuilder, PollingConfig, RequestStateKey, RouteRejection, Router,

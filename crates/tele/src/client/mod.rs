@@ -12,12 +12,10 @@ pub use async_client::Client;
 #[cfg(feature = "_blocking")]
 pub use blocking_client::BlockingClient;
 pub use config::{ClientBuilder, RateLimitConfig, RequestDefaults, RetryConfig};
-#[cfg(feature = "bot")]
-pub(crate) use layers::reply_chat_id;
 #[cfg(feature = "_async")]
-pub use layers::{AppApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use layers::{AppApi, ControlApi, RawApi, SetupApi, TypedApi, WebAppApi};
 #[cfg(feature = "_blocking")]
-pub use layers::{BlockingAppApi, BlockingRawApi, BlockingTypedApi};
+pub use layers::{BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi};
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingSetupApi, BlockingWebAppApi};
 pub use layers::{

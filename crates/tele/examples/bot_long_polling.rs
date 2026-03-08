@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => format!("echo: {text}"),
             };
 
-            let _sent = context.reply_text(&update, reply_text).await?;
+            let _sent = context.app().reply_text(&update, reply_text).await?;
             Ok(())
         });
 

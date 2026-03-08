@@ -30,7 +30,7 @@ use crate::types::telegram::{
     CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
     CompactCallbackPayload, WebAppData,
 };
-use crate::types::update::{AnswerCallbackQueryRequest, GetUpdatesRequest, Update, UpdateKind};
+use crate::types::update::{GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
 use crate::{Client, Error, ErrorClass, Result};
 
@@ -173,7 +173,7 @@ where
 
 mod app;
 mod context;
-mod control;
+mod context_app;
 mod handler_error;
 mod outbox;
 mod request_state;
@@ -184,7 +184,7 @@ pub mod testing;
 
 pub use app::*;
 pub use context::*;
-pub use control::*;
+pub use context_app::*;
 pub use handler_error::*;
 pub use outbox::*;
 pub use request_state::*;

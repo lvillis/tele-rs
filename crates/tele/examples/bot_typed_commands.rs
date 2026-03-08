@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use tele::Client;
 use tele::bot::{
-    BotContext, BotControl, BotEngine, EngineConfig, LongPollingSource, PollingConfig, Router,
-    UpdateExt,
+    BotContext, BotEngine, EngineConfig, LongPollingSource, PollingConfig, Router, UpdateExt,
 };
 use tele::types::update::Update;
 
@@ -39,17 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Command::Echo(text) => format!("echo: {text}"),
             };
 
-            let _ = context.reply_text(&update, reply).await?;
+            let _ = context.app().reply_text(&update, reply).await?;
             Ok(())
         },
     );
 
-    let control = BotControl::new(client.clone());
+    let control = client.control();
     let _ = control.setup().set_typed_commands::<Command>().await?;
 
     router.fallback(|context: BotContext, update: Update| async move {
         let text = update.text().unwrap_or("unsupported update");
         let _ = context
+            .app()
             .reply_text(&update, format!("unknown command or input: {text}"))
             .await?;
         Ok(())

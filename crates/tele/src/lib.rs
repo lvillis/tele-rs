@@ -49,9 +49,9 @@ pub use client::BlockingClient;
 #[cfg(feature = "_async")]
 pub use client::Client;
 #[cfg(feature = "_async")]
-pub use client::{AppApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use client::{AppApi, ControlApi, RawApi, SetupApi, TypedApi, WebAppApi};
 #[cfg(feature = "_blocking")]
-pub use client::{BlockingAppApi, BlockingRawApi, BlockingTypedApi};
+pub use client::{BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi};
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};
 pub use client::{
