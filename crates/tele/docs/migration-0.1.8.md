@@ -32,9 +32,9 @@ Menu button ergonomics are now centered on `MenuButtonConfig` instead of forcing
 
 Prefer:
 
-- `client.startup().set_menu_button(...)`
-- `client.web_app().set_chat_menu_button(...)`
-- `context.control().startup().set_menu_button(...)`
+- `client.app().setup().set_menu_button(...)`
+- `client.app().web_app().set_chat_menu_button(...)`
+- `context.control().setup().set_menu_button(...)`
 
 Instead of building raw advanced requests in application code.
 

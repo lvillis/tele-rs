@@ -31,9 +31,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gifts.as_object().map_or(0, |obj| obj.len())
     );
 
-    let sent = client.ergo().send_text(chat_id, text).await?;
+    let sent = client.app().send_text(chat_id, text).await?;
     println!(
-        "ergo: sent message id={} chat_id={}",
+        "app: sent message id={} chat_id={}",
         sent.message_id.0, sent.chat.id
     );
 

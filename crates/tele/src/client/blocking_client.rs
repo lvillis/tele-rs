@@ -17,8 +17,8 @@ use crate::{Error, Result};
 
 use super::config::BuilderParts;
 use super::{
-    BlockingErgoApi, BlockingRawApi, BlockingStartupApi, BlockingTypedApi, BlockingWebAppApi,
-    ClientBuilder, ClientObservability, RequestDefaults, emit_client_metric,
+    BlockingAppApi, BlockingRawApi, BlockingTypedApi, ClientBuilder, ClientObservability,
+    RequestDefaults, emit_client_metric,
 };
 
 #[derive(Clone)]
@@ -101,19 +101,9 @@ impl BlockingClient {
         BlockingTypedApi::new(self.clone())
     }
 
-    /// High-level ergonomic helpers for common bot workflows.
-    pub fn ergo(&self) -> BlockingErgoApi {
-        BlockingErgoApi::new(self.clone())
-    }
-
-    /// Startup/bootstrap helpers for commands, menu buttons and bootstrap plans.
-    pub fn startup(&self) -> BlockingStartupApi {
-        BlockingStartupApi::new(self.clone())
-    }
-
-    /// Stable high-level Web App helpers.
-    pub fn web_app(&self) -> BlockingWebAppApi {
-        BlockingWebAppApi::new(self.clone())
+    /// Stable app-facing high-level facade.
+    pub fn app(&self) -> BlockingAppApi {
+        BlockingAppApi::new(self.clone())
     }
 
     pub fn call_method<R, P>(&self, method: &str, payload: &P) -> Result<R>

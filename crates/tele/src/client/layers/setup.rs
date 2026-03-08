@@ -97,12 +97,12 @@ fn handle_get_me_failure(
 
 #[cfg(feature = "_async")]
 #[derive(Clone)]
-pub struct StartupApi {
+pub struct SetupApi {
     client: Client,
 }
 
 #[cfg(feature = "_async")]
-impl StartupApi {
+impl SetupApi {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
     }
@@ -475,12 +475,12 @@ impl StartupApi {
 
 #[cfg(feature = "_blocking")]
 #[derive(Clone)]
-pub struct BlockingStartupApi {
+pub struct BlockingSetupApi {
     client: BlockingClient,
 }
 
 #[cfg(feature = "_blocking")]
-impl BlockingStartupApi {
+impl BlockingSetupApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
     }

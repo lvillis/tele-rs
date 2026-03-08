@@ -47,12 +47,12 @@ impl WebhookRunner {
         self
     }
 
-    /// Runs startup bootstrap and prepares webhook router state.
+    /// Runs setup bootstrap and prepares webhook router state.
     pub async fn bootstrap(&self, plan: &BootstrapPlan) -> BootstrapOutcome {
         super::bootstrap_router(&self.client, &self.router, plan).await
     }
 
-    /// Runs startup bootstrap with retry/backoff and prepares webhook router state.
+    /// Runs setup bootstrap with retry/backoff and prepares webhook router state.
     pub async fn bootstrap_with_retry(
         &self,
         plan: &BootstrapPlan,

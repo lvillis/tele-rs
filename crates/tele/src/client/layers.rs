@@ -22,31 +22,33 @@ use crate::BlockingClient;
 #[cfg(feature = "_async")]
 use crate::Client;
 
+mod app;
 mod bootstrap;
-mod ergo;
+mod menu;
 mod raw;
-mod startup;
+mod setup;
 mod support;
 mod typed;
 mod web_app;
 
+#[cfg(feature = "_async")]
+pub use app::AppApi;
+#[cfg(feature = "_blocking")]
+pub use app::BlockingAppApi;
 pub use bootstrap::{
     BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
     BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
-    BootstrapStepStatus, BootstrapSyncStepReport, MenuButtonConfig, WebAppQueryPayload,
+    BootstrapStepStatus, BootstrapSyncStepReport, WebAppQueryPayload,
 };
-#[cfg(feature = "_blocking")]
-pub use ergo::BlockingErgoApi;
-#[cfg(feature = "_async")]
-pub use ergo::ErgoApi;
+pub use menu::MenuButtonConfig;
 #[cfg(feature = "_blocking")]
 pub use raw::BlockingRawApi;
 #[cfg(feature = "_async")]
 pub use raw::RawApi;
 #[cfg(feature = "_blocking")]
-pub use startup::BlockingStartupApi;
+pub use setup::BlockingSetupApi;
 #[cfg(feature = "_async")]
-pub use startup::StartupApi;
+pub use setup::SetupApi;
 #[cfg(feature = "bot")]
 pub(crate) use support::reply_chat_id;
 #[cfg(feature = "_blocking")]

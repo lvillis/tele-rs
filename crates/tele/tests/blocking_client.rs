@@ -113,7 +113,7 @@ async fn blocking_web_app_facade_handles_menu_button_and_query_answer() -> Resul
     let client = BlockingClient::builder(server.base_url())?
         .bot_token("123:abc")?
         .build_blocking()?;
-    let applied = client.web_app().set_chat_menu_button(
+    let applied = client.app().web_app().set_chat_menu_button(
         42,
         "Open Mini App",
         "https://example.com/mini-app",
@@ -123,6 +123,7 @@ async fn blocking_web_app_facade_handles_menu_button_and_query_answer() -> Resul
     let web_app_data = WebAppData::new("{\"query_id\":\"query-77\",\"item\":\"tea\"}", "Open");
     let result = tele::types::InlineQueryResult::article("blocking-77", "Blocking Facade", "ok")?;
     let sent = client
+        .app()
         .web_app()
         .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)?;
     assert_eq!(sent.inline_message_id, "inline-blocking-77");
@@ -149,7 +150,7 @@ async fn blocking_typed_layer_advanced_request_success() -> Result<(), DynError>
 }
 
 #[tokio::test]
-async fn blocking_ergo_send_text_success() -> Result<(), DynError> {
+async fn blocking_app_send_text_success() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":11,"date":1710000000,"chat":{"id":1,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, response)?;
 
@@ -157,7 +158,7 @@ async fn blocking_ergo_send_text_success() -> Result<(), DynError> {
         .bot_token("123:abc")?
         .build_blocking()?;
 
-    let sent = client.ergo().send_text(1_i64, "hello")?;
+    let sent = client.app().send_text(1_i64, "hello")?;
     assert_eq!(sent.message_id.0, 11);
 
     join_server(handle)?;

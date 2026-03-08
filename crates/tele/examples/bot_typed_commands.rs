@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let control = BotControl::new(client.clone());
-    let _ = control.startup().set_typed_commands::<Command>().await?;
+    let _ = control.setup().set_typed_commands::<Command>().await?;
 
     router.fallback(|context: BotContext, update: Update| async move {
         let text = update.text().unwrap_or("unsupported update");

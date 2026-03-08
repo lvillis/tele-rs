@@ -18,8 +18,8 @@ use crate::{Error, Result};
 
 use super::config::BuilderParts;
 use super::{
-    ClientBuilder, ClientObservability, ErgoApi, RawApi, RequestDefaults, StartupApi, TypedApi,
-    WebAppApi, emit_client_metric,
+    AppApi, ClientBuilder, ClientObservability, RawApi, RequestDefaults, TypedApi,
+    emit_client_metric,
 };
 
 #[derive(Clone)]
@@ -102,19 +102,9 @@ impl Client {
         TypedApi::new(self.clone())
     }
 
-    /// High-level ergonomic helpers for common bot workflows.
-    pub fn ergo(&self) -> ErgoApi {
-        ErgoApi::new(self.clone())
-    }
-
-    /// Startup/bootstrap helpers for commands, menu buttons and bootstrap plans.
-    pub fn startup(&self) -> StartupApi {
-        StartupApi::new(self.clone())
-    }
-
-    /// Stable high-level Web App helpers.
-    pub fn web_app(&self) -> WebAppApi {
-        WebAppApi::new(self.clone())
+    /// Stable app-facing high-level facade.
+    pub fn app(&self) -> AppApi {
+        AppApi::new(self.clone())
     }
 
     pub async fn call_method<R, P>(&self, method: &str, payload: &P) -> Result<R>

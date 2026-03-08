@@ -19,14 +19,14 @@ impl BotContext {
         &self.client
     }
 
-    /// Returns a control-plane facade for startup/bootstrap helpers.
+    /// Returns a control-plane facade for setup/bootstrap helpers.
     pub fn control(&self) -> BotControl {
         BotControl::new(self.client.clone())
     }
 
     /// Returns the stable high-level Web App facade scoped to this bot client.
     pub fn web_app(&self) -> crate::client::WebAppApi {
-        self.client.web_app()
+        self.client.app().web_app()
     }
 
     pub fn request_state(&self) -> &RequestState {

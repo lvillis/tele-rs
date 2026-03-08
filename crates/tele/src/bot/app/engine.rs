@@ -63,12 +63,12 @@ where
         Ok(self)
     }
 
-    /// Runs startup bootstrap and prepares router runtime state.
+    /// Runs setup bootstrap and prepares router runtime state.
     pub async fn bootstrap(&self, plan: &BootstrapPlan) -> BootstrapOutcome {
         super::bootstrap_router(&self.client, &self.router, plan).await
     }
 
-    /// Runs startup bootstrap with retry/backoff and prepares router state.
+    /// Runs setup bootstrap with retry/backoff and prepares router state.
     pub async fn bootstrap_with_retry(
         &self,
         plan: &BootstrapPlan,
@@ -629,12 +629,12 @@ where
         Ok(self)
     }
 
-    /// Runs startup bootstrap and prepares router runtime state.
+    /// Runs setup bootstrap and prepares router runtime state.
     pub async fn bootstrap(&self, plan: &BootstrapPlan) -> BootstrapOutcome {
         self.engine.bootstrap(plan).await
     }
 
-    /// Runs startup bootstrap with retry/backoff and prepares router state.
+    /// Runs setup bootstrap with retry/backoff and prepares router state.
     pub async fn bootstrap_with_retry(
         &self,
         plan: &BootstrapPlan,

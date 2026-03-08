@@ -162,12 +162,12 @@ async fn api_error_exposes_retry_after() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn ergo_send_text_success() -> Result<(), DynError> {
+async fn app_send_text_success() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":7,"date":1710000000,"chat":{"id":1,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, response)?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
-    let sent = client.ergo().send_text(1_i64, "hello").await?;
+    let sent = client.app().send_text(1_i64, "hello").await?;
     assert_eq!(sent.message_id.0, 7);
 
     join_server(handle)?;
@@ -175,7 +175,7 @@ async fn ergo_send_text_success() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn ergo_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError> {
+async fn app_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":8,"date":1710000001,"chat":{"id":7001,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server_with_checks(
         "/bot123:abc/sendMessage",
@@ -195,7 +195,7 @@ async fn ergo_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError
         }
     }))?;
 
-    let sent = client.ergo().reply_text(&update, "hello").await?;
+    let sent = client.app().reply_text(&update, "hello").await?;
     assert_eq!(sent.message_id.0, 8);
 
     join_server(handle)?;
@@ -293,7 +293,7 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
         )?])?)
         .menu_button(MenuButtonConfig::commands());
 
-    let outcome = client.startup().bootstrap(&plan).await;
+    let outcome = client.app().setup().bootstrap(&plan).await;
     assert!(outcome.is_success());
     let Some(commands) = outcome.report.commands.as_ref() else {
         return Err("expected commands step report".into());
@@ -336,7 +336,7 @@ impl tele::bot::BotCommands for DemoCommand {
 
 #[cfg(feature = "bot")]
 #[tokio::test]
-async fn startup_set_typed_commands_with_scope_and_language() -> Result<(), DynError> {
+async fn setup_set_typed_commands_with_scope_and_language() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     const CHECKS: [&str; 4] = [
         "\"commands\":[{\"command\":\"start\",\"description\":\"start command\"}]",
@@ -349,7 +349,8 @@ async fn startup_set_typed_commands_with_scope_and_language() -> Result<(), DynE
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
-        .startup()
+        .app()
+        .setup()
         .set_typed_commands_with_options::<DemoCommand>(
             Some(BotCommandScope::AllPrivateChats),
             Some("zh-hans".to_owned()),
@@ -372,7 +373,8 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
     let commands = SetMyCommandsRequest::new(vec![BotCommand::new("start", "start bot")?])?;
     let plan = BootstrapPlan::new().commands_request(commands);
     let outcome = client
-        .startup()
+        .app()
+        .setup()
         .bootstrap_with_retry(
             &plan,
             BootstrapRetryPolicy {
@@ -393,7 +395,7 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn startup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(), DynError> {
+async fn setup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
         .request_timeout(Duration::from_millis(40))
@@ -401,7 +403,8 @@ async fn startup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(
         .build()?;
     let plan = BootstrapPlan::new().warn_and_continue_on_retryable_get_me();
     let outcome = client
-        .startup()
+        .app()
+        .setup()
         .bootstrap_with_retry(
             &plan,
             BootstrapRetryPolicy {
@@ -437,7 +440,7 @@ async fn startup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(
 }
 
 #[tokio::test]
-async fn startup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
+async fn setup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
     let script = vec![
         (
             "/bot123:abc/getMyCommands",
@@ -461,7 +464,8 @@ async fn startup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
         .menu_button(MenuButtonConfig::commands());
 
     let outcome = client
-        .startup()
+        .app()
+        .setup()
         .bootstrap_with_retry(&plan, BootstrapRetryPolicy::default())
         .await;
 
@@ -509,6 +513,7 @@ async fn web_app_answer_query_from_payload() -> Result<(), DynError> {
     let web_app_data = WebAppData::new("{\"query_id\":\"query-42\",\"item\":\"coffee\"}", "Open");
     let result = InlineQueryResult::article("r-42", "From Payload", "ok")?;
     let sent = client
+        .app()
         .web_app()
         .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
@@ -539,6 +544,7 @@ async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), Dyn
         .bot_token("123:abc")?
         .build()?;
     let applied = client
+        .app()
         .web_app()
         .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
         .await?;
@@ -547,6 +553,7 @@ async fn web_app_facade_handles_menu_button_and_query_answer() -> Result<(), Dyn
     let web_app_data = WebAppData::new("{\"query_id\":\"query-99\",\"item\":\"tea\"}", "Open");
     let result = InlineQueryResult::article("article-99", "Facade Answer", "done")?;
     let sent = client
+        .app()
         .web_app()
         .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
@@ -570,6 +577,7 @@ async fn web_app_set_chat_menu_button_uses_high_level_helper() -> Result<(), Dyn
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let applied = client
+        .app()
         .web_app()
         .set_chat_menu_button(42, "Open Mini App", "https://example.com/mini-app")
         .await?;

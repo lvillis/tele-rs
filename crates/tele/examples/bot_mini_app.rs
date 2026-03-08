@@ -43,7 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let _ = client
-        .startup()
+        .app()
+        .setup()
         .set_menu_button(MenuButtonConfig::for_chat_web_app(
             chat_id,
             "Open Mini App",

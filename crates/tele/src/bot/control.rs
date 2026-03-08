@@ -15,14 +15,14 @@ impl BotControl {
         &self.client
     }
 
-    /// Startup/bootstrap facade for app initialization flows.
-    pub fn startup(&self) -> crate::client::StartupApi {
-        self.client.startup()
+    /// App setup facade for commands, menu buttons and bootstrap.
+    pub fn setup(&self) -> crate::client::SetupApi {
+        self.client.app().setup()
     }
 
     /// Stable Web App facade for menu button setup and query responses.
     pub fn web_app(&self) -> crate::client::WebAppApi {
-        self.client.web_app()
+        self.client.app().web_app()
     }
 
     /// Spawns a reliable outbox worker for send-side retry, throttling and idempotency.
@@ -30,7 +30,7 @@ impl BotControl {
         BotOutbox::spawn(self.client.clone(), config)
     }
 
-    /// Runs startup bootstrap and prepares router command-target state when `getMe` succeeded.
+    /// Runs setup bootstrap and prepares router command-target state when `getMe` succeeded.
     pub async fn bootstrap_router(
         &self,
         router: &crate::bot::Router,
@@ -48,14 +48,14 @@ impl BotControl {
         .await
     }
 
-    /// Runs startup bootstrap with retry/backoff and prepares router state when possible.
+    /// Runs setup bootstrap with retry/backoff and prepares router state when possible.
     pub async fn bootstrap_router_with_retry(
         &self,
         router: &crate::bot::Router,
         plan: &BootstrapPlan,
         policy: BootstrapRetryPolicy,
     ) -> BootstrapOutcome {
-        let mut outcome = self.startup().bootstrap_with_retry(plan, policy).await;
+        let mut outcome = self.setup().bootstrap_with_retry(plan, policy).await;
         if outcome.error.is_some() {
             return outcome;
         }

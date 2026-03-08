@@ -48,10 +48,12 @@ pub use auth::{
 pub use client::BlockingClient;
 #[cfg(feature = "_async")]
 pub use client::Client;
+#[cfg(feature = "_async")]
+pub use client::{AppApi, RawApi, SetupApi, TypedApi, WebAppApi};
 #[cfg(feature = "_blocking")]
-pub use client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
+pub use client::{BlockingAppApi, BlockingRawApi, BlockingTypedApi};
 #[cfg(feature = "_blocking")]
-pub use client::{BlockingStartupApi, BlockingWebAppApi};
+pub use client::{BlockingSetupApi, BlockingWebAppApi};
 pub use client::{
     BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
     BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
@@ -59,8 +61,6 @@ pub use client::{
     WebAppQueryPayload,
 };
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
-#[cfg(feature = "_async")]
-pub use client::{ErgoApi, RawApi, StartupApi, TypedApi, WebAppApi};
 pub use error::{Error, ErrorClass, Result};
 #[cfg(feature = "macros")]
 pub use tele_macros::BotCommands;
