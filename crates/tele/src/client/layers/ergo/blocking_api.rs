@@ -109,23 +109,21 @@ impl BlockingErgoApi {
 
     /// Reads the default menu button configuration.
     pub fn get_menu_button(&self) -> Result<MenuButton> {
-        self.client.advanced().get_chat_menu_button_typed(
-            &crate::types::advanced::AdvancedGetChatMenuButtonRequest::new(),
-        )
+        self.client
+            .advanced()
+            .get_chat_menu_button_typed(&get_default_menu_button_request())
     }
 
     /// Reads the menu button configuration for a specific chat.
     pub fn get_chat_menu_button(&self, chat_id: i64) -> Result<MenuButton> {
-        let request = crate::types::advanced::AdvancedGetChatMenuButtonRequest {
-            chat_id: Some(chat_id),
-        };
+        let request = get_chat_menu_button_request(chat_id);
         self.client.advanced().get_chat_menu_button_typed(&request)
     }
 
     /// Applies a menu button configuration without dropping into `advanced()`.
     pub fn set_menu_button(&self, config: impl Into<MenuButtonConfig>) -> Result<bool> {
         let config = config.into();
-        let request: crate::types::advanced::AdvancedSetChatMenuButtonRequest = (&config).into();
+        let request = set_menu_button_request(&config);
         self.client.advanced().set_chat_menu_button_typed(&request)
     }
 
@@ -184,7 +182,7 @@ impl BlockingErgoApi {
         policy: BootstrapRetryPolicy,
     ) -> Result<bool> {
         let config = config.into();
-        let request: crate::types::advanced::AdvancedSetChatMenuButtonRequest = (&config).into();
+        let request = set_menu_button_request(&config);
         retry_blocking(policy, || {
             self.client.advanced().set_chat_menu_button_typed(&request)
         })
@@ -205,44 +203,32 @@ impl BlockingErgoApi {
             let get_request = commands_get_request(commands);
             let current =
                 retry_fetch_blocking(policy, || self.client.bot().get_my_commands(&get_request))?;
-            if current
-                .as_ref()
-                .is_some_and(|value| value == &commands.commands)
-            {
-                report.commands_applied = Some(false);
-                report.commands_synced = Some(true);
+            if commands_in_sync(current.as_ref(), commands) {
+                mark_commands_unchanged(&mut report);
             } else {
                 let applied =
                     retry_blocking(policy, || self.client.bot().set_my_commands(commands))?;
-                report.commands_applied = Some(applied);
-                report.commands_synced = Some(applied);
+                mark_commands_applied(&mut report, applied);
             }
         }
         if let Some(menu_button) = plan.menu_button.as_ref() {
             let get_request: crate::types::advanced::AdvancedGetChatMenuButtonRequest =
                 menu_button.into();
-            let set_request: crate::types::advanced::AdvancedSetChatMenuButtonRequest =
-                menu_button.into();
-            let desired_button = menu_button.menu_button.clone();
+            let set_request = set_menu_button_request(menu_button);
             let current = retry_fetch_blocking(policy, || {
                 self.client
                     .advanced()
                     .get_chat_menu_button_typed(&get_request)
             })?;
-            if current
-                .as_ref()
-                .is_some_and(|value| value == &desired_button)
-            {
-                report.menu_button_applied = Some(false);
-                report.menu_button_synced = Some(true);
+            if menu_button_in_sync(current.as_ref(), menu_button) {
+                mark_menu_button_unchanged(&mut report);
             } else {
                 let applied = retry_blocking(policy, || {
                     self.client
                         .advanced()
                         .set_chat_menu_button_typed(&set_request)
                 })?;
-                report.menu_button_applied = Some(applied);
-                report.menu_button_synced = Some(applied);
+                mark_menu_button_applied(&mut report, applied);
             }
         }
 

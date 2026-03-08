@@ -47,6 +47,52 @@ where
     ))
 }
 
+fn get_default_menu_button_request() -> crate::types::advanced::AdvancedGetChatMenuButtonRequest {
+    crate::types::advanced::AdvancedGetChatMenuButtonRequest::new()
+}
+
+fn get_chat_menu_button_request(
+    chat_id: i64,
+) -> crate::types::advanced::AdvancedGetChatMenuButtonRequest {
+    crate::types::advanced::AdvancedGetChatMenuButtonRequest {
+        chat_id: Some(chat_id),
+    }
+}
+
+fn set_menu_button_request(
+    config: &MenuButtonConfig,
+) -> crate::types::advanced::AdvancedSetChatMenuButtonRequest {
+    config.into()
+}
+
+fn commands_in_sync(current: Option<&Vec<BotCommand>>, commands: &SetMyCommandsRequest) -> bool {
+    current.is_some_and(|value| value == &commands.commands)
+}
+
+fn menu_button_in_sync(current: Option<&MenuButton>, menu_button: &MenuButtonConfig) -> bool {
+    current.is_some_and(|value| value == &menu_button.menu_button)
+}
+
+fn mark_commands_applied(report: &mut BootstrapReport, applied: bool) {
+    report.commands_applied = Some(applied);
+    report.commands_synced = Some(applied);
+}
+
+fn mark_commands_unchanged(report: &mut BootstrapReport) {
+    report.commands_applied = Some(false);
+    report.commands_synced = Some(true);
+}
+
+fn mark_menu_button_applied(report: &mut BootstrapReport, applied: bool) {
+    report.menu_button_applied = Some(applied);
+    report.menu_button_synced = Some(applied);
+}
+
+fn mark_menu_button_unchanged(report: &mut BootstrapReport) {
+    report.menu_button_applied = Some(false);
+    report.menu_button_synced = Some(true);
+}
+
 fn single_attempt_bootstrap_policy() -> BootstrapRetryPolicy {
     BootstrapRetryPolicy {
         max_attempts: 1,

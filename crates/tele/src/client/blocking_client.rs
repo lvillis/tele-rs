@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -15,7 +16,10 @@ use crate::types::upload::UploadFile;
 use crate::{Error, Result};
 
 use super::config::BuilderParts;
-use super::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi, ClientBuilder, RequestDefaults};
+use super::{
+    BlockingErgoApi, BlockingRawApi, BlockingTypedApi, ClientBuilder, ClientObservability,
+    RequestDefaults, emit_client_metric,
+};
 
 #[derive(Clone)]
 pub struct BlockingClient {
@@ -25,6 +29,7 @@ pub struct BlockingClient {
 struct Inner {
     auth: Auth,
     defaults: RequestDefaults,
+    observability: ClientObservability,
     transport: BlockingTransport,
 }
 
@@ -39,6 +44,7 @@ impl BlockingClient {
             auth,
             defaults,
             default_headers,
+            observability,
         } = builder.into_parts();
 
         let transport = BlockingTransport::new(base_url, &defaults, &default_headers)?;
@@ -47,6 +53,7 @@ impl BlockingClient {
             inner: Arc::new(Inner {
                 auth,
                 defaults,
+                observability,
                 transport,
             }),
         })
@@ -105,9 +112,15 @@ impl BlockingClient {
         P: Serialize + ?Sized,
     {
         let token = self.require_token()?;
-        self.inner
-            .transport
-            .execute_json(method, token, payload, &self.inner.defaults)
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("tele.client.request", method).entered();
+        let started_at = Instant::now();
+        let result =
+            self.inner
+                .transport
+                .execute_json(method, token, payload, &self.inner.defaults);
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     pub fn call_method_no_params<R>(&self, method: &str) -> Result<R>
@@ -115,9 +128,15 @@ impl BlockingClient {
         R: DeserializeOwned,
     {
         let token = self.require_token()?;
-        self.inner
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("tele.client.request", method).entered();
+        let started_at = Instant::now();
+        let result = self
+            .inner
             .transport
-            .execute_empty(method, token, &self.inner.defaults)
+            .execute_empty(method, token, &self.inner.defaults);
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     pub fn call_method_multipart<R, P>(
@@ -133,17 +152,47 @@ impl BlockingClient {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
-        self.inner.transport.execute_multipart(
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("tele.client.request", method).entered();
+        let started_at = Instant::now();
+        let result = self.inner.transport.execute_multipart(
             method,
             token,
             &fields,
             file_field_name,
             file,
             &self.inner.defaults,
-        )
+        );
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
+    }
+
+    fn emit_metric<R>(&self, method: &str, latency: Duration, result: &Result<R>) {
+        let (success, status, classification, retryable, request_id) = match result {
+            Ok(_) => (true, None, None, false, None),
+            Err(error) => (
+                false,
+                error.status().map(|status| status.as_u16()),
+                Some(error.classification()),
+                error.is_retryable(),
+                error.request_id().map(ToOwned::to_owned),
+            ),
+        };
+        emit_client_metric(
+            &self.inner.observability,
+            super::ClientMetric {
+                method: method.to_owned(),
+                success,
+                latency,
+                status,
+                classification,
+                retryable,
+                request_id,
+            },
+        );
     }
 }

@@ -1,10 +1,9 @@
 #![cfg(feature = "_async")]
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
@@ -12,158 +11,25 @@ use tele::types::{
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
-    BootstrapPlan, BootstrapRetryPolicy, Client, Error, ErrorClass, MenuButtonConfig, UploadFile,
+    BootstrapPlan, BootstrapRetryPolicy, Client, ClientMetric, Error, ErrorClass, MenuButtonConfig,
+    UploadFile,
 };
 
 #[cfg(feature = "bot")]
 use tele::types::BotCommandScope;
 
-type DynError = Box<dyn std::error::Error>;
-type ServerHandle = thread::JoinHandle<Result<(), String>>;
-
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|pos| pos + 4)
-}
-
-fn parse_content_length(header: &str) -> Result<usize, String> {
-    for line in header.lines() {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        if name.eq_ignore_ascii_case("content-length") {
-            let trimmed = value.trim();
-            return trimmed
-                .parse::<usize>()
-                .map_err(|error| format!("invalid content-length `{trimmed}`: {error}"));
-        }
-    }
-
-    Ok(0)
-}
-
-fn read_full_http_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
-    let mut request = Vec::with_capacity(16 * 1024);
-    let mut chunk = [0_u8; 8 * 1024];
-    let mut expected_total_bytes = None;
-
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(read_bytes) => {
-                request.extend_from_slice(&chunk[..read_bytes]);
-
-                if expected_total_bytes.is_none()
-                    && let Some(header_end) = find_header_end(&request)
-                {
-                    let header = String::from_utf8_lossy(&request[..header_end]);
-                    let content_length = parse_content_length(&header)?;
-                    expected_total_bytes = Some(header_end + content_length);
-                }
-
-                if let Some(expected) = expected_total_bytes
-                    && request.len() >= expected
-                {
-                    break;
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                ) =>
-            {
-                if let Some(expected) = expected_total_bytes
-                    && request.len() >= expected
-                {
-                    break;
-                }
-                return Err(format!("timed out while reading request: {error}"));
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-
-    if let Some(expected) = expected_total_bytes
-        && request.len() < expected
-    {
-        return Err(format!(
-            "incomplete request body: expected {expected} bytes, got {}",
-            request.len()
-        ));
-    }
-
-    Ok(request)
-}
-
-fn accept_with_timeout(
-    listener: &TcpListener,
-    timeout: Duration,
-) -> Result<(TcpStream, std::net::SocketAddr), String> {
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        match listener.accept() {
-            Ok((stream, address)) => {
-                stream
-                    .set_nonblocking(false)
-                    .map_err(|error| error.to_string())?;
-                return Ok((stream, address));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if std::time::Instant::now() >= deadline {
-                    return Err(format!(
-                        "timed out waiting for request after {}ms",
-                        timeout.as_millis()
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-}
+type DynError = Box<dyn std::error::Error + Send + Sync>;
+type TestServer = FakeTelegramServer;
 
 fn spawn_server(
     expected_path: &'static str,
     response_status: u16,
     response_body: &'static str,
-) -> Result<(String, ServerHandle), DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .map_err(|error| error.to_string())?;
-
-        let buffer = read_full_http_request(&mut stream)?;
-        let request = String::from_utf8_lossy(&buffer);
-
-        let expected_request_line = format!("POST {expected_path} HTTP/1.1");
-        if !request.contains(&expected_request_line) {
-            return Err(format!("unexpected request line: {request}"));
-        }
-
-        let response = format!(
-            "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-            response_body.len()
-        );
-
-        stream
-            .write_all(response.as_bytes())
-            .map_err(|error| error.to_string())?;
-        stream.flush().map_err(|error| error.to_string())?;
-
-        Ok(())
-    });
-
-    Ok((format!("http://{address}"), handle))
+) -> Result<(String, TestServer), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post(expected_path).respond_json(response_status, response_body),
+    )?;
+    Ok((server.base_url().to_owned(), server))
 }
 
 fn spawn_server_with_checks(
@@ -171,101 +37,64 @@ fn spawn_server_with_checks(
     response_status: u16,
     response_body: &'static str,
     required_substrings: &'static [&'static str],
-) -> Result<(String, ServerHandle), DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .map_err(|error| error.to_string())?;
-
-        let buffer = read_full_http_request(&mut stream)?;
-        let request = String::from_utf8_lossy(&buffer);
-        let request_lower = request.to_ascii_lowercase();
-
-        let expected_request_line = format!("POST {expected_path} HTTP/1.1");
-        let mut check_error = None;
-        if !request.contains(&expected_request_line) {
-            check_error = Some(format!("unexpected request line: {request}"));
-        }
-
-        if check_error.is_none() {
-            for required in required_substrings {
-                if !request.contains(required)
-                    && !request_lower.contains(&required.to_ascii_lowercase())
-                {
-                    check_error = Some(format!(
-                        "request does not contain required text `{required}`"
-                    ));
-                    break;
-                }
-            }
-        }
-
-        let response = format!(
-            "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-            response_body.len()
-        );
-
-        stream
-            .write_all(response.as_bytes())
-            .map_err(|error| error.to_string())?;
-        stream.flush().map_err(|error| error.to_string())?;
-
-        if let Some(error) = check_error {
-            return Err(error);
-        }
-
-        Ok(())
-    });
-
-    Ok((format!("http://{address}"), handle))
+) -> Result<(String, TestServer), DynError> {
+    let mut expectation =
+        RequestExpectation::post(expected_path).respond_json(response_status, response_body);
+    for required in required_substrings {
+        expectation = expectation.contains_case_insensitive(*required);
+    }
+    let server = FakeTelegramServer::single(expectation)?;
+    Ok((server.base_url().to_owned(), server))
 }
 
 fn spawn_server_script(
     script: Vec<(&'static str, u16, &'static str)>,
-) -> Result<(String, ServerHandle), DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-
-    let handle = thread::spawn(move || {
-        for (expected_path, response_status, response_body) in script {
-            let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .map_err(|error| error.to_string())?;
-
-            let buffer = read_full_http_request(&mut stream)?;
-            let request = String::from_utf8_lossy(&buffer);
-            let expected_request_line = format!("POST {expected_path} HTTP/1.1");
-            if !request.contains(&expected_request_line) {
-                return Err(format!("unexpected request line: {request}"));
-            }
-
-            let response = format!(
-                "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-                response_body.len()
-            );
-
-            stream
-                .write_all(response.as_bytes())
-                .map_err(|error| error.to_string())?;
-            stream.flush().map_err(|error| error.to_string())?;
-        }
-
-        Ok(())
-    });
-
-    Ok((format!("http://{address}"), handle))
+) -> Result<(String, TestServer), DynError> {
+    let expectations = script
+        .into_iter()
+        .map(|(expected_path, response_status, response_body)| {
+            RequestExpectation::post(expected_path).respond_json(response_status, response_body)
+        })
+        .collect();
+    let server = FakeTelegramServer::start(expectations)?;
+    Ok((server.base_url().to_owned(), server))
 }
 
-fn join_server(handle: ServerHandle) -> Result<(), DynError> {
-    match handle.join() {
-        Ok(result) => result.map_err(Into::into),
-        Err(_) => Err("server thread panicked".into()),
-    }
+fn join_server(server: TestServer) -> Result<(), DynError> {
+    let _ = server.finish()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_metric_hook_records_method_latency() -> Result<(), DynError> {
+    let response =
+        r#"{"ok":true,"result":{"id":42,"is_bot":true,"first_name":"tele","username":"tele_bot"}}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getMe", 200, response)?;
+    let metrics = Arc::new(Mutex::new(Vec::<ClientMetric>::new()));
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .on_metric({
+            let metrics = Arc::clone(&metrics);
+            move |metric| {
+                if let Ok(mut captured) = metrics.lock() {
+                    captured.push(metric.clone());
+                }
+            }
+        })
+        .build()?;
+
+    let _ = client.bot().get_me().await?;
+    join_server(handle)?;
+
+    let captured = metrics.lock().map_err(|_| "client metric mutex poisoned")?;
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].method, "getMe");
+    assert!(captured[0].success);
+    assert!(captured[0].latency >= Duration::ZERO);
+    assert_eq!(captured[0].classification, None);
+
+    Ok(())
 }
 
 #[tokio::test]

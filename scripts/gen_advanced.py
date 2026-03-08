@@ -8,13 +8,15 @@ Spec lookup order:
 
 Outputs:
 - `crates/tele/src/types/advanced.rs`
-- `crates/tele/src/api/advanced.rs`
+- `crates/tele/src/types/advanced_<domain>.rs`
+- `crates/tele/src/api/advanced_methods.inc.rs`
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +27,17 @@ DEFAULT_SPEC_PATHS = [
     ROOT / "scripts/spec" / SPEC_FILE,
 ]
 TYPES_OUT = ROOT / "crates/tele/src/types/advanced.rs"
-API_OUT = ROOT / "crates/tele/src/api/advanced.rs"
+API_METHODS_OUT = ROOT / "crates/tele/src/api/advanced_methods.inc.rs"
+TYPE_DOMAIN_DIR = ROOT / "crates/tele/src/types"
+DOMAIN_ORDER = [
+    "business",
+    "forum",
+    "gifts",
+    "payments",
+    "stickers",
+    "stories",
+    "misc",
+]
 
 
 def resolve_spec_path() -> Path:
@@ -60,16 +72,28 @@ def typed_fn_name(fn_name: str) -> str:
     return f"{fn_name}_typed"
 
 
+def qualify_common_type(field_ty: str) -> str:
+    qualified = field_ty
+    replacements = {
+        "ChatId": "crate::types::common::ChatId",
+        "MessageId": "crate::types::common::MessageId",
+        "UserId": "crate::types::common::UserId",
+    }
+    for needle, replacement in replacements.items():
+        qualified = re.sub(rf"\b{needle}\b", replacement, qualified)
+    return qualified
+
+
 def ctor_arg_type(field_ty: str) -> str:
     if field_ty == "String":
         return "impl Into<String>"
-    if field_ty == "ChatId":
-        return "impl Into<ChatId>"
+    if field_ty == "crate::types::common::ChatId":
+        return "impl Into<crate::types::common::ChatId>"
     return field_ty
 
 
 def ctor_assign(field_name: str, field_ty: str) -> str:
-    if field_ty in {"String", "ChatId"}:
+    if field_ty in {"String", "crate::types::common::ChatId"}:
         return f"{field_name}: {field_name}.into()"
     return field_name
 
@@ -110,7 +134,7 @@ def map_raw_type(type_raw: str) -> str | None:
 
 
 def resolve_param_type(param: dict[str, Any]) -> str:
-    current = param["type_rust"]
+    current = qualify_common_type(param["type_rust"])
     if "Value" not in current:
         return current
 
@@ -203,14 +227,97 @@ def response_type(method: str, return_desc: str) -> str:
     return "Value"
 
 
-def generate_types(spec: dict[str, Any]) -> str:
-    methods: list[dict[str, Any]] = spec["methods"]
+def domain_for_method(fn_name: str) -> str:
+    if "business" in fn_name:
+        return "business"
+    if "forum" in fn_name:
+        return "forum"
+    if "gift" in fn_name or "star" in fn_name:
+        return "gifts"
+    if any(
+        marker in fn_name
+        for marker in ("invoice", "shipping", "pre_checkout", "passport")
+    ):
+        return "payments"
+    if "sticker" in fn_name or "emoji_status" in fn_name:
+        return "stickers"
+    if "story" in fn_name:
+        return "stories"
+    return "misc"
+
+
+def render_request(method: dict[str, Any]) -> str:
+    fn_name = method["fn_name"]
+    method_name = method["method"]
+    params: list[dict[str, Any]] = method["params"]
+    req_name = request_type_name(fn_name)
+    req_params = [p for p in params if p["required"]]
+    derive = "#[derive(Clone, Debug, Serialize)]"
+    if not req_params:
+        derive = "#[derive(Clone, Debug, Default, Serialize)]"
+
     out: list[str] = []
-    out.append("use serde::de::DeserializeOwned;")
-    out.append("use serde::Serialize;")
-    out.append("use serde_json::Value;")
+    out.append(f"/// Auto-generated request for `{method_name}`.")
+    out.append(derive)
+    out.append(f"pub struct {req_name} {{")
+    if params:
+        for p in params:
+            original_name = p["name"]
+            field_name = p["field_name"]
+            cleaned = field_name.removeprefix("r#")
+            field_ty = resolve_param_type(p)
+            if cleaned != original_name:
+                out.append(f"    #[serde(rename = \"{original_name}\")]")
+            if p["required"]:
+                out.append(f"    pub {field_name}: {field_ty},")
+            else:
+                out.append("    #[serde(default, skip_serializing_if = \"Option::is_none\")]")
+                out.append(f"    pub {field_name}: Option<{field_ty}>,")
+    out.append("}")
     out.append("")
-    out.append("use crate::types::common::{ChatId, MessageId, UserId};")
+
+    out.append(f"impl {req_name} {{")
+    if not params:
+        out.append("    pub fn new() -> Self {")
+        out.append("        Self {}")
+        out.append("    }")
+    elif req_params:
+        args = ", ".join(
+            f"{p['field_name']}: {ctor_arg_type(resolve_param_type(p))}" for p in req_params
+        )
+        out.append(f"    pub fn new({args}) -> Self {{")
+        out.append("        Self {")
+        req_names = {p["field_name"] for p in req_params}
+        for p in params:
+            field_name = p["field_name"]
+            field_ty = resolve_param_type(p)
+            if field_name in req_names:
+                out.append(f"            {ctor_assign(field_name, field_ty)},")
+            else:
+                out.append(f"            {field_name}: None,")
+        out.append("        }")
+        out.append("    }")
+    else:
+        out.append("    pub fn new() -> Self {")
+        out.append("        Self::default()")
+        out.append("    }")
+    out.append("}")
+    out.append("")
+
+    ret_ty = response_type(method_name, method.get("return_desc", ""))
+    out.append(f"impl AdvancedRequest for {req_name} {{")
+    out.append(f"    type Response = {ret_ty};")
+    out.append(f"    const METHOD: &'static str = \"{method_name}\";")
+    out.append("}")
+    out.append("")
+    return "\n".join(out)
+
+
+def generate_types_root() -> str:
+    out: list[str] = []
+    out.append("// Auto-generated by scripts/gen_advanced.py. Do not edit manually.")
+    out.append("use serde::Serialize;")
+    out.append("use serde::de::DeserializeOwned;")
     out.append("")
     out.append("/// Typed request marker for advanced API methods.")
     out.append("pub trait AdvancedRequest: Serialize {")
@@ -218,203 +325,67 @@ def generate_types(spec: dict[str, Any]) -> str:
     out.append("    const METHOD: &'static str;")
     out.append("}")
     out.append("")
+    for domain in DOMAIN_ORDER:
+        out.append(f"#[path = \"advanced_{domain}.rs\"]")
+        out.append(f"mod advanced_{domain};")
+    out.append("")
+    for domain in DOMAIN_ORDER:
+        out.append(f"pub use advanced_{domain}::*;")
+    out.append("")
+    return "\n".join(out)
 
-    for method in methods:
-        fn_name = method["fn_name"]
-        method_name = method["method"]
-        params: list[dict[str, Any]] = method["params"]
-        req_name = request_type_name(fn_name)
-        req_params = [p for p in params if p["required"]]
-        derive = "#[derive(Clone, Debug, Serialize)]"
-        if not req_params:
-            derive = "#[derive(Clone, Debug, Default, Serialize)]"
 
-        out.append(f"/// Auto-generated request for `{method_name}`.")
-        out.append(derive)
-        out.append(f"pub struct {req_name} {{")
-        if params:
-            for p in params:
-                original_name = p["name"]
-                field_name = p["field_name"]
-                cleaned = field_name.removeprefix("r#")
-                field_ty = resolve_param_type(p)
-                if cleaned != original_name:
-                    out.append(f"    #[serde(rename = \"{original_name}\")]")
-                if p["required"]:
-                    out.append(f"    pub {field_name}: {field_ty},")
-                else:
-                    out.append("    #[serde(default, skip_serializing_if = \"Option::is_none\")]")
-                    out.append(f"    pub {field_name}: Option<{field_ty}>,")
-        out.append("}")
+def generate_domain_module(methods: list[dict[str, Any]]) -> str:
+    body_parts = [render_request(method).rstrip() for method in methods]
+    body = "\n\n".join(part for part in body_parts if part)
+
+    out: list[str] = []
+    out.append("// Auto-generated by scripts/gen_advanced.py. Do not edit manually.")
+    out.append("use serde::Serialize;")
+    if "Value" in body:
+        out.append("use serde_json::Value;")
+    out.append("")
+    out.append("use super::AdvancedRequest;")
+    out.append("")
+    if body:
+        out.append(body)
         out.append("")
-
-        out.append(f"impl {req_name} {{")
-        if not params:
-            out.append("    pub fn new() -> Self {")
-            out.append("        Self {}")
-            out.append("    }")
-        elif req_params:
-            args = ", ".join(
-                f"{p['field_name']}: {ctor_arg_type(resolve_param_type(p))}" for p in req_params
-            )
-            out.append(f"    pub fn new({args}) -> Self {{")
-            out.append("        Self {")
-            req_names = {p["field_name"] for p in req_params}
-            for p in params:
-                field_name = p["field_name"]
-                field_ty = resolve_param_type(p)
-                if field_name in req_names:
-                    out.append(f"            {ctor_assign(field_name, field_ty)},")
-                else:
-                    out.append(f"            {field_name}: None,")
-            out.append("        }")
-            out.append("    }")
-        else:
-            out.append("    pub fn new() -> Self {")
-            out.append("        Self::default()")
-            out.append("    }")
-        out.append("}")
-        out.append("")
-
-        ret_ty = response_type(method_name, method.get("return_desc", ""))
-        out.append(f"impl AdvancedRequest for {req_name} {{")
-        out.append(f"    type Response = {ret_ty};")
-        out.append(f"    const METHOD: &'static str = \"{method_name}\";")
-        out.append("}")
-        out.append("")
-
     return "\n".join(out).rstrip() + "\n"
 
 
-def generate_api(spec: dict[str, Any]) -> str:
-    methods: list[dict[str, Any]] = spec["methods"]
-
-    entries = [
-        (
-            method["fn_name"],
-            typed_fn_name(method["fn_name"]),
-            method["method"],
-            request_type_name(method["fn_name"]),
-        )
-        for method in methods
-    ]
-
+def generate_api_methods(spec: dict[str, Any]) -> str:
     out: list[str] = []
-    out.append("use serde::de::DeserializeOwned;")
-    out.append("")
-    out.append("use crate::Result;")
-    out.append("use crate::types::advanced::*;")
-    out.append("")
-    out.append("#[cfg(feature = \"_blocking\")]")
-    out.append("use crate::BlockingClient;")
-    out.append("#[cfg(feature = \"_async\")]")
-    out.append("use crate::Client;")
-    out.append("")
-    out.append("#[cfg(feature = \"_async\")]")
-    out.append("macro_rules! define_async_methods {")
-    out.append("    ($(($fn_name:ident, $typed_name:ident, $method:literal, $request_ty:ty)),* $(,)?) => {")
-    out.append("        $(")
-    out.append("            pub async fn $fn_name<R>(&self, request: &$request_ty) -> Result<R>")
-    out.append("            where")
-    out.append("                R: DeserializeOwned,")
-    out.append("            {")
-    out.append("                self.client.call_method($method, request).await")
-    out.append("            }")
-    out.append("")
-    out.append("            pub async fn $typed_name(")
-    out.append("                &self,")
-    out.append("                request: &$request_ty,")
-    out.append("            ) -> Result<<$request_ty as AdvancedRequest>::Response> {")
-    out.append("                self.call_typed(request).await")
-    out.append("            }")
-    out.append("        )*")
+    out.append("// Auto-generated by scripts/gen_advanced.py. Do not edit manually.")
+    out.append("macro_rules! with_advanced_methods {")
+    out.append("    ($macro:ident) => {")
+    out.append("        $macro! {")
+    for method in spec["methods"]:
+        out.append(
+            f'            ({method["fn_name"]}, {typed_fn_name(method["fn_name"])}, "{method["method"]}", {request_type_name(method["fn_name"])}),'
+        )
+    out.append("        }")
     out.append("    };")
     out.append("}")
     out.append("")
-    out.append("#[cfg(feature = \"_blocking\")]")
-    out.append("macro_rules! define_blocking_methods {")
-    out.append("    ($(($fn_name:ident, $typed_name:ident, $method:literal, $request_ty:ty)),* $(,)?) => {")
-    out.append("        $(")
-    out.append("            pub fn $fn_name<R>(&self, request: &$request_ty) -> Result<R>")
-    out.append("            where")
-    out.append("                R: DeserializeOwned,")
-    out.append("            {")
-    out.append("                self.client.call_method($method, request)")
-    out.append("            }")
-    out.append("")
-    out.append("            pub fn $typed_name(")
-    out.append("                &self,")
-    out.append("                request: &$request_ty,")
-    out.append("            ) -> Result<<$request_ty as AdvancedRequest>::Response> {")
-    out.append("                self.call_typed(request)")
-    out.append("            }")
-    out.append("        )*")
-    out.append("    };")
-    out.append("}")
-    out.append("")
-    out.append("/// Additional Telegram Bot API methods with typed request models.")
-    out.append("#[cfg(feature = \"_async\")]")
-    out.append("#[derive(Clone)]")
-    out.append("pub struct AdvancedService {")
-    out.append("    client: Client,")
-    out.append("}")
-    out.append("")
-    out.append("#[cfg(feature = \"_async\")]")
-    out.append("impl AdvancedService {")
-    out.append("    pub(crate) fn new(client: Client) -> Self {")
-    out.append("        Self { client }")
-    out.append("    }")
-    out.append("")
-    out.append("    /// Calls advanced methods using request-associated response type.")
-    out.append("    pub async fn call_typed<Q>(&self, request: &Q) -> Result<Q::Response>")
-    out.append("    where")
-    out.append("        Q: AdvancedRequest,")
-    out.append("    {")
-    out.append("        self.client.call_method(Q::METHOD, request).await")
-    out.append("    }")
-    out.append("")
-    out.append("    define_async_methods! {")
-    for fn_name, typed_name, method_name, req_name in entries:
-        out.append(f"        ({fn_name}, {typed_name}, \"{method_name}\", {req_name}),")
-    out.append("    }")
-    out.append("}")
-    out.append("")
-    out.append("/// Blocking additional Telegram Bot API methods with typed request models.")
-    out.append("#[cfg(feature = \"_blocking\")]")
-    out.append("#[derive(Clone)]")
-    out.append("pub struct BlockingAdvancedService {")
-    out.append("    client: BlockingClient,")
-    out.append("}")
-    out.append("")
-    out.append("#[cfg(feature = \"_blocking\")]")
-    out.append("impl BlockingAdvancedService {")
-    out.append("    pub(crate) fn new(client: BlockingClient) -> Self {")
-    out.append("        Self { client }")
-    out.append("    }")
-    out.append("")
-    out.append("    /// Calls advanced methods using request-associated response type.")
-    out.append("    pub fn call_typed<Q>(&self, request: &Q) -> Result<Q::Response>")
-    out.append("    where")
-    out.append("        Q: AdvancedRequest,")
-    out.append("    {")
-    out.append("        self.client.call_method(Q::METHOD, request)")
-    out.append("    }")
-    out.append("")
-    out.append("    define_blocking_methods! {")
-    for fn_name, typed_name, method_name, req_name in entries:
-        out.append(f"        ({fn_name}, {typed_name}, \"{method_name}\", {req_name}),")
-    out.append("    }")
-    out.append("}")
-    out.append("")
-
     return "\n".join(out)
+
+
+def write_type_modules(spec: dict[str, Any]) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {domain: [] for domain in DOMAIN_ORDER}
+    for method in spec["methods"]:
+        grouped[domain_for_method(method["fn_name"])].append(method)
+
+    TYPES_OUT.write_text(generate_types_root())
+    for domain in DOMAIN_ORDER:
+        path = TYPE_DOMAIN_DIR / f"advanced_{domain}.rs"
+        path.write_text(generate_domain_module(grouped[domain]))
 
 
 def main() -> None:
     spec_path = resolve_spec_path()
     spec = json.loads(spec_path.read_text())
-    TYPES_OUT.write_text(generate_types(spec))
-    API_OUT.write_text(generate_api(spec))
+    write_type_modules(spec)
+    API_METHODS_OUT.write_text(generate_api_methods(spec))
 
 
 if __name__ == "__main__":

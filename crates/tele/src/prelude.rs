@@ -10,7 +10,8 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
 pub use crate::client::{
-    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, ClientMetric, ClientMetricHook,
+    MenuButtonConfig, WebAppQueryPayload,
 };
 #[cfg(feature = "_async")]
 pub use crate::client::{ErgoApi, RawApi, TypedApi};
@@ -31,13 +32,13 @@ pub use crate::bot::{
     BotApp, BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
     CURRENT_BOT_CHAT_MEMBER, CallbackInput, CallbackRouteBuilder, ChannelUpdateSource,
     ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandRouteBuilder,
-    CompactCallbackInput, CompactCallbackRouteBuilder, DispatchOutcome, EngineConfig, EngineEvent,
-    ErrorPolicy, HandlerError, InMemorySessionStore, JsonCallback, JsonFileSessionStore,
-    LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, ParsedCommandRouteBuilder,
-    PollingConfig, RequestStateKey, RouteRejection, Router, SourceErrorBackoffConfig, TextInput,
-    ThrottleScope, TypedCallbackInput, TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt,
-    UpdateExtractor, UpdateSink, WebAppInput, WebhookRunner, WriteAccessAllowedInput,
-    channel_source,
+    CompactCallbackInput, CompactCallbackRouteBuilder, DispatchMetricOutcome, DispatchOutcome,
+    EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore,
+    JsonCallback, JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig,
+    ParsedCommandRouteBuilder, PollingConfig, RequestStateKey, RouteRejection, Router,
+    SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
+    TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
+    WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,
 };
 
 #[cfg(feature = "macros")]

@@ -1,63 +1,29 @@
 #![cfg(feature = "_blocking")]
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::thread;
 use std::time::Duration;
 
+use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
 use tele::types::{CreateInvoiceLinkRequest, GetChatMemberCountRequest, LabeledPrice};
 use tele::{BlockingClient, Error, ErrorClass};
 
-type DynError = Box<dyn std::error::Error>;
-type ServerHandle = thread::JoinHandle<Result<(), String>>;
+type DynError = Box<dyn std::error::Error + Send + Sync>;
+type TestServer = FakeTelegramServer;
 
 fn spawn_server(
     expected_path: &'static str,
     response_status: u16,
     response_body: &'static str,
-) -> Result<(String, ServerHandle), DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .map_err(|error| error.to_string())?;
-
-        let mut buffer = vec![0_u8; 16 * 1024];
-        let read_bytes = stream
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        let request = String::from_utf8_lossy(&buffer[..read_bytes]);
-
-        let expected_request_line = format!("POST {expected_path} HTTP/1.1");
-        if !request.contains(&expected_request_line) {
-            return Err(format!("unexpected request line: {request}"));
-        }
-
-        let response = format!(
-            "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-            response_body.len()
-        );
-
-        stream
-            .write_all(response.as_bytes())
-            .map_err(|error| error.to_string())?;
-        stream.flush().map_err(|error| error.to_string())?;
-
-        Ok(())
-    });
-
-    Ok((format!("http://{address}"), handle))
+) -> Result<(String, TestServer), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post(expected_path).respond_json(response_status, response_body),
+    )?;
+    Ok((server.base_url().to_owned(), server))
 }
 
-fn join_server(handle: ServerHandle) -> Result<(), DynError> {
-    match handle.join() {
-        Ok(result) => result.map_err(Into::into),
-        Err(_) => Err("server thread panicked".into()),
-    }
+fn join_server(server: TestServer) -> Result<(), DynError> {
+    let _ = server.finish()?;
+    Ok(())
 }
 
 #[tokio::test]

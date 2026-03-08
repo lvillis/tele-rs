@@ -1,9 +1,10 @@
 use std::sync::Arc;
-#[cfg(feature = "bot")]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+#[cfg(feature = "tracing")]
+use tracing::Instrument;
 
 use crate::api::{
     AdvancedService, BotService, ChatsService, FilesService, MessagesService, PaymentsService,
@@ -16,7 +17,10 @@ use crate::types::upload::UploadFile;
 use crate::{Error, Result};
 
 use super::config::BuilderParts;
-use super::{ClientBuilder, ErgoApi, RawApi, RequestDefaults, TypedApi};
+use super::{
+    ClientBuilder, ClientObservability, ErgoApi, RawApi, RequestDefaults, TypedApi,
+    emit_client_metric,
+};
 
 #[derive(Clone)]
 pub struct Client {
@@ -26,6 +30,7 @@ pub struct Client {
 struct Inner {
     auth: Auth,
     defaults: RequestDefaults,
+    observability: ClientObservability,
     transport: AsyncTransport,
 }
 
@@ -40,6 +45,7 @@ impl Client {
             auth,
             defaults,
             default_headers,
+            observability,
         } = builder.into_parts();
 
         let transport = AsyncTransport::new(base_url, &defaults, &default_headers)?;
@@ -48,6 +54,7 @@ impl Client {
             inner: Arc::new(Inner {
                 auth,
                 defaults,
+                observability,
                 transport,
             }),
         })
@@ -106,10 +113,21 @@ impl Client {
         P: Serialize + ?Sized,
     {
         let token = self.require_token()?;
-        self.inner
+        let started_at = Instant::now();
+        #[cfg(feature = "tracing")]
+        let request_future = self
+            .inner
             .transport
             .execute_json(method, token, payload, &self.inner.defaults)
-            .await
+            .instrument(tracing::debug_span!("tele.client.request", method));
+        #[cfg(not(feature = "tracing"))]
+        let request_future =
+            self.inner
+                .transport
+                .execute_json(method, token, payload, &self.inner.defaults);
+        let result = request_future.await;
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     pub async fn call_method_no_params<R>(&self, method: &str) -> Result<R>
@@ -117,10 +135,21 @@ impl Client {
         R: DeserializeOwned,
     {
         let token = self.require_token()?;
-        self.inner
+        let started_at = Instant::now();
+        #[cfg(feature = "tracing")]
+        let request_future = self
+            .inner
             .transport
             .execute_empty(method, token, &self.inner.defaults)
-            .await
+            .instrument(tracing::debug_span!("tele.client.request", method));
+        #[cfg(not(feature = "tracing"))]
+        let request_future =
+            self.inner
+                .transport
+                .execute_empty(method, token, &self.inner.defaults);
+        let result = request_future.await;
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     pub async fn call_method_multipart<R, P>(
@@ -136,7 +165,10 @@ impl Client {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
-        self.inner
+        let started_at = Instant::now();
+        #[cfg(feature = "tracing")]
+        let request_future = self
+            .inner
             .transport
             .execute_multipart(
                 method,
@@ -146,7 +178,19 @@ impl Client {
                 file,
                 &self.inner.defaults,
             )
-            .await
+            .instrument(tracing::debug_span!("tele.client.request", method));
+        #[cfg(not(feature = "tracing"))]
+        let request_future = self.inner.transport.execute_multipart(
+            method,
+            token,
+            &fields,
+            file_field_name,
+            file,
+            &self.inner.defaults,
+        );
+        let result = request_future.await;
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
     }
 
     #[cfg(feature = "bot")]
@@ -161,5 +205,30 @@ impl Client {
 
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
+    }
+
+    fn emit_metric<R>(&self, method: &str, latency: Duration, result: &Result<R>) {
+        let (success, status, classification, retryable, request_id) = match result {
+            Ok(_) => (true, None, None, false, None),
+            Err(error) => (
+                false,
+                error.status().map(|status| status.as_u16()),
+                Some(error.classification()),
+                error.is_retryable(),
+                error.request_id().map(ToOwned::to_owned),
+            ),
+        };
+        emit_client_metric(
+            &self.inner.observability,
+            super::ClientMetric {
+                method: method.to_owned(),
+                success,
+                latency,
+                status,
+                classification,
+                retryable,
+                request_id,
+            },
+        );
     }
 }

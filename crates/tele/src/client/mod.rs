@@ -1,5 +1,6 @@
 mod config;
 mod layers;
+mod observability;
 
 #[cfg(feature = "_async")]
 mod async_client;
@@ -20,3 +21,5 @@ pub use layers::{
 };
 #[cfg(feature = "_async")]
 pub use layers::{ErgoApi, RawApi, TypedApi};
+pub use observability::{ClientMetric, ClientMetricHook};
+pub(crate) use observability::{ClientObservability, emit_client_metric};

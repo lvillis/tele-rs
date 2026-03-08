@@ -5,6 +5,7 @@ use http::header::{HeaderName, HeaderValue, USER_AGENT};
 
 use crate::Error;
 use crate::auth::{Auth, BotToken};
+use crate::client::{ClientMetric, ClientObservability};
 use crate::util::normalize_base_url;
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
@@ -107,6 +108,7 @@ pub(crate) struct BuilderParts {
     pub(crate) auth: Auth,
     pub(crate) defaults: RequestDefaults,
     pub(crate) default_headers: Vec<(String, String)>,
+    pub(crate) observability: ClientObservability,
 }
 
 /// SDK client builder.
@@ -115,6 +117,7 @@ pub struct ClientBuilder {
     auth: Auth,
     defaults: RequestDefaults,
     default_headers: Vec<(String, String)>,
+    observability: ClientObservability,
 }
 
 impl ClientBuilder {
@@ -126,6 +129,7 @@ impl ClientBuilder {
             auth: Auth::none(),
             defaults: RequestDefaults::default(),
             default_headers: Vec::new(),
+            observability: ClientObservability::default(),
         })
     }
 
@@ -232,6 +236,15 @@ impl ClientBuilder {
     /// Sets the `user-agent` header.
     pub fn user_agent(self, value: impl AsRef<str>) -> Result<Self, Error> {
         self.default_header(USER_AGENT.as_str(), value.as_ref())
+    }
+
+    /// Installs a hook that receives one metric per completed Telegram API request.
+    pub fn on_metric<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&ClientMetric) + Send + Sync + 'static,
+    {
+        self.observability.on_metric = Some(std::sync::Arc::new(hook));
+        self
     }
 
     /// Sets HTTP proxy URI.
@@ -343,6 +356,7 @@ impl ClientBuilder {
             auth: self.auth,
             defaults: self.defaults,
             default_headers: self.default_headers,
+            observability: self.observability,
         }
     }
 

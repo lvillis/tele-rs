@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "tracing")]
+use tracing::Instrument;
 
 /// Source-agnostic bot engine that handles dispatching, backpressure and error policy.
 pub struct BotEngine<S>
@@ -15,6 +17,8 @@ where
     on_source_error_async: Option<AsyncSourceErrorHook>,
     on_handler_error_async: Option<AsyncHandlerErrorHook>,
     on_event_async: Option<AsyncEngineEventHook>,
+    on_metric: Option<EngineMetricHook>,
+    on_metric_async: Option<AsyncEngineMetricHook>,
     source_error_streak: usize,
 }
 
@@ -34,6 +38,8 @@ where
             on_source_error_async: None,
             on_handler_error_async: None,
             on_event_async: None,
+            on_metric: None,
+            on_metric_async: None,
             source_error_streak: 0,
         }
     }
@@ -124,11 +130,37 @@ where
         self
     }
 
+    pub fn on_metric<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineMetric) + Send + Sync + 'static,
+    {
+        self.on_metric = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn on_metric_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineMetric) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.on_metric_async = Some(Arc::new(move |metric| Box::pin(hook(metric))));
+        self
+    }
+
     /// Runs one poll/prepare/dispatch cycle.
     pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
+        let poll_started_at = Instant::now();
         self.notify_event(EngineEvent::PollStarted).await;
 
-        let updates = match self.source.poll().await {
+        #[cfg(feature = "tracing")]
+        let poll_future = self
+            .source
+            .poll()
+            .instrument(tracing::debug_span!("tele.bot.poll"));
+        #[cfg(not(feature = "tracing"))]
+        let poll_future = self.source.poll();
+
+        let updates = match poll_future.await {
             Ok(updates) => updates,
             Err(error) => {
                 self.notify_event(EngineEvent::PollFailed {
@@ -163,6 +195,11 @@ where
 
         self.notify_event(EngineEvent::PollCompleted {
             update_count: updates.len(),
+        })
+        .await;
+        self.notify_metric(EngineMetric::PollLatency {
+            update_count: updates.len(),
+            latency: poll_started_at.elapsed(),
         })
         .await;
 
@@ -221,17 +258,37 @@ where
             let context = BotContext::new(self.client.clone());
             self.notify_event(EngineEvent::DispatchStarted { update_id })
                 .await;
-            match self.router.dispatch(context, update).await {
+            let dispatch_started_at = Instant::now();
+            #[cfg(feature = "tracing")]
+            let dispatch_future = self
+                .router
+                .dispatch(context, update)
+                .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
+            #[cfg(not(feature = "tracing"))]
+            let dispatch_future = self.router.dispatch(context, update);
+            match dispatch_future.await {
                 Ok(true) => {
                     let outcome = DispatchOutcome::Handled { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Handled,
+                        latency: dispatch_started_at.elapsed(),
+                    })
+                    .await;
                     outcomes.push(outcome);
                 }
                 Ok(false) => {
                     let outcome = DispatchOutcome::Ignored { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Ignored,
+                        latency: dispatch_started_at.elapsed(),
+                    })
+                    .await;
                     outcomes.push(outcome);
                 }
                 Err(error) => {
@@ -239,6 +296,12 @@ where
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id,
                         classification: error.classification(),
+                    })
+                    .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Failed,
+                        latency: dispatch_started_at.elapsed(),
                     })
                     .await;
                     if !self.config.continue_on_handler_error {
@@ -279,8 +342,15 @@ where
             let context = BotContext::new(self.client.clone());
             join_set.spawn(async move {
                 let _permit = permit;
-                let result = router.dispatch(context, update).await;
-                (update_id, result)
+                let dispatch_started_at = Instant::now();
+                #[cfg(feature = "tracing")]
+                let dispatch_future = router
+                    .dispatch(context, update)
+                    .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
+                #[cfg(not(feature = "tracing"))]
+                let dispatch_future = router.dispatch(context, update);
+                let result = dispatch_future.await;
+                (update_id, dispatch_started_at.elapsed(), result)
             });
         }
 
@@ -289,23 +359,41 @@ where
 
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
-                Ok((update_id, Ok(true))) => {
+                Ok((update_id, latency, Ok(true))) => {
                     let outcome = DispatchOutcome::Handled { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Handled,
+                        latency,
+                    })
+                    .await;
                     outcomes.push(outcome);
                 }
-                Ok((update_id, Ok(false))) => {
+                Ok((update_id, latency, Ok(false))) => {
                     let outcome = DispatchOutcome::Ignored { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Ignored,
+                        latency,
+                    })
+                    .await;
                     outcomes.push(outcome);
                 }
-                Ok((update_id, Err(error))) => {
+                Ok((update_id, latency, Err(error))) => {
                     self.notify_handler_error(update_id, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id,
                         classification: error.classification(),
+                    })
+                    .await;
+                    self.notify_metric(EngineMetric::DispatchLatency {
+                        update_id,
+                        outcome: DispatchMetricOutcome::Failed,
+                        latency,
                     })
                     .await;
                     if !self.config.continue_on_handler_error {
@@ -357,17 +445,31 @@ where
             }
             Err(error) => {
                 self.notify_source_error(&error).await;
+                let streak = self.source_error_streak.saturating_add(1);
+                self.notify_metric(EngineMetric::SourceError {
+                    classification: error.classification(),
+                    retryable: error.is_retryable(),
+                    streak,
+                })
+                .await;
                 if !self.config.continue_on_source_error {
                     return Err(error);
                 }
-                self.source_error_streak = self.source_error_streak.saturating_add(1);
+                self.source_error_streak = streak;
                 if let Some(backoff) = self.config.source_error_backoff.as_ref() {
                     let delay = exponential_backoff(
                         backoff.base_delay,
                         backoff.max_delay,
                         self.source_error_streak,
                     );
-                    return Ok(jitter_duration(delay, backoff.jitter_ratio).min(backoff.max_delay));
+                    let applied_delay =
+                        jitter_duration(delay, backoff.jitter_ratio).min(backoff.max_delay);
+                    self.notify_metric(EngineMetric::SourceBackoff {
+                        streak: self.source_error_streak,
+                        delay: applied_delay,
+                    })
+                    .await;
+                    return Ok(applied_delay);
                 }
                 Ok(self.config.error_delay)
             }
@@ -413,6 +515,56 @@ where
         }
         if let Some(hook) = self.on_event_async.as_ref() {
             hook(&event).await;
+        }
+    }
+
+    async fn notify_metric(&mut self, metric: EngineMetric) {
+        if let Some(hook) = self.on_metric.as_ref() {
+            hook(&metric);
+        }
+        if let Some(hook) = self.on_metric_async.as_ref() {
+            hook(&metric).await;
+        }
+
+        #[cfg(feature = "tracing")]
+        match &metric {
+            EngineMetric::PollLatency {
+                update_count,
+                latency,
+            } => tracing::debug!(
+                target: "tele::bot",
+                update_count,
+                latency_ms = latency.as_millis() as u64,
+                "bot poll completed"
+            ),
+            EngineMetric::DispatchLatency {
+                update_id,
+                outcome,
+                latency,
+            } => tracing::debug!(
+                target: "tele::bot",
+                update_id,
+                outcome = ?outcome,
+                latency_ms = latency.as_millis() as u64,
+                "bot dispatch completed"
+            ),
+            EngineMetric::SourceError {
+                classification,
+                retryable,
+                streak,
+            } => tracing::warn!(
+                target: "tele::bot",
+                classification = ?classification,
+                retryable,
+                streak,
+                "bot source poll failed"
+            ),
+            EngineMetric::SourceBackoff { streak, delay } => tracing::warn!(
+                target: "tele::bot",
+                streak,
+                delay_ms = delay.as_millis() as u64,
+                "bot source backoff applied"
+            ),
         }
     }
 }
@@ -539,6 +691,23 @@ where
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.engine = self.engine.on_event_async(hook);
+        self
+    }
+
+    pub fn on_metric<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineMetric) + Send + Sync + 'static,
+    {
+        self.engine = self.engine.on_metric(hook);
+        self
+    }
+
+    pub fn on_metric_async<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: Fn(&EngineMetric) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.engine = self.engine.on_metric_async(hook);
         self
     }
 

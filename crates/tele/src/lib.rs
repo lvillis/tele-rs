@@ -38,6 +38,7 @@ pub mod bot;
 pub mod client;
 pub mod error;
 pub mod prelude;
+pub mod testing;
 pub mod types;
 
 pub use auth::{
@@ -50,7 +51,8 @@ pub use client::Client;
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingErgoApi, BlockingRawApi, BlockingTypedApi};
 pub use client::{
-    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, MenuButtonConfig, WebAppQueryPayload,
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, ClientMetric, ClientMetricHook,
+    MenuButtonConfig, WebAppQueryPayload,
 };
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 #[cfg(feature = "_async")]

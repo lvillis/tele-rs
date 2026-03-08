@@ -84,6 +84,17 @@ pub type AsyncEngineEventHook = Arc<
         + 'static,
 >;
 
+/// Hook called for runtime metrics.
+pub type EngineMetricHook = Arc<dyn Fn(&EngineMetric) + Send + Sync + 'static>;
+
+/// Async hook called for runtime metrics.
+pub type AsyncEngineMetricHook = Arc<
+    dyn Fn(&EngineMetric) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
 /// Runtime event payload for observability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -117,6 +128,38 @@ pub enum EngineEvent {
     },
 }
 
+/// Final dispatch outcome captured in metrics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchMetricOutcome {
+    Handled,
+    Ignored,
+    Failed,
+}
+
+/// Structured runtime metrics emitted by `BotEngine`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum EngineMetric {
+    PollLatency {
+        update_count: usize,
+        latency: Duration,
+    },
+    DispatchLatency {
+        update_id: i64,
+        outcome: DispatchMetricOutcome,
+        latency: Duration,
+    },
+    SourceError {
+        classification: ErrorClass,
+        retryable: bool,
+        streak: usize,
+    },
+    SourceBackoff {
+        streak: usize,
+        delay: Duration,
+    },
+}
+
 fn invalid_request(reason: impl Into<String>) -> Error {
     Error::InvalidRequest {
         reason: reason.into(),
@@ -135,7 +178,10 @@ where
 
 mod app;
 mod context;
+mod control;
+mod handler_error;
 mod outbox;
+mod request_state;
 mod routing;
 mod runtime;
 mod session;
@@ -143,7 +189,10 @@ pub mod testing;
 
 pub use app::*;
 pub use context::*;
+pub use control::*;
+pub use handler_error::*;
 pub use outbox::*;
+pub use request_state::*;
 pub use routing::*;
 pub use runtime::*;
 pub use session::*;

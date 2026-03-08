@@ -15,6 +15,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - `axum`: axum webhook adapter built on top of `bot`
 - `macros`: derive macros for typed bot commands (`#[derive(tele::BotCommands)]`)
 - `otel`: enable reqx OpenTelemetry hooks
+- `tracing`: emit `tracing` spans/events for client requests and bot runtime metrics
 - `redis-session`: Redis-backed bot session store (`RedisSessionStore`)
 - `postgres-session`: Postgres-backed bot session store (`PostgresSessionStore`)
 
@@ -31,7 +32,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - Reliability (`feature = "bot"`): `BotOutbox` send queue with retry/backoff/429 handling, idempotency dedupe, optional on-disk queue persistence/replay, dead-letter recording, and message max-age expiration
 - Sessions (`feature = "bot"`): `InMemorySessionStore` and `JsonFileSessionStore`
 - Distributed sessions: `RedisSessionStore` (`feature = "redis-session"`), `PostgresSessionStore` (`feature = "postgres-session"`)
-- Testing (`feature = "bot"`): `tele::bot::testing` fixtures and `BotHarness`
+- Testing: `tele::testing::FakeTelegramServer` for scripted API simulations, plus `tele::bot::testing` fixtures and `BotHarness`
 - Axum integration (`feature = "axum"`): ready-to-use webhook handler and status mapping helpers
 - Files: `getFile`
 - Full method coverage: all Bot API 9.4 methods are exposed, including newer domains
@@ -220,6 +221,13 @@ enum Command {
 - `just answer-check`
 - `just ci`
 - `just release-check`
+
+## Benchmarks
+
+- Run the local baseline suite: `cargo bench -p tele --bench baseline --features bot`
+- Save a reference baseline: `cargo bench -p tele --bench baseline --features bot -- --save-baseline main`
+- Compare against a saved baseline: `cargo bench -p tele --bench baseline --features bot -- --baseline main`
+- Current suite covers request serialization, update deserialization, request-state access, and router dispatch hot paths without needing real Telegram network calls.
 
 ## Release Workflow
 

@@ -39,6 +39,7 @@ bot = ["_async"]
 axum = ["bot", "dep:axum"]
 macros = ["bot", "dep:tele-macros"]
 otel = ["reqx/otel"]
+tracing = ["dep:tracing"]
 redis-session = ["bot", "dep:redis"]
 postgres-session = ["bot", "dep:tokio-postgres"]
 
@@ -57,9 +58,11 @@ tele-macros = { version = "0.1.3", default-features = false, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync"], optional = true }
 tokio-postgres = { workspace = true, optional = true }
+tracing = { version = "0.1.41", default-features = false, features = ["std"], optional = true }
 url = { workspace = true }
 
 [dev-dependencies]
+criterion = { version = "0.5.1", features = ["async_tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
 
 [lints]
@@ -151,3 +154,8 @@ path = "tests/error_classification.rs"
 [[test]]
 name = "method_coverage"
 path = "tests/method_coverage.rs"
+
+[[bench]]
+name = "baseline"
+harness = false
+required-features = ["bot"]

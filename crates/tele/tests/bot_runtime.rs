@@ -17,10 +17,10 @@ use tele::bot::testing::BotHarness;
 use tele::bot::{
     BotApp, BotContext, BotControl, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER,
     CURRENT_BOT_CHAT_MEMBER, CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput,
-    ChatSession, CommandData, DispatchOutcome, EngineConfig, EngineEvent, ErrorPolicy,
-    HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
-    MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey, Router,
-    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
+    ChatSession, CommandData, DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent,
+    EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore, JsonFileSessionStore,
+    LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey,
+    Router, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
     WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
     extract_callback_data, extract_callback_json, extract_chat_join_request,
     extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
@@ -1828,16 +1828,27 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
         .request_timeout(Duration::from_millis(80))
         .total_timeout(Some(Duration::from_millis(120)))
         .build()?;
+    let metrics = Arc::new(Mutex::new(Vec::<EngineMetric>::new()));
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         disable_webhook_on_start: false,
         ..PollingConfig::default()
     });
-    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
-        continue_on_source_error: true,
-        error_delay: Duration::from_millis(10),
-        ..EngineConfig::default()
-    });
+    let mut engine = BotEngine::new(client, source, Router::new())
+        .with_config(EngineConfig {
+            continue_on_source_error: true,
+            error_delay: Duration::from_millis(10),
+            source_error_backoff: Some(Default::default()),
+            ..EngineConfig::default()
+        })
+        .on_metric({
+            let metrics = Arc::clone(&metrics);
+            move |metric| {
+                if let Ok(mut captured) = metrics.lock() {
+                    captured.push(metric.clone());
+                }
+            }
+        });
 
     let shutdown = async {
         tokio::time::sleep(Duration::from_millis(120)).await;
@@ -1845,6 +1856,17 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
 
     let result = engine.run_until(shutdown).await;
     assert!(result.is_ok());
+    let metrics = metrics.lock().map_err(|_| "engine metric mutex poisoned")?;
+    assert!(
+        metrics
+            .iter()
+            .any(|metric| matches!(metric, EngineMetric::SourceError { .. }))
+    );
+    assert!(
+        metrics
+            .iter()
+            .any(|metric| matches!(metric, EngineMetric::SourceBackoff { .. }))
+    );
     Ok(())
 }
 
@@ -1880,6 +1902,56 @@ async fn bot_app_run_until_can_be_spawned_on_tokio() -> Result<(), DynError> {
 
     let result = handle.await?;
     assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_metric_hook_emits_poll_and_dispatch_latency() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let metrics = Arc::new(Mutex::new(Vec::<EngineMetric>::new()));
+
+    let mut router = Router::new();
+    router
+        .command_route("start")
+        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
+
+    let (sink, source) = channel_source(1);
+    let Some(update) = parse_update(message_update(7001, 10, "/start")) else {
+        return Err("failed to build /start update fixture".into());
+    };
+    sink.send(update).await?;
+
+    let mut engine = BotEngine::new(client, source, router).on_metric({
+        let metrics = Arc::clone(&metrics);
+        move |metric| {
+            if let Ok(mut captured) = metrics.lock() {
+                captured.push(metric.clone());
+            }
+        }
+    });
+
+    let outcomes = engine.poll_once().await?;
+    assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 7001 }]);
+
+    let metrics = metrics.lock().map_err(|_| "engine metric mutex poisoned")?;
+    assert!(metrics.iter().any(|metric| matches!(
+        metric,
+        EngineMetric::PollLatency {
+            update_count: 1,
+            ..
+        }
+    )));
+    assert!(metrics.iter().any(|metric| matches!(
+        metric,
+        EngineMetric::DispatchLatency {
+            update_id: 7001,
+            outcome: DispatchMetricOutcome::Handled,
+            ..
+        }
+    )));
+
     Ok(())
 }
 
