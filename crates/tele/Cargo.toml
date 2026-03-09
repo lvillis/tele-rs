@@ -13,6 +13,7 @@ keywords = ["telegram", "bot", "api", "sdk", "reqx"]
 categories = ["api-bindings", "network-programming", "asynchronous"]
 include = [
     "src/**",
+    "benches/**",
     "examples/**",
     "tests/**",
     "README.md",

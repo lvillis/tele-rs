@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::InputMedia;
 
 /// Request-scoped runtime facade for handler code.
 ///
