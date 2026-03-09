@@ -7,7 +7,6 @@ pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
-#[cfg(feature = "bot")]
 pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
     let Some(language_code) = language_code else {
         return Ok(None);
@@ -16,6 +15,17 @@ pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<O
         return Err(invalid_request("language_code cannot be empty"));
     }
     Ok(Some(language_code))
+}
+
+pub(crate) fn build_set_my_commands_request(
+    commands: Vec<BotCommand>,
+    scope: Option<BotCommandScope>,
+    language_code: Option<String>,
+) -> Result<SetMyCommandsRequest> {
+    let mut request = SetMyCommandsRequest::new(commands)?;
+    request.scope = scope;
+    request.language_code = normalize_language_code(language_code)?;
+    Ok(request)
 }
 
 pub(crate) fn commands_get_request(request: &SetMyCommandsRequest) -> GetMyCommandsRequest {
@@ -33,10 +43,7 @@ pub(crate) fn typed_commands_request<C>(
 where
     C: crate::bot::BotCommands,
 {
-    let mut request = SetMyCommandsRequest::new(crate::bot::command_definitions::<C>())?;
-    request.scope = scope;
-    request.language_code = normalize_language_code(language_code)?;
-    Ok(request)
+    build_set_my_commands_request(crate::bot::command_definitions::<C>(), scope, language_code)
 }
 
 pub(crate) fn update_chat_id(update: &Update) -> Option<i64> {

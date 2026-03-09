@@ -1,7 +1,45 @@
 #![forbid(unsafe_code)]
 
-//! `tele` is an ergonomic Telegram Bot API SDK for Rust.
+//! `tele` is an ergonomic Telegram Bot API SDK and bot runtime toolkit for Rust.
 //! Built on `reqx`, with strict error modeling and async/blocking parity.
+//!
+//! Recommended stable surface:
+//!
+//! - `client.app()` / `context.app()` for runtime business code such as text/media sends,
+//!   replies, callbacks, Web App flows, moderation, and membership/capability checks.
+//! - `client.control()` for startup/setup/orchestration such as bootstrap, router preparation,
+//!   and outbox management.
+//! - `client.raw()` / `client.typed()` / `client.advanced()` as lower-level escape hatches when
+//!   the high-level facades are intentionally not enough.
+//!
+//! Minimal async example:
+//!
+//! ```rust,no_run
+//! use tele::Client;
+//! use tele::types::ParseMode;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), tele::Error> {
+//!     let client = Client::builder("https://api.telegram.org")?
+//!         .bot_token("123456:telegram-bot-token")?
+//!         .build()?;
+//!
+//!     let _sent = client
+//!         .app()
+//!         .text(123456789_i64, "hello from tele")?
+//!         .parse_mode(ParseMode::MarkdownV2)
+//!         .send()
+//!         .await?;
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! With `feature = "bot"`, prefer `context.app()` inside handlers and `client.control()` for
+//! startup/bootstrap/outbox orchestration. For richer runtime flows, prefer
+//! `client.app().photo()/document()/video()` and `client.app().membership()` before dropping to
+//! raw request structs. The package README and `examples/` directory contain the minimal bot and
+//! API layer walkthroughs.
 
 #[cfg(not(any(feature = "_async", feature = "_blocking")))]
 compile_error!(
@@ -50,8 +88,8 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_async")]
 pub use client::{
-    AppApi, ControlApi, ModerationApi, ModerationNoticeApi, RawApi, SetupApi, TextSendBuilder,
-    TypedApi, WebAppApi,
+    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
 };
 pub use client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -61,8 +99,9 @@ pub use client::{
 };
 #[cfg(feature = "_blocking")]
 pub use client::{
-    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingModerationNoticeApi,
-    BlockingRawApi, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
+    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};

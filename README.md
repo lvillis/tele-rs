@@ -50,7 +50,8 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 ## Quick Start (async)
 
 ```rust,no_run
-use tele::{Client, ParseMode};
+use tele::Client;
+use tele::types::ParseMode;
 
 #[tokio::main]
 async fn main() -> Result<(), tele::Error> {
@@ -75,7 +76,7 @@ async fn main() -> Result<(), tele::Error> {
 ## Upload Local File (async)
 
 ```rust,no_run
-use tele::{Client, SendPhotoRequest, UploadFile};
+use tele::{Client, UploadFile};
 
 #[tokio::main]
 async fn main() -> Result<(), tele::Error> {
@@ -84,8 +85,12 @@ async fn main() -> Result<(), tele::Error> {
         .build()?;
 
     let file = UploadFile::from_path("./image.jpg")?;
-    let request = SendPhotoRequest::new(123456789_i64, "attach://image.jpg");
-    let _message = client.messages().send_photo_upload(&request, &file).await?;
+    let _message = client
+        .app()
+        .photo(123456789_i64, "attach://image.jpg")
+        .caption("hello from tele")
+        .send_upload(&file)
+        .await?;
 
     Ok(())
 }
@@ -94,7 +99,8 @@ async fn main() -> Result<(), tele::Error> {
 ## Quick Start (blocking)
 
 ```rust,no_run
-use tele::{BlockingClient, ParseMode};
+use tele::BlockingClient;
+use tele::types::ParseMode;
 
 fn main() -> Result<(), tele::Error> {
     let client = BlockingClient::builder("https://api.telegram.org")?
@@ -156,7 +162,7 @@ async fn main() -> Result<(), tele::Error> {
 
 Use the facades by plane:
 
-- `context.app()` / `client.app()`: runtime business code such as sends, callbacks, Web App replies, and moderation.
+- `context.app()` / `client.app()`: runtime business code such as text/media sends, callbacks, Web App replies, moderation, and membership/capability checks.
 - `client.control()`: startup/bootstrap, router preparation, outbox, and other orchestration concerns.
 - `client.raw()` / `client.typed()`: low-level escape hatches when a high-level facade is intentionally not enough.
 

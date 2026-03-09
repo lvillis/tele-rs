@@ -9,8 +9,8 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_async")]
 pub use crate::client::{
-    AppApi, ControlApi, ModerationApi, ModerationNoticeApi, RawApi, SetupApi, TextSendBuilder,
-    TypedApi, WebAppApi,
+    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
 };
 pub use crate::client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -20,8 +20,9 @@ pub use crate::client::{
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{
-    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingModerationNoticeApi,
-    BlockingRawApi, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
+    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};

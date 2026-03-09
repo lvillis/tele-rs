@@ -14,8 +14,8 @@ pub use blocking_client::BlockingClient;
 pub use config::{ClientBuilder, RateLimitConfig, RequestDefaults, RetryConfig};
 #[cfg(feature = "_async")]
 pub use layers::{
-    AppApi, ControlApi, ModerationApi, ModerationNoticeApi, RawApi, SetupApi, TextSendBuilder,
-    TypedApi, WebAppApi,
+    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
 };
 pub use layers::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -25,8 +25,9 @@ pub use layers::{
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{
-    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingModerationNoticeApi,
-    BlockingRawApi, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
+    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingSetupApi, BlockingWebAppApi};

@@ -64,6 +64,53 @@ impl BootstrapPlan {
         self.get_me(BootstrapGetMePolicy::Skip)
     }
 
+    /// Syncs bot commands from a plain command list.
+    pub fn commands(self, commands: Vec<BotCommand>) -> Result<Self> {
+        self.commands_with_options(commands, None, None)
+    }
+
+    /// Syncs bot commands from a plain command list with optional scope and language.
+    pub fn commands_with_options(
+        mut self,
+        commands: Vec<BotCommand>,
+        scope: Option<BotCommandScope>,
+        language_code: Option<String>,
+    ) -> Result<Self> {
+        self.commands = Some(super::support::build_set_my_commands_request(
+            commands,
+            scope,
+            language_code,
+        )?);
+        Ok(self)
+    }
+
+    #[cfg(feature = "bot")]
+    /// Syncs bot commands from a typed command enum.
+    pub fn typed_commands<C>(self) -> Result<Self>
+    where
+        C: crate::bot::BotCommands,
+    {
+        self.typed_commands_with_options::<C>(None, None)
+    }
+
+    #[cfg(feature = "bot")]
+    /// Syncs bot commands from a typed command enum with optional scope and language.
+    pub fn typed_commands_with_options<C>(
+        mut self,
+        scope: Option<BotCommandScope>,
+        language_code: Option<String>,
+    ) -> Result<Self>
+    where
+        C: crate::bot::BotCommands,
+    {
+        self.commands = Some(super::support::typed_commands_request::<C>(
+            scope,
+            language_code,
+        )?);
+        Ok(self)
+    }
+
+    /// Escape hatch for supplying a fully custom `setMyCommands` request.
     pub fn commands_request(mut self, commands: SetMyCommandsRequest) -> Self {
         self.commands = Some(commands);
         self

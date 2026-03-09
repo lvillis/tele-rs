@@ -6,10 +6,10 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
-    AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
-    GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
-    InlineQueryResultsButton, LabeledPrice, MessageId, ParseMode, SendPhotoRequest,
-    SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
+    AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
+    GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
+    InlineQueryResult, InlineQueryResultsButton, LabeledPrice, MessageId, ParseMode,
+    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -219,6 +219,137 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
 }
 
 #[tokio::test]
+async fn app_media_builders_support_common_send_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendPhoto")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"photo\":\"photo-file-id\"")
+            .contains_case_insensitive("\"caption\":\"photo caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":11")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":55")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View photo\"")
+            .contains_case_insensitive("\"callback_data\":\"photo:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":10,"date":1710000002,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendDocument")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"document\":\"document-file-id\"")
+            .contains_case_insensitive("\"thumbnail\":\"document-thumb-id\"")
+            .contains_case_insensitive("\"caption\":\"document caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"disable_content_type_detection\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":12")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":56")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View document\"")
+            .contains_case_insensitive("\"callback_data\":\"document:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":11,"date":1710000003,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVideo")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"video\":\"video-file-id\"")
+            .contains_case_insensitive("\"duration\":30")
+            .contains_case_insensitive("\"width\":1920")
+            .contains_case_insensitive("\"height\":1080")
+            .contains_case_insensitive("\"thumbnail\":\"video-thumb-id\"")
+            .contains_case_insensitive("\"caption\":\"video caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"supports_streaming\":true")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":13")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":57")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View video\"")
+            .contains_case_insensitive("\"callback_data\":\"video:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":12,"date":1710000004,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let photo_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View photo",
+        "photo:1",
+    )?]);
+    let photo = client
+        .app()
+        .photo(1_i64, "photo-file-id")
+        .caption("photo caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .has_spoiler(true)
+        .reply_to_message(MessageId(55))
+        .message_thread_id(11)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(photo_markup)
+        .send()
+        .await?;
+    assert_eq!(photo.message_id.0, 10);
+
+    let document_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View document",
+        "document:1",
+    )?]);
+    let document = client
+        .app()
+        .document(1_i64, "document-file-id")
+        .thumbnail("document-thumb-id")
+        .caption("document caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .disable_content_type_detection(true)
+        .reply_to_message(MessageId(56))
+        .message_thread_id(12)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(document_markup)
+        .send()
+        .await?;
+    assert_eq!(document.message_id.0, 11);
+
+    let video_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View video",
+        "video:1",
+    )?]);
+    let video = client
+        .app()
+        .video(1_i64, "video-file-id")
+        .duration(30)
+        .width(1920)
+        .height(1080)
+        .thumbnail("video-thumb-id")
+        .caption("video caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .supports_streaming(true)
+        .has_spoiler(true)
+        .reply_to_message(MessageId(57))
+        .message_thread_id(13)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(video_markup)
+        .send()
+        .await?;
+    assert_eq!(video.message_id.0, 12);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn app_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":8,"date":1710000001,"chat":{"id":7001,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server_with_checks(
@@ -340,10 +471,7 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let plan = BootstrapPlan::new()
-        .commands_request(SetMyCommandsRequest::new(vec![BotCommand::new(
-            "start",
-            "start the bot",
-        )?])?)
+        .commands(vec![BotCommand::new("start", "start the bot")?])?
         .menu_button(MenuButtonConfig::commands());
 
     let outcome = client.control().setup().bootstrap(&plan).await;
@@ -415,6 +543,44 @@ async fn setup_set_typed_commands_with_scope_and_language() -> Result<(), DynErr
     Ok(())
 }
 
+#[cfg(feature = "bot")]
+#[tokio::test]
+async fn bootstrap_plan_typed_commands_with_scope_and_language() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/getMyCommands")
+            .contains_case_insensitive("\"scope\":{\"type\":\"all_private_chats\"}")
+            .contains_case_insensitive("\"language_code\":\"zh-hans\"")
+            .respond_json(200, r#"{"ok":true,"result":[]}"#),
+        RequestExpectation::post("/bot123:abc/setMyCommands")
+            .contains_case_insensitive(
+                "\"commands\":[{\"command\":\"start\",\"description\":\"start command\"}]",
+            )
+            .contains_case_insensitive("\"scope\":{\"type\":\"all_private_chats\"}")
+            .contains_case_insensitive("\"language_code\":\"zh-hans\"")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let plan = BootstrapPlan::new().typed_commands_with_options::<DemoCommand>(
+        Some(BotCommandScope::AllPrivateChats),
+        Some("zh-hans".to_owned()),
+    )?;
+
+    let outcome = client.control().setup().bootstrap(&plan).await;
+    assert!(outcome.is_success());
+    let Some(commands) = outcome.report.commands.as_ref() else {
+        return Err("expected commands step report".into());
+    };
+    assert_eq!(commands.applied, Some(true));
+    assert_eq!(commands.synced, Some(true));
+
+    join_server(server)?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
@@ -423,8 +589,7 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
         .total_timeout(Some(Duration::from_millis(300)))
         .build()?;
 
-    let commands = SetMyCommandsRequest::new(vec![BotCommand::new("start", "start bot")?])?;
-    let plan = BootstrapPlan::new().commands_request(commands);
+    let plan = BootstrapPlan::new().commands(vec![BotCommand::new("start", "start bot")?])?;
     let outcome = client
         .control()
         .setup()
@@ -510,10 +675,7 @@ async fn setup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let plan = BootstrapPlan::new()
-        .commands_request(SetMyCommandsRequest::new(vec![BotCommand::new(
-            "start",
-            "start the bot",
-        )?])?)
+        .commands(vec![BotCommand::new("start", "start the bot")?])?
         .menu_button(MenuButtonConfig::commands());
 
     let outcome = client
@@ -615,6 +777,67 @@ async fn setup_and_web_app_facades_handle_menu_button_and_query_answer() -> Resu
         .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
     assert_eq!(sent.inline_message_id, "inline-99");
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_membership_facade_handles_bot_member_and_capabilities() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/getMe").respond_json(
+            200,
+            r#"{"ok":true,"result":{"id":999,"is_bot":true,"first_name":"tele","username":"tele_bot"}}"#,
+        ),
+        RequestExpectation::post("/bot123:abc/getChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":999")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/getMe").respond_json(
+            200,
+            r#"{"ok":true,"result":{"id":999,"is_bot":true,"first_name":"tele","username":"tele_bot"}}"#,
+        ),
+        RequestExpectation::post("/bot123:abc/getChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":999")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/getChatAdministrators")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":[{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true},{"status":"administrator","user":{"id":701,"is_bot":false,"first_name":"owner"},"can_manage_chat":true,"can_restrict_members":true}]}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let membership = client.app().membership();
+
+    let bot_member = membership.bot_member(-10010_i64).await?;
+    assert_eq!(bot_member.user().id.0, 999);
+    assert!(bot_member.has_capability(ChatAdministratorCapability::ManageChat));
+
+    let missing = membership
+        .bot_missing_capabilities(
+            -10010_i64,
+            &[
+                ChatAdministratorCapability::ManageChat,
+                ChatAdministratorCapability::RestrictMembers,
+            ],
+        )
+        .await?;
+    assert_eq!(missing, vec![ChatAdministratorCapability::RestrictMembers]);
+
+    let administrators = membership.administrators(-10010_i64).await?;
+    assert_eq!(administrators.len(), 2);
 
     join_server(server)?;
     Ok(())
@@ -844,6 +1067,33 @@ async fn send_photo_upload_multipart_success() -> Result<(), DynError> {
     let request = SendPhotoRequest::new(1_i64, "ignored-in-multipart");
     let message = client.messages().send_photo_upload(&request, &file).await?;
     assert_eq!(message.message_id.0, 100);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_photo_builder_send_upload_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":102,"date":1710000005,"chat":{"id":1,"type":"private"},"photo":[{"file_id":"file_2","file_unique_id":"uniq_2","width":10,"height":10}]}}"#;
+    const CHECKS: [&str; 5] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"caption\"",
+        "name=\"photo\"; filename=\"builder-image.jpg\"",
+        "binary-builder-photo-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendPhoto", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let file = UploadFile::from_bytes("builder-image.jpg", b"binary-builder-photo-data".to_vec())?;
+    let message = client
+        .app()
+        .photo(1_i64, "ignored-in-multipart")
+        .caption("builder upload")
+        .send_upload(&file)
+        .await?;
+    assert_eq!(message.message_id.0, 102);
 
     join_server(handle)?;
     Ok(())

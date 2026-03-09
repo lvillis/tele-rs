@@ -5,8 +5,8 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
 use tele::types::{
-    CreateInvoiceLinkRequest, GetChatMemberCountRequest, InlineKeyboardButton,
-    InlineKeyboardMarkup, LabeledPrice, MessageId, ParseMode, WebAppData,
+    ChatAdministratorCapability, CreateInvoiceLinkRequest, GetChatMemberCountRequest,
+    InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MessageId, ParseMode, WebAppData,
 };
 use tele::{
     BanMemberOptions, BlockingClient, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions,
@@ -333,6 +333,134 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
 }
 
 #[tokio::test]
+async fn blocking_media_builders_support_common_send_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendPhoto")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"photo\":\"blocking-photo-file-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking photo caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":21")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":65")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View blocking photo\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-photo:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":20,"date":1710000010,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendDocument")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"document\":\"blocking-document-file-id\"")
+            .contains_case_insensitive("\"thumbnail\":\"blocking-document-thumb-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking document caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"disable_content_type_detection\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":22")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":66")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View blocking document\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-document:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":21,"date":1710000011,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVideo")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"video\":\"blocking-video-file-id\"")
+            .contains_case_insensitive("\"duration\":45")
+            .contains_case_insensitive("\"width\":1280")
+            .contains_case_insensitive("\"height\":720")
+            .contains_case_insensitive("\"thumbnail\":\"blocking-video-thumb-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking video caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"supports_streaming\":true")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":23")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":67")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View blocking video\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-video:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":22,"date":1710000012,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = BlockingClient::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+
+    let photo_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View blocking photo",
+        "blocking-photo:1",
+    )?]);
+    let photo = client
+        .app()
+        .photo(1_i64, "blocking-photo-file-id")
+        .caption("blocking photo caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .has_spoiler(true)
+        .reply_to_message(MessageId(65))
+        .message_thread_id(21)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(photo_markup)
+        .send()?;
+    assert_eq!(photo.message_id.0, 20);
+
+    let document_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View blocking document",
+        "blocking-document:1",
+    )?]);
+    let document = client
+        .app()
+        .document(1_i64, "blocking-document-file-id")
+        .thumbnail("blocking-document-thumb-id")
+        .caption("blocking document caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .disable_content_type_detection(true)
+        .reply_to_message(MessageId(66))
+        .message_thread_id(22)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(document_markup)
+        .send()?;
+    assert_eq!(document.message_id.0, 21);
+
+    let video_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "View blocking video",
+        "blocking-video:1",
+    )?]);
+    let video = client
+        .app()
+        .video(1_i64, "blocking-video-file-id")
+        .duration(45)
+        .width(1280)
+        .height(720)
+        .thumbnail("blocking-video-thumb-id")
+        .caption("blocking video caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .supports_streaming(true)
+        .has_spoiler(true)
+        .reply_to_message(MessageId(67))
+        .message_thread_id(23)
+        .disable_notification(true)
+        .protect_content(true)
+        .reply_markup(video_markup)
+        .send()?;
+    assert_eq!(video.message_id.0, 22);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_create_invoice_link_success() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":"https://t.me/$5678"}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/createInvoiceLink", 200, response)?;
@@ -404,6 +532,65 @@ async fn blocking_moderation_notice_facade_reuses_text_builder() -> Result<(), D
     assert_eq!(sent.message_id.0, 56);
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_membership_facade_handles_bot_member_and_capabilities() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/getMe").respond_json(
+            200,
+            r#"{"ok":true,"result":{"id":999,"is_bot":true,"first_name":"tele","username":"tele_blocking_bot"}}"#,
+        ),
+        RequestExpectation::post("/bot123:abc/getChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":999")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/getMe").respond_json(
+            200,
+            r#"{"ok":true,"result":{"id":999,"is_bot":true,"first_name":"tele","username":"tele_blocking_bot"}}"#,
+        ),
+        RequestExpectation::post("/bot123:abc/getChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":999")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/getChatAdministrators")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":[{"status":"administrator","user":{"id":999,"is_bot":true,"first_name":"tele"},"can_manage_chat":true,"can_delete_messages":true},{"status":"administrator","user":{"id":701,"is_bot":false,"first_name":"owner"},"can_manage_chat":true,"can_restrict_members":true}]}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = BlockingClient::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let membership = client.app().membership();
+
+    let bot_member = membership.bot_member(-10010_i64)?;
+    assert_eq!(bot_member.user().id.0, 999);
+    assert!(bot_member.has_capability(ChatAdministratorCapability::ManageChat));
+
+    let missing = membership.bot_missing_capabilities(
+        -10010_i64,
+        &[
+            ChatAdministratorCapability::ManageChat,
+            ChatAdministratorCapability::RestrictMembers,
+        ],
+    )?;
+    assert_eq!(missing, vec![ChatAdministratorCapability::RestrictMembers]);
+
+    let administrators = membership.administrators(-10010_i64)?;
+    assert_eq!(administrators.len(), 2);
+
+    join_server(server)?;
     Ok(())
 }
 
