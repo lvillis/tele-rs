@@ -8,7 +8,7 @@ use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailab
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
     GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
-    InlineQueryResult, InlineQueryResultsButton, LabeledPrice, MessageId, ParseMode,
+    InlineQueryResult, InlineQueryResultsButton, InputMedia, LabeledPrice, MessageId, ParseMode,
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
@@ -219,6 +219,35 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
 }
 
 #[tokio::test]
+async fn app_callback_answer_builder_supports_common_options() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 5] = [
+        "\"callback_query_id\":\"callback-42\"",
+        "\"text\":\"Updated\"",
+        "\"show_alert\":true",
+        "\"url\":\"https://example.com/callback\"",
+        "\"cache_time\":30",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/answerCallbackQuery", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let ok = client
+        .app()
+        .callback_answer("callback-42")
+        .text("Updated")
+        .show_alert(true)
+        .url("https://example.com/callback")
+        .cache_time(30)
+        .send()
+        .await?;
+    assert!(ok);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn app_media_builders_support_common_send_options() -> Result<(), DynError> {
     let expectations = vec![
         RequestExpectation::post("/bot123:abc/sendPhoto")
@@ -346,6 +375,227 @@ async fn app_media_builders_support_common_send_options() -> Result<(), DynError
     assert_eq!(video.message_id.0, 12);
 
     join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_richer_media_builders_support_common_send_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendAudio")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"audio\":\"audio-file-id\"")
+            .contains_case_insensitive("\"caption\":\"audio caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":120")
+            .contains_case_insensitive("\"performer\":\"tele band\"")
+            .contains_case_insensitive("\"title\":\"tele song\"")
+            .contains_case_insensitive("\"thumbnail\":\"audio-thumb-id\"")
+            .contains_case_insensitive("\"message_thread_id\":14")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":58")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play audio\"")
+            .contains_case_insensitive("\"callback_data\":\"audio:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":13,"date":1710000005,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendAnimation")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"animation\":\"animation-file-id\"")
+            .contains_case_insensitive("\"caption\":\"animation caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":7")
+            .contains_case_insensitive("\"width\":480")
+            .contains_case_insensitive("\"height\":320")
+            .contains_case_insensitive("\"thumbnail\":\"animation-thumb-id\"")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"message_thread_id\":15")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":59")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play animation\"")
+            .contains_case_insensitive("\"callback_data\":\"animation:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":14,"date":1710000006,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVoice")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"voice\":\"voice-file-id\"")
+            .contains_case_insensitive("\"caption\":\"voice caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":25")
+            .contains_case_insensitive("\"message_thread_id\":16")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":60")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play voice\"")
+            .contains_case_insensitive("\"callback_data\":\"voice:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":15,"date":1710000007,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendSticker")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"sticker\":\"sticker-file-id\"")
+            .contains_case_insensitive("\"emoji\":\":fire:\"")
+            .contains_case_insensitive("\"message_thread_id\":17")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":16,"date":1710000008,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendMediaGroup")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"media\":[{\"type\":\"photo\",\"media\":\"group-photo-file-id\",\"caption\":\"group photo caption\"")
+            .contains_case_insensitive("\"type\":\"video\",\"media\":\"group-video-file-id\",\"caption\":\"group video caption\"")
+            .contains_case_insensitive("\"supports_streaming\":true")
+            .contains_case_insensitive("\"message_thread_id\":18")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":62")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":[{"message_id":17,"date":1710000009,"chat":{"id":1,"type":"private"}},{"message_id":18,"date":1710000010,"chat":{"id":1,"type":"private"}}]}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let audio_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play audio",
+        "audio:1",
+    )?]);
+    let audio = client
+        .app()
+        .audio(1_i64, "audio-file-id")
+        .caption("audio caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(120)
+        .performer("tele band")
+        .title("tele song")
+        .thumbnail("audio-thumb-id")
+        .reply_to_message(MessageId(58))
+        .message_thread_id(14)
+        .reply_markup(audio_markup)
+        .send()
+        .await?;
+    assert_eq!(audio.message_id.0, 13);
+
+    let animation_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play animation",
+        "animation:1",
+    )?]);
+    let animation = client
+        .app()
+        .animation(1_i64, "animation-file-id")
+        .caption("animation caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(7)
+        .width(480)
+        .height(320)
+        .thumbnail("animation-thumb-id")
+        .has_spoiler(true)
+        .reply_to_message(MessageId(59))
+        .message_thread_id(15)
+        .reply_markup(animation_markup)
+        .send()
+        .await?;
+    assert_eq!(animation.message_id.0, 14);
+
+    let voice_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play voice",
+        "voice:1",
+    )?]);
+    let voice = client
+        .app()
+        .voice(1_i64, "voice-file-id")
+        .caption("voice caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(25)
+        .reply_to_message(MessageId(60))
+        .message_thread_id(16)
+        .reply_markup(voice_markup)
+        .send()
+        .await?;
+    assert_eq!(voice.message_id.0, 15);
+
+    let sticker_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review sticker",
+        "sticker:1",
+    )?]);
+    let sticker = client
+        .app()
+        .sticker(1_i64, "sticker-file-id")
+        .emoji(":fire:")
+        .reply_to_message(MessageId(61))?
+        .message_thread_id(17)
+        .reply_markup(sticker_markup)?
+        .send()
+        .await?;
+    assert_eq!(sticker.message_id.0, 16);
+
+    let group = client
+        .app()
+        .media_group(
+            1_i64,
+            vec![
+                serde_json::from_value::<InputMedia>(serde_json::json!({
+                    "type": "photo",
+                    "media": "group-photo-file-id",
+                    "caption": "group photo caption",
+                    "parse_mode": "MarkdownV2"
+                }))?,
+                serde_json::from_value::<InputMedia>(serde_json::json!({
+                    "type": "video",
+                    "media": "group-video-file-id",
+                    "caption": "group video caption",
+                    "parse_mode": "MarkdownV2",
+                    "width": 1920,
+                    "height": 1080,
+                    "duration": 30,
+                    "supports_streaming": true
+                }))?,
+            ],
+        )?
+        .reply_to_message(MessageId(62))
+        .message_thread_id(18)
+        .send()
+        .await?;
+    assert_eq!(group.len(), 2);
+    assert_eq!(group[0].message_id.0, 17);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_sticker_builder_supports_common_send_options() -> Result<(), DynError> {
+    let client = Client::builder("https://api.telegram.org")?
+        .bot_token("123:abc")?
+        .build()?;
+    let markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review sticker",
+        "sticker:1",
+    )?]);
+
+    let request = client
+        .app()
+        .sticker(1_i64, "sticker-file-id")
+        .emoji(":fire:")
+        .reply_to_message(MessageId(61))?
+        .message_thread_id(17)
+        .reply_markup(markup)?
+        .into_request();
+
+    assert_eq!(request.emoji.as_deref(), Some(":fire:"));
+    assert_eq!(request.message_thread_id, Some(17));
+    assert_eq!(
+        request.reply_parameters,
+        Some(serde_json::json!({"message_id":61}))
+    );
+    assert_eq!(
+        request.reply_markup,
+        Some(serde_json::json!({
+            "inline_keyboard": [[{"text":"Review sticker","callback_data":"sticker:1"}]]
+        }))
+    );
+
     Ok(())
 }
 
@@ -1094,6 +1344,33 @@ async fn app_photo_builder_send_upload_success() -> Result<(), DynError> {
         .send_upload(&file)
         .await?;
     assert_eq!(message.message_id.0, 102);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_audio_builder_send_upload_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":103,"date":1710000011,"chat":{"id":1,"type":"private"}}}"#;
+    const CHECKS: [&str; 5] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"caption\"",
+        "name=\"audio\"; filename=\"builder-audio.mp3\"",
+        "binary-builder-audio-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendAudio", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let file = UploadFile::from_bytes("builder-audio.mp3", b"binary-builder-audio-data".to_vec())?;
+    let message = client
+        .app()
+        .audio(1_i64, "ignored-in-multipart")
+        .caption("builder audio upload")
+        .send_upload(&file)
+        .await?;
+    assert_eq!(message.message_id.0, 103);
 
     join_server(handle)?;
     Ok(())

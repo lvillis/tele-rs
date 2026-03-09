@@ -9,8 +9,10 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_async")]
 pub use crate::client::{
-    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
+    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
+    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
+    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
 };
 pub use crate::client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -20,9 +22,12 @@ pub use crate::client::{
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{
-    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
-    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
+    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
+    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
+    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};

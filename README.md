@@ -162,12 +162,15 @@ async fn main() -> Result<(), tele::Error> {
 
 Use the facades by plane:
 
-- `context.app()` / `client.app()`: runtime business code such as text/media sends, callbacks, Web App replies, moderation, and membership/capability checks.
+- `context.app()` / `client.app()`: runtime business code such as text/media sends, callback answers, Web App replies, moderation, and membership/capability checks.
 - `client.control()`: startup/bootstrap, router preparation, outbox, and other orchestration concerns.
 - `client.raw()` / `client.typed()`: low-level escape hatches when a high-level facade is intentionally not enough.
 
 For governance flows, `context.app().moderation().notice()` reuses the same text-send builder
 instead of forcing moderation code back to raw request structs.
+
+For richer runtime sends, prefer `client.app().callback_answer(...)` for callback-query options and
+`client.app().audio()/animation()/voice()/sticker()/media_group()` before dropping to raw requests.
 
 For service-style integration patterns (`tokio::spawn`, graceful shutdown, bot + HTTP in one app),
 see [`crates/tele/docs/runtime-integration.md`](crates/tele/docs/runtime-integration.md).

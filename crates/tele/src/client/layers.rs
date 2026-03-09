@@ -14,9 +14,11 @@ use crate::types::command::{
 };
 use crate::types::common::{ChatId, MessageId, ParseMode, UserId};
 use crate::types::message::{
-    Message, SendDocumentRequest, SendMessageRequest, SendPhotoRequest, SendVideoRequest,
-    SentWebAppMessage,
+    InputMedia, Message, SendAnimationRequest, SendAudioRequest, SendDocumentRequest,
+    SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendVideoRequest,
+    SendVoiceRequest, SentWebAppMessage,
 };
+use crate::types::sticker::SendStickerRequest;
 use crate::types::telegram::{
     InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters, WebAppData,
 };
@@ -42,11 +44,17 @@ mod typed;
 mod web_app;
 
 #[cfg(feature = "_async")]
-pub use app::{AppApi, DocumentSendBuilder, PhotoSendBuilder, TextSendBuilder, VideoSendBuilder};
+pub use app::{
+    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, DocumentSendBuilder,
+    MediaGroupSendBuilder, PhotoSendBuilder, StickerSendBuilder, TextSendBuilder, VideoSendBuilder,
+    VoiceSendBuilder,
+};
 #[cfg(feature = "_blocking")]
 pub use app::{
-    BlockingAppApi, BlockingDocumentSendBuilder, BlockingPhotoSendBuilder, BlockingTextSendBuilder,
-    BlockingVideoSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
+    BlockingCallbackAnswerBuilder, BlockingDocumentSendBuilder, BlockingMediaGroupSendBuilder,
+    BlockingPhotoSendBuilder, BlockingStickerSendBuilder, BlockingTextSendBuilder,
+    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
 };
 pub use bootstrap::{
     BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,

@@ -6,7 +6,7 @@
 //! Recommended stable surface:
 //!
 //! - `client.app()` / `context.app()` for runtime business code such as text/media sends,
-//!   replies, callbacks, Web App flows, moderation, and membership/capability checks.
+//!   replies, callback answers, Web App flows, moderation, and membership/capability checks.
 //! - `client.control()` for startup/setup/orchestration such as bootstrap, router preparation,
 //!   and outbox management.
 //! - `client.raw()` / `client.typed()` / `client.advanced()` as lower-level escape hatches when
@@ -37,9 +37,10 @@
 //!
 //! With `feature = "bot"`, prefer `context.app()` inside handlers and `client.control()` for
 //! startup/bootstrap/outbox orchestration. For richer runtime flows, prefer
-//! `client.app().photo()/document()/video()` and `client.app().membership()` before dropping to
-//! raw request structs. The package README and `examples/` directory contain the minimal bot and
-//! API layer walkthroughs.
+//! `client.app().callback_answer(...)`,
+//! `client.app().photo()/document()/video()/audio()/animation()/voice()/sticker()/media_group()`,
+//! and `client.app().membership()` before dropping to raw request structs. The package README and
+//! `examples/` directory contain the minimal bot and API layer walkthroughs.
 
 #[cfg(not(any(feature = "_async", feature = "_blocking")))]
 compile_error!(
@@ -88,8 +89,10 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_async")]
 pub use client::{
-    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
+    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
+    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
+    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
 };
 pub use client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -99,9 +102,12 @@ pub use client::{
 };
 #[cfg(feature = "_blocking")]
 pub use client::{
-    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
-    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
+    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
+    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
+    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};

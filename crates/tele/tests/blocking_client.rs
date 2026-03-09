@@ -6,7 +6,8 @@ use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
 use tele::types::{
     ChatAdministratorCapability, CreateInvoiceLinkRequest, GetChatMemberCountRequest,
-    InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MessageId, ParseMode, WebAppData,
+    InlineKeyboardButton, InlineKeyboardMarkup, InputMedia, LabeledPrice, MessageId, ParseMode,
+    WebAppData,
 };
 use tele::{
     BanMemberOptions, BlockingClient, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions,
@@ -333,6 +334,36 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
 }
 
 #[tokio::test]
+async fn blocking_callback_answer_builder_supports_common_options() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 5] = [
+        "\"callback_query_id\":\"blocking-callback-42\"",
+        "\"text\":\"Updated\"",
+        "\"show_alert\":true",
+        "\"url\":\"https://example.com/blocking-callback\"",
+        "\"cache_time\":45",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/answerCallbackQuery", 200, response, &CHECKS)?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let ok = client
+        .app()
+        .callback_answer("blocking-callback-42")
+        .text("Updated")
+        .show_alert(true)
+        .url("https://example.com/blocking-callback")
+        .cache_time(45)
+        .send()?;
+    assert!(ok);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_media_builders_support_common_send_options() -> Result<(), DynError> {
     let expectations = vec![
         RequestExpectation::post("/bot123:abc/sendPhoto")
@@ -457,6 +488,222 @@ async fn blocking_media_builders_support_common_send_options() -> Result<(), Dyn
     assert_eq!(video.message_id.0, 22);
 
     join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_richer_media_builders_support_common_send_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendAudio")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"audio\":\"blocking-audio-file-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking audio caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":150")
+            .contains_case_insensitive("\"performer\":\"blocking band\"")
+            .contains_case_insensitive("\"title\":\"blocking song\"")
+            .contains_case_insensitive("\"thumbnail\":\"blocking-audio-thumb-id\"")
+            .contains_case_insensitive("\"message_thread_id\":24")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":68")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play blocking audio\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-audio:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":23,"date":1710000013,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendAnimation")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"animation\":\"blocking-animation-file-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking animation caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":9")
+            .contains_case_insensitive("\"width\":640")
+            .contains_case_insensitive("\"height\":360")
+            .contains_case_insensitive("\"thumbnail\":\"blocking-animation-thumb-id\"")
+            .contains_case_insensitive("\"has_spoiler\":true")
+            .contains_case_insensitive("\"message_thread_id\":25")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":69")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play blocking animation\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-animation:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":24,"date":1710000014,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVoice")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"voice\":\"blocking-voice-file-id\"")
+            .contains_case_insensitive("\"caption\":\"blocking voice caption\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"duration\":31")
+            .contains_case_insensitive("\"message_thread_id\":26")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":70")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play blocking voice\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-voice:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":25,"date":1710000015,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendSticker")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"sticker\":\"blocking-sticker-file-id\"")
+            .contains_case_insensitive("\"emoji\":\":ok:\"")
+            .contains_case_insensitive("\"message_thread_id\":27")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":26,"date":1710000016,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendMediaGroup")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"media\":[{\"type\":\"photo\",\"media\":\"blocking-group-photo-file-id\",\"caption\":\"blocking group photo caption\"")
+            .contains_case_insensitive("\"type\":\"video\",\"media\":\"blocking-group-video-file-id\",\"caption\":\"blocking group video caption\"")
+            .contains_case_insensitive("\"supports_streaming\":true")
+            .contains_case_insensitive("\"message_thread_id\":28")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":72")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":[{"message_id":27,"date":1710000017,"chat":{"id":1,"type":"private"}},{"message_id":28,"date":1710000018,"chat":{"id":1,"type":"private"}}]}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = BlockingClient::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+
+    let audio_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play blocking audio",
+        "blocking-audio:1",
+    )?]);
+    let audio = client
+        .app()
+        .audio(1_i64, "blocking-audio-file-id")
+        .caption("blocking audio caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(150)
+        .performer("blocking band")
+        .title("blocking song")
+        .thumbnail("blocking-audio-thumb-id")
+        .reply_to_message(MessageId(68))
+        .message_thread_id(24)
+        .reply_markup(audio_markup)
+        .send()?;
+    assert_eq!(audio.message_id.0, 23);
+
+    let animation_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play blocking animation",
+        "blocking-animation:1",
+    )?]);
+    let animation = client
+        .app()
+        .animation(1_i64, "blocking-animation-file-id")
+        .caption("blocking animation caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(9)
+        .width(640)
+        .height(360)
+        .thumbnail("blocking-animation-thumb-id")
+        .has_spoiler(true)
+        .reply_to_message(MessageId(69))
+        .message_thread_id(25)
+        .reply_markup(animation_markup)
+        .send()?;
+    assert_eq!(animation.message_id.0, 24);
+
+    let voice_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play blocking voice",
+        "blocking-voice:1",
+    )?]);
+    let voice = client
+        .app()
+        .voice(1_i64, "blocking-voice-file-id")
+        .caption("blocking voice caption")
+        .parse_mode(ParseMode::MarkdownV2)
+        .duration(31)
+        .reply_to_message(MessageId(70))
+        .message_thread_id(26)
+        .reply_markup(voice_markup)
+        .send()?;
+    assert_eq!(voice.message_id.0, 25);
+
+    let sticker_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review blocking sticker",
+        "blocking-sticker:1",
+    )?]);
+    let sticker = client
+        .app()
+        .sticker(1_i64, "blocking-sticker-file-id")
+        .emoji(":ok:")
+        .reply_to_message(MessageId(71))?
+        .message_thread_id(27)
+        .reply_markup(sticker_markup)?
+        .send()?;
+    assert_eq!(sticker.message_id.0, 26);
+
+    let group = client
+        .app()
+        .media_group(
+            1_i64,
+            vec![
+                serde_json::from_value::<InputMedia>(serde_json::json!({
+                    "type": "photo",
+                    "media": "blocking-group-photo-file-id",
+                    "caption": "blocking group photo caption",
+                    "parse_mode": "MarkdownV2"
+                }))?,
+                serde_json::from_value::<InputMedia>(serde_json::json!({
+                    "type": "video",
+                    "media": "blocking-group-video-file-id",
+                    "caption": "blocking group video caption",
+                    "parse_mode": "MarkdownV2",
+                    "width": 1280,
+                    "height": 720,
+                    "duration": 45,
+                    "supports_streaming": true
+                }))?,
+            ],
+        )?
+        .reply_to_message(MessageId(72))
+        .message_thread_id(28)
+        .send()?;
+    assert_eq!(group.len(), 2);
+    assert_eq!(group[0].message_id.0, 27);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_sticker_builder_supports_common_send_options() -> Result<(), DynError> {
+    let client = BlockingClient::builder("https://api.telegram.org")?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review blocking sticker",
+        "blocking-sticker:1",
+    )?]);
+
+    let request = client
+        .app()
+        .sticker(1_i64, "blocking-sticker-file-id")
+        .emoji(":ok:")
+        .reply_to_message(MessageId(71))?
+        .message_thread_id(27)
+        .reply_markup(markup)?
+        .into_request();
+
+    assert_eq!(request.emoji.as_deref(), Some(":ok:"));
+    assert_eq!(request.message_thread_id, Some(27));
+    assert_eq!(
+        request.reply_parameters,
+        Some(serde_json::json!({"message_id":71}))
+    );
+    assert_eq!(
+        request.reply_markup,
+        Some(serde_json::json!({
+            "inline_keyboard": [[{"text":"Review blocking sticker","callback_data":"blocking-sticker:1"}]]
+        }))
+    );
+
     Ok(())
 }
 

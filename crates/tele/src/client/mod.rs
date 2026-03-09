@@ -14,8 +14,10 @@ pub use blocking_client::BlockingClient;
 pub use config::{ClientBuilder, RateLimitConfig, RequestDefaults, RetryConfig};
 #[cfg(feature = "_async")]
 pub use layers::{
-    AppApi, ControlApi, DocumentSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, TextSendBuilder, TypedApi, VideoSendBuilder, WebAppApi,
+    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
+    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
+    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
+    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
 };
 pub use layers::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -25,9 +27,12 @@ pub use layers::{
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{
-    BlockingAppApi, BlockingControlApi, BlockingDocumentSendBuilder, BlockingMembershipApi,
-    BlockingModerationApi, BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingTextSendBuilder, BlockingTypedApi, BlockingVideoSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
+    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
+    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
+    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
+    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingSetupApi, BlockingWebAppApi};

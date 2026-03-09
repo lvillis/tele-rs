@@ -7,6 +7,13 @@ pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
+pub(crate) fn serialize_request_value<T>(value: T) -> Result<serde_json::Value>
+where
+    T: Serialize,
+{
+    serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })
+}
+
 pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
     let Some(language_code) = language_code else {
         return Ok(None);
