@@ -31,7 +31,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gifts.as_object().map_or(0, |obj| obj.len())
     );
 
-    let sent = client.app().send_text(chat_id, text).await?;
+    let sent = client
+        .app()
+        .text(chat_id, text)?
+        .disable_notification(true)
+        .send()
+        .await?;
     println!(
         "app: sent message id={} chat_id={}",
         sent.message_id.0, sent.chat.id

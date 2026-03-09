@@ -7,8 +7,9 @@ use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, CreateInvoiceLinkRequest, GetFileRequest,
-    GetMyCommandsRequest, InlineQueryResult, InlineQueryResultsButton, LabeledPrice,
-    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
+    GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult,
+    InlineQueryResultsButton, LabeledPrice, MessageId, ParseMode, SendPhotoRequest,
+    SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -175,13 +176,60 @@ async fn app_send_text_success() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn app_text_builder_supports_markup_and_common_options() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":9,"date":1710000001,"chat":{"id":1,"type":"private"},"text":"hello builder"}}"#;
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendMessage")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"text\":\"hello builder\"")
+            .contains_case_insensitive("\"parse_mode\":\"MarkdownV2\"")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":99")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":55")
+            .contains_case_insensitive("\"link_preview_options\":{\"is_disabled\":true")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Open\"")
+            .contains_case_insensitive("\"callback_data\":\"open:1\"")
+            .respond_json(200, response),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let markup =
+        InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback("Open", "open:1")?]);
+
+    let sent = client
+        .app()
+        .text(1_i64, "hello builder")?
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_to_message(MessageId(55))
+        .message_thread_id(99)
+        .disable_notification(true)
+        .protect_content(true)
+        .disable_link_preview()
+        .reply_markup(markup)
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 9);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn app_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":8,"date":1710000001,"chat":{"id":7001,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server_with_checks(
         "/bot123:abc/sendMessage",
         200,
         response,
-        &["\"chat_id\":7001", "\"text\":\"hello\""],
+        &[
+            "\"chat_id\":7001",
+            "\"text\":\"hello\"",
+            "\"disable_notification\":true",
+        ],
     )?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
@@ -195,7 +243,12 @@ async fn app_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError>
         }
     }))?;
 
-    let sent = client.app().reply_text(&update, "hello").await?;
+    let sent = client
+        .app()
+        .reply(&update, "hello")?
+        .disable_notification(true)
+        .send()
+        .await?;
     assert_eq!(sent.message_id.0, 8);
 
     join_server(handle)?;
@@ -671,6 +724,59 @@ async fn moderation_facade_handles_join_actions_and_member_controls() -> Result<
             .delete_from_update(&message_update)
             .await?
     );
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn moderation_notice_facade_reuses_text_builder() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":56,"date":1710000003,"chat":{"id":-10010,"type":"supergroup","title":"mods"},"message_thread_id":88,"text":"Message removed"}}"#;
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendMessage")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"text\":\"Message removed\"")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":55")
+            .contains_case_insensitive("\"message_thread_id\":88")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive(
+                "\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Review\"",
+            )
+            .contains_case_insensitive("\"callback_data\":\"review:55\"")
+            .respond_json(200, response),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 45,
+        "message": {
+            "message_id": 55,
+            "message_thread_id": 88,
+            "date": 1710000002,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "spam"
+        }
+    }))?;
+    let message = update.message.as_deref().ok_or("missing test message")?;
+    let markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review",
+        "review:55",
+    )?]);
+
+    let sent = client
+        .app()
+        .moderation()
+        .notice()
+        .for_message(message, "Message removed")?
+        .disable_notification(true)
+        .reply_markup(markup)
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 56);
 
     join_server(server)?;
     Ok(())

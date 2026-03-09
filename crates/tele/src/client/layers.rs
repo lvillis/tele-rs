@@ -7,9 +7,11 @@ use crate::client::RetryConfig;
 use crate::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedRequest};
 use crate::types::bot::User;
 use crate::types::command::{BotCommand, GetMyCommandsRequest, SetMyCommandsRequest};
-use crate::types::common::ChatId;
+use crate::types::common::{ChatId, MessageId, ParseMode};
 use crate::types::message::{Message, SendMessageRequest, SentWebAppMessage};
-use crate::types::telegram::{InlineQueryResult, MenuButton, WebAppData};
+use crate::types::telegram::{
+    InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters, WebAppData,
+};
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::UploadFile;
 use crate::{Error, Result};
@@ -34,9 +36,9 @@ mod typed;
 mod web_app;
 
 #[cfg(feature = "_async")]
-pub use app::AppApi;
+pub use app::{AppApi, TextSendBuilder};
 #[cfg(feature = "_blocking")]
-pub use app::BlockingAppApi;
+pub use app::{BlockingAppApi, BlockingTextSendBuilder};
 pub use bootstrap::{
     BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
     BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
@@ -49,8 +51,12 @@ pub use control::ControlApi;
 pub use menu::MenuButtonConfig;
 #[cfg(feature = "_blocking")]
 pub use moderation::BlockingModerationApi;
+#[cfg(feature = "_blocking")]
+pub use moderation::BlockingModerationNoticeApi;
 #[cfg(feature = "_async")]
 pub use moderation::ModerationApi;
+#[cfg(feature = "_async")]
+pub use moderation::ModerationNoticeApi;
 pub use moderation::{BanMemberOptions, RestrictMemberOptions};
 #[cfg(feature = "_blocking")]
 pub use raw::BlockingRawApi;

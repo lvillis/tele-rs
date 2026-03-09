@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
-use tele::types::{CreateInvoiceLinkRequest, GetChatMemberCountRequest, LabeledPrice, WebAppData};
+use tele::types::{
+    CreateInvoiceLinkRequest, GetChatMemberCountRequest, InlineKeyboardButton,
+    InlineKeyboardMarkup, LabeledPrice, MessageId, ParseMode, WebAppData,
+};
 use tele::{
     BanMemberOptions, BlockingClient, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions,
 };
@@ -20,6 +23,21 @@ fn spawn_server(
     let server = FakeTelegramServer::single(
         RequestExpectation::post(expected_path).respond_json(response_status, response_body),
     )?;
+    Ok((server.base_url().to_owned(), server))
+}
+
+fn spawn_server_with_checks(
+    expected_path: &'static str,
+    response_status: u16,
+    response_body: &'static str,
+    required_substrings: &'static [&'static str],
+) -> Result<(String, TestServer), DynError> {
+    let mut expectation =
+        RequestExpectation::post(expected_path).respond_json(response_status, response_body);
+    for required in required_substrings {
+        expectation = expectation.contains_case_insensitive(*required);
+    }
+    let server = FakeTelegramServer::single(expectation)?;
     Ok((server.base_url().to_owned(), server))
 }
 
@@ -271,6 +289,50 @@ async fn blocking_app_send_text_success() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn blocking_text_builder_supports_markup_and_common_options() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":12,"date":1710000001,"chat":{"id":1,"type":"private"},"text":"hello builder"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"chat_id\":1",
+            "\"text\":\"hello builder\"",
+            "\"parse_mode\":\"MarkdownV2\"",
+            "\"disable_notification\":true",
+            "\"protect_content\":true",
+            "\"message_thread_id\":99",
+            "\"reply_parameters\":{\"message_id\":55",
+            "\"link_preview_options\":{\"is_disabled\":true",
+            "\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Open\"",
+            "\"callback_data\":\"open:1\"",
+        ],
+    )?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let markup =
+        InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback("Open", "open:1")?]);
+
+    let sent = client
+        .app()
+        .text(1_i64, "hello builder")?
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_to_message(MessageId(55))
+        .message_thread_id(99)
+        .disable_notification(true)
+        .protect_content(true)
+        .disable_link_preview()
+        .reply_markup(markup)
+        .send()?;
+    assert_eq!(sent.message_id.0, 12);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_create_invoice_link_success() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":"https://t.me/$5678"}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/createInvoiceLink", 200, response)?;
@@ -288,6 +350,58 @@ async fn blocking_create_invoice_link_success() -> Result<(), DynError> {
     )?;
     let link = client.payments().create_invoice_link(&request)?;
     assert_eq!(link, "https://t.me/$5678");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_moderation_notice_facade_reuses_text_builder() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":56,"date":1710000003,"chat":{"id":-10010,"type":"supergroup","title":"mods"},"message_thread_id":88,"text":"Message removed"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"chat_id\":-10010",
+            "\"text\":\"Message removed\"",
+            "\"reply_parameters\":{\"message_id\":55",
+            "\"message_thread_id\":88",
+            "\"disable_notification\":true",
+            "\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Review\"",
+            "\"callback_data\":\"review:55\"",
+        ],
+    )?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let update: tele::types::Update = serde_json::from_value(serde_json::json!({
+        "update_id": 45,
+        "message": {
+            "message_id": 55,
+            "message_thread_id": 88,
+            "date": 1710000002,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "spam"
+        }
+    }))?;
+    let message = update.message.as_deref().ok_or("missing test message")?;
+    let markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Review",
+        "review:55",
+    )?]);
+
+    let sent = client
+        .app()
+        .moderation()
+        .notice()
+        .for_message(message, "Message removed")?
+        .disable_notification(true)
+        .reply_markup(markup)
+        .send()?;
+    assert_eq!(sent.message_id.0, 56);
 
     join_server(handle)?;
     Ok(())

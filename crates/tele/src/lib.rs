@@ -49,7 +49,10 @@ pub use client::BlockingClient;
 #[cfg(feature = "_async")]
 pub use client::Client;
 #[cfg(feature = "_async")]
-pub use client::{AppApi, ControlApi, ModerationApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use client::{
+    AppApi, ControlApi, ModerationApi, ModerationNoticeApi, RawApi, SetupApi, TextSendBuilder,
+    TypedApi, WebAppApi,
+};
 pub use client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
     BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics,
@@ -58,7 +61,8 @@ pub use client::{
 };
 #[cfg(feature = "_blocking")]
 pub use client::{
-    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingRawApi, BlockingTypedApi,
+    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingModerationNoticeApi,
+    BlockingRawApi, BlockingTextSendBuilder, BlockingTypedApi,
 };
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};

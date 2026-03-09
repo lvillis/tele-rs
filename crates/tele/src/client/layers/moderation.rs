@@ -1,4 +1,8 @@
 use super::support::{invalid_request, update_message};
+#[cfg(feature = "_async")]
+use super::{AppApi, TextSendBuilder};
+#[cfg(feature = "_blocking")]
+use super::{BlockingAppApi, BlockingTextSendBuilder};
 #[cfg(feature = "_blocking")]
 use crate::BlockingClient;
 #[cfg(feature = "_async")]
@@ -78,6 +82,49 @@ impl RestrictMemberOptions {
     }
 }
 
+/// Governance notice facade that keeps moderation-related notifications on the app layer.
+#[cfg(feature = "_async")]
+#[derive(Clone)]
+pub struct ModerationNoticeApi {
+    client: Client,
+}
+
+#[cfg(feature = "_async")]
+impl ModerationNoticeApi {
+    fn new(client: Client) -> Self {
+        Self { client }
+    }
+
+    /// Starts a governance notice send to a specific chat.
+    pub fn text(
+        &self,
+        chat_id: impl Into<ChatId>,
+        text: impl Into<String>,
+    ) -> Result<TextSendBuilder> {
+        AppApi::new(self.client.clone()).text(chat_id, text)
+    }
+
+    /// Starts a governance notice send using the canonical reply chat derived from an update.
+    pub fn reply(&self, update: &Update, text: impl Into<String>) -> Result<TextSendBuilder> {
+        AppApi::new(self.client.clone()).reply(update, text)
+    }
+
+    /// Starts a governance notice reply anchored to a specific message.
+    pub fn for_message(
+        &self,
+        message: &Message,
+        text: impl Into<String>,
+    ) -> Result<TextSendBuilder> {
+        let mut builder = self
+            .text(message.chat.id, text)?
+            .reply_to_message(message.message_id);
+        if let Some(message_thread_id) = message.message_thread_id {
+            builder = builder.message_thread_id(message_thread_id);
+        }
+        Ok(builder)
+    }
+}
+
 /// App-facing moderation/admin facade for runtime governance actions.
 #[cfg(feature = "_async")]
 #[derive(Clone)]
@@ -89,6 +136,11 @@ pub struct ModerationApi {
 impl ModerationApi {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Dedicated governance notice facade that reuses the canonical app text builder.
+    pub fn notice(&self) -> ModerationNoticeApi {
+        ModerationNoticeApi::new(self.client.clone())
     }
 
     pub async fn approve_join_request(
@@ -247,6 +299,50 @@ impl ModerationApi {
     }
 }
 
+/// Blocking governance notice facade that keeps moderation-related notifications on the app layer.
+#[cfg(feature = "_blocking")]
+#[derive(Clone)]
+pub struct BlockingModerationNoticeApi {
+    client: BlockingClient,
+}
+
+#[cfg(feature = "_blocking")]
+impl BlockingModerationNoticeApi {
+    fn new(client: BlockingClient) -> Self {
+        Self { client }
+    }
+
+    pub fn text(
+        &self,
+        chat_id: impl Into<ChatId>,
+        text: impl Into<String>,
+    ) -> Result<BlockingTextSendBuilder> {
+        BlockingAppApi::new(self.client.clone()).text(chat_id, text)
+    }
+
+    pub fn reply(
+        &self,
+        update: &Update,
+        text: impl Into<String>,
+    ) -> Result<BlockingTextSendBuilder> {
+        BlockingAppApi::new(self.client.clone()).reply(update, text)
+    }
+
+    pub fn for_message(
+        &self,
+        message: &Message,
+        text: impl Into<String>,
+    ) -> Result<BlockingTextSendBuilder> {
+        let mut builder = self
+            .text(message.chat.id, text)?
+            .reply_to_message(message.message_id);
+        if let Some(message_thread_id) = message.message_thread_id {
+            builder = builder.message_thread_id(message_thread_id);
+        }
+        Ok(builder)
+    }
+}
+
 /// Blocking app-facing moderation/admin facade.
 #[cfg(feature = "_blocking")]
 #[derive(Clone)]
@@ -258,6 +354,10 @@ pub struct BlockingModerationApi {
 impl BlockingModerationApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
+    }
+
+    pub fn notice(&self) -> BlockingModerationNoticeApi {
+        BlockingModerationNoticeApi::new(self.client.clone())
     }
 
     pub fn approve_join_request(

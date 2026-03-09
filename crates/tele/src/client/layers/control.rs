@@ -32,6 +32,7 @@ impl ControlApi {
     }
 
     #[cfg(feature = "bot")]
+    /// Runs setup bootstrap once and then prepares router runtime state from the bootstrap result.
     pub async fn bootstrap_router(
         &self,
         router: &crate::bot::Router,
@@ -42,6 +43,7 @@ impl ControlApi {
     }
 
     #[cfg(feature = "bot")]
+    /// Runs setup bootstrap with retry/backoff and then prepares router runtime state.
     pub async fn bootstrap_router_with_retry(
         &self,
         router: &crate::bot::Router,

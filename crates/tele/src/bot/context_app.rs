@@ -21,6 +21,24 @@ impl ContextAppApi {
         self.client.app().web_app()
     }
 
+    /// Starts a high-level text send to a target chat.
+    pub fn text(
+        &self,
+        chat_id: impl Into<ChatId>,
+        text: impl Into<String>,
+    ) -> Result<crate::client::TextSendBuilder> {
+        self.client.app().text(chat_id, text)
+    }
+
+    /// Starts a high-level text send using the canonical reply chat derived from an update.
+    pub fn reply(
+        &self,
+        update: &Update,
+        text: impl Into<String>,
+    ) -> Result<crate::client::TextSendBuilder> {
+        self.client.app().reply(update, text)
+    }
+
     /// Sends plain text to a target chat.
     pub async fn send_text(
         &self,

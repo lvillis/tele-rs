@@ -25,7 +25,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 - Messaging: text/media send, forward/copy, live location, poll, dice, edit/delete
 - Chats: member/admin queries, permissions, moderation, invite links, pin/title/description
 - Updates: polling, webhook config, callback/inline query answer
-- API layers: `client.raw()` (raw method calls), `client.typed()` (request-associated response type), `client.app()` (request helpers), `client.control()` (setup/bootstrap)
+- API layers: `client.raw()` (raw method calls), `client.typed()` (typed request/response escape hatch), `client.app()` (app-facing runtime facade), `client.control()` (setup/bootstrap/orchestration)
 - Bot runtime (`feature = "bot"`): router + middleware, `UpdateSource` + `BotEngine`/`BotApp`, spawn-safe `run`/`run_until`, long polling source (duplicate `update_id` filtering + optional offset persistence), webhook runner, runtime event hooks (`EngineEvent`)
 - Bot ergonomics (`feature = "bot"`): typed extractors (`TextInput`/`CallbackInput`/`WebAppInput`/`WriteAccessAllowedInput`/`TypedCommandInput`), extractor combinators (`on_extracted_filter` / `on_extracted_map` / `on_extracted_guard`), declarative `ErrorPolicy`, `UpdateExt` helpers, `ChatSession` FSM wrapper, typed command routing
 - Kind routing (`feature = "bot"`): `UpdateKind` / `MessageKind` classification, `on_update_kind` / `on_message_kind` / `on_any_message_kind`, `UnknownKindsDetected` runtime event. Guide: [`crates/tele/docs/kind-routing.md`](crates/tele/docs/kind-routing.md)
@@ -50,7 +50,7 @@ Ergonomic Telegram Bot API SDK for Rust, powered by `reqx`.
 ## Quick Start (async)
 
 ```rust,no_run
-use tele::{Client, ParseMode, SendMessageRequest};
+use tele::{Client, ParseMode};
 
 #[tokio::main]
 async fn main() -> Result<(), tele::Error> {
@@ -61,9 +61,12 @@ async fn main() -> Result<(), tele::Error> {
     let me = client.bot().get_me().await?;
     println!("bot username: {:?}", me.username);
 
-    let request = SendMessageRequest::new(123456789_i64, "hello from tele")?
-        .parse_mode(ParseMode::MarkdownV2);
-    let _sent = client.messages().send_message(&request).await?;
+    let _sent = client
+        .app()
+        .text(123456789_i64, "hello from tele")?
+        .parse_mode(ParseMode::MarkdownV2)
+        .send()
+        .await?;
 
     Ok(())
 }
@@ -91,7 +94,7 @@ async fn main() -> Result<(), tele::Error> {
 ## Quick Start (blocking)
 
 ```rust,no_run
-use tele::{BlockingClient, SendMessageRequest};
+use tele::{BlockingClient, ParseMode};
 
 fn main() -> Result<(), tele::Error> {
     let client = BlockingClient::builder("https://api.telegram.org")?
@@ -101,8 +104,11 @@ fn main() -> Result<(), tele::Error> {
     let me = client.bot().get_me()?;
     println!("bot id: {}", me.id.0);
 
-    let request = SendMessageRequest::new(123456789_i64, "hello")?;
-    let _sent = client.messages().send_message(&request)?;
+    let _sent = client
+        .app()
+        .text(123456789_i64, "hello")?
+        .parse_mode(ParseMode::MarkdownV2)
+        .send()?;
 
     Ok(())
 }
@@ -123,7 +129,7 @@ async fn main() -> Result<(), tele::Error> {
 
     let mut router = Router::new();
     router.on_command("start", |context: BotContext, update: Update| async move {
-        let _ = context.app().reply_text(&update, "bot is running").await?;
+        let _ = context.app().reply(&update, "bot is running")?.send().await?;
         Ok(())
     });
     router.on_extracted::<TextInput, _, _>(|context: BotContext, update: Update, text| async move {
@@ -132,7 +138,9 @@ async fn main() -> Result<(), tele::Error> {
         };
         let _ = context
             .app()
-            .send_text(chat_id, format!("echo: {}", text.into_inner()))
+            .text(chat_id, format!("echo: {}", text.into_inner()))?
+            .disable_notification(true)
+            .send()
             .await?;
         Ok(())
     });
@@ -146,8 +154,14 @@ async fn main() -> Result<(), tele::Error> {
 }
 ```
 
-Inside handlers, prefer `context.app()`. For startup/bootstrap/outbox orchestration, prefer
-`client.control()`.
+Use the facades by plane:
+
+- `context.app()` / `client.app()`: runtime business code such as sends, callbacks, Web App replies, and moderation.
+- `client.control()`: startup/bootstrap, router preparation, outbox, and other orchestration concerns.
+- `client.raw()` / `client.typed()`: low-level escape hatches when a high-level facade is intentionally not enough.
+
+For governance flows, `context.app().moderation().notice()` reuses the same text-send builder
+instead of forcing moderation code back to raw request structs.
 
 For service-style integration patterns (`tokio::spawn`, graceful shutdown, bot + HTTP in one app),
 see [`crates/tele/docs/runtime-integration.md`](crates/tele/docs/runtime-integration.md).
@@ -169,7 +183,12 @@ async fn main() -> Result<(), tele::Error> {
         .typed()
         .call(&AdvancedGetAvailableGiftsRequest::new())
         .await?;
-    let _sent = client.app().send_text(123456789_i64, "hello from app layer").await?;
+    let _sent = client
+        .app()
+        .text(123456789_i64, "hello from app layer")?
+        .disable_notification(true)
+        .send()
+        .await?;
     Ok(())
 }
 ```
