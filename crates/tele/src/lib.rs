@@ -49,17 +49,19 @@ pub use client::BlockingClient;
 #[cfg(feature = "_async")]
 pub use client::Client;
 #[cfg(feature = "_async")]
-pub use client::{AppApi, ControlApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use client::{AppApi, ControlApi, ModerationApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use client::{
+    BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics,
+    BootstrapStepPhase, BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric,
+    ClientMetricHook, MenuButtonConfig, RestrictMemberOptions, WebAppQueryPayload,
+};
 #[cfg(feature = "_blocking")]
-pub use client::{BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi};
+pub use client::{
+    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingRawApi, BlockingTypedApi,
+};
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};
-pub use client::{
-    BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
-    BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
-    BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric, ClientMetricHook, MenuButtonConfig,
-    WebAppQueryPayload,
-};
 pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 pub use error::{Error, ErrorClass, Result};
 #[cfg(feature = "macros")]

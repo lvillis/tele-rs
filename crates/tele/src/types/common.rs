@@ -8,6 +8,18 @@ pub struct UserId(pub i64);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct MessageId(pub i64);
 
+impl From<i64> for UserId {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for MessageId {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
 /// Chat id can be numeric or @username string.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(untagged)]

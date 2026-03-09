@@ -26,6 +26,7 @@ mod app;
 mod bootstrap;
 mod control;
 mod menu;
+mod moderation;
 mod raw;
 mod setup;
 mod support;
@@ -46,6 +47,11 @@ pub use control::BlockingControlApi;
 #[cfg(feature = "_async")]
 pub use control::ControlApi;
 pub use menu::MenuButtonConfig;
+#[cfg(feature = "_blocking")]
+pub use moderation::BlockingModerationApi;
+#[cfg(feature = "_async")]
+pub use moderation::ModerationApi;
+pub use moderation::{BanMemberOptions, RestrictMemberOptions};
 #[cfg(feature = "_blocking")]
 pub use raw::BlockingRawApi;
 #[cfg(feature = "_async")]

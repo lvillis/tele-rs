@@ -8,17 +8,19 @@ pub use crate::{ClientBuilder, Error, Result};
 pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_init_data};
 
 #[cfg(feature = "_async")]
-pub use crate::client::{AppApi, ControlApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use crate::client::{AppApi, ControlApi, ModerationApi, RawApi, SetupApi, TypedApi, WebAppApi};
+pub use crate::client::{
+    BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
+    BootstrapPlan, BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics,
+    BootstrapStepPhase, BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric,
+    ClientMetricHook, MenuButtonConfig, RestrictMemberOptions, WebAppQueryPayload,
+};
 #[cfg(feature = "_blocking")]
-pub use crate::client::{BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi};
+pub use crate::client::{
+    BlockingAppApi, BlockingControlApi, BlockingModerationApi, BlockingRawApi, BlockingTypedApi,
+};
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};
-pub use crate::client::{
-    BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
-    BootstrapReport, BootstrapRetryPolicy, BootstrapStepDiagnostics, BootstrapStepPhase,
-    BootstrapStepStatus, BootstrapSyncStepReport, ClientMetric, ClientMetricHook, MenuButtonConfig,
-    WebAppQueryPayload,
-};
 
 pub use crate::types::{
     BotCommand, CallbackCodec, CallbackPayload, ChatAdministratorCapability, ChatId,

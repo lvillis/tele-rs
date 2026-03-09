@@ -27,6 +27,11 @@ impl AppApi {
         Self { client }
     }
 
+    /// Dedicated moderation/admin facade for governance actions.
+    pub fn moderation(&self) -> ModerationApi {
+        ModerationApi::new(self.client.clone())
+    }
+
     /// Dedicated Web App runtime facade.
     pub fn web_app(&self) -> WebAppApi {
         WebAppApi::new(self.client.clone())
@@ -84,6 +89,10 @@ pub struct BlockingAppApi {
 impl BlockingAppApi {
     pub(crate) fn new(client: BlockingClient) -> Self {
         Self { client }
+    }
+
+    pub fn moderation(&self) -> BlockingModerationApi {
+        BlockingModerationApi::new(self.client.clone())
     }
 
     pub fn web_app(&self) -> BlockingWebAppApi {

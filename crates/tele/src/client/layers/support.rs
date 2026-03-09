@@ -69,6 +69,26 @@ pub(crate) fn update_chat_id(update: &Update) -> Option<i64> {
         .map(|message| message.chat.id)
 }
 
+pub(crate) fn update_message(update: &Update) -> Option<&Message> {
+    if let Some(message) = update.message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.edited_message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.channel_post.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.edited_channel_post.as_deref() {
+        return Some(message);
+    }
+
+    update
+        .callback_query
+        .as_ref()
+        .and_then(|query| query.message.as_deref())
+}
+
 pub(crate) fn reply_chat_id(update: &Update) -> Result<i64> {
     if let Some(request) = update.chat_join_request.as_ref() {
         return Ok(request.user_chat_id);

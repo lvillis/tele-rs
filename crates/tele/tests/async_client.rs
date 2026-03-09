@@ -11,8 +11,8 @@ use tele::types::{
     SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
 };
 use tele::{
-    BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus, Client,
-    ClientMetric, Error, ErrorClass, MenuButtonConfig, UploadFile,
+    BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
+    Client, ClientMetric, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions, UploadFile,
 };
 
 #[cfg(feature = "bot")]
@@ -562,6 +562,115 @@ async fn setup_and_web_app_facades_handle_menu_button_and_query_answer() -> Resu
         .answer_query_from_payload::<serde_json::Value, _>(&web_app_data, result)
         .await?;
     assert_eq!(sent.inline_message_id, "inline-99");
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn moderation_facade_handles_join_actions_and_member_controls() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/approveChatJoinRequest")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":701")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/declineChatJoinRequest")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":701")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/banChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":701")
+            .contains_case_insensitive("\"until_date\":1710009999")
+            .contains_case_insensitive("\"revoke_messages\":true")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/restrictChatMember")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"user_id\":701")
+            .contains_case_insensitive("\"can_send_messages\":false")
+            .contains_case_insensitive("\"can_manage_topics\":false")
+            .contains_case_insensitive("\"use_independent_chat_permissions\":true")
+            .contains_case_insensitive("\"until_date\":1710011111")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/deleteMessage")
+            .contains_case_insensitive("\"chat_id\":-10010")
+            .contains_case_insensitive("\"message_id\":55")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+    let join_update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 43,
+        "chat_join_request": {
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "user_chat_id": 7001,
+            "date": 1710000001
+        }
+    }))?;
+    let message_update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 44,
+        "message": {
+            "message_id": 55,
+            "date": 1710000002,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "spam"
+        }
+    }))?;
+    let message = message_update
+        .message
+        .as_deref()
+        .ok_or("missing test message")?;
+
+    assert!(
+        client
+            .app()
+            .moderation()
+            .approve_join_request_from_update(&join_update)
+            .await?
+    );
+    assert!(
+        client
+            .app()
+            .moderation()
+            .decline_join_request_from_update(&join_update)
+            .await?
+    );
+    assert!(
+        client
+            .app()
+            .moderation()
+            .ban_author_with(
+                message,
+                BanMemberOptions::new()
+                    .until_date(1710009999)
+                    .revoke_messages(true),
+            )
+            .await?
+    );
+    assert!(
+        client
+            .app()
+            .moderation()
+            .mute_author_with(
+                message,
+                RestrictMemberOptions::new()
+                    .use_independent_chat_permissions(true)
+                    .until_date(1710011111),
+            )
+            .await?
+    );
+    assert!(
+        client
+            .app()
+            .moderation()
+            .delete_from_update(&message_update)
+            .await?
+    );
 
     join_server(server)?;
     Ok(())

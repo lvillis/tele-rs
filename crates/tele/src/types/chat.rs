@@ -484,12 +484,58 @@ pub struct BanChatMemberRequest {
     pub revoke_messages: Option<bool>,
 }
 
+impl BanChatMemberRequest {
+    pub fn new(chat_id: impl Into<ChatId>, user_id: impl Into<UserId>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            user_id: user_id.into(),
+            until_date: None,
+            revoke_messages: None,
+        }
+    }
+
+    pub fn until_date(mut self, until_date: i64) -> Self {
+        self.until_date = Some(until_date);
+        self
+    }
+
+    pub fn revoke_messages(mut self, revoke_messages: bool) -> Self {
+        self.revoke_messages = Some(revoke_messages);
+        self
+    }
+
+    pub fn with_until_date(mut self, until_date: Option<i64>) -> Self {
+        self.until_date = until_date;
+        self
+    }
+
+    pub fn with_revoke_messages(mut self, revoke_messages: Option<bool>) -> Self {
+        self.revoke_messages = revoke_messages;
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct UnbanChatMemberRequest {
     pub chat_id: ChatId,
     pub user_id: UserId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub only_if_banned: Option<bool>,
+}
+
+impl UnbanChatMemberRequest {
+    pub fn new(chat_id: impl Into<ChatId>, user_id: impl Into<UserId>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            user_id: user_id.into(),
+            only_if_banned: None,
+        }
+    }
+
+    pub fn only_if_banned(mut self, only_if_banned: bool) -> Self {
+        self.only_if_banned = Some(only_if_banned);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -501,6 +547,48 @@ pub struct RestrictChatMemberRequest {
     pub use_independent_chat_permissions: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_date: Option<i64>,
+}
+
+impl RestrictChatMemberRequest {
+    pub fn new(
+        chat_id: impl Into<ChatId>,
+        user_id: impl Into<UserId>,
+        permissions: ChatPermissions,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            user_id: user_id.into(),
+            permissions,
+            use_independent_chat_permissions: None,
+            until_date: None,
+        }
+    }
+
+    pub fn use_independent_chat_permissions(
+        mut self,
+        use_independent_chat_permissions: bool,
+    ) -> Self {
+        self.use_independent_chat_permissions = Some(use_independent_chat_permissions);
+        self
+    }
+
+    pub fn until_date(mut self, until_date: i64) -> Self {
+        self.until_date = Some(until_date);
+        self
+    }
+
+    pub fn with_use_independent_chat_permissions(
+        mut self,
+        use_independent_chat_permissions: Option<bool>,
+    ) -> Self {
+        self.use_independent_chat_permissions = use_independent_chat_permissions;
+        self
+    }
+
+    pub fn with_until_date(mut self, until_date: Option<i64>) -> Self {
+        self.until_date = until_date;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -564,6 +652,24 @@ pub struct SetChatPermissionsRequest {
     pub permissions: ChatPermissions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_independent_chat_permissions: Option<bool>,
+}
+
+impl SetChatPermissionsRequest {
+    pub fn new(chat_id: impl Into<ChatId>, permissions: ChatPermissions) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            permissions,
+            use_independent_chat_permissions: None,
+        }
+    }
+
+    pub fn use_independent_chat_permissions(
+        mut self,
+        use_independent_chat_permissions: bool,
+    ) -> Self {
+        self.use_independent_chat_permissions = Some(use_independent_chat_permissions);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

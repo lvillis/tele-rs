@@ -11,6 +11,11 @@ impl ContextAppApi {
         Self { client }
     }
 
+    /// Dedicated moderation/admin facade for handler-side governance actions.
+    pub fn moderation(&self) -> crate::client::ModerationApi {
+        self.client.app().moderation()
+    }
+
     /// Dedicated Web App facade for runtime query handling.
     pub fn web_app(&self) -> crate::client::WebAppApi {
         self.client.app().web_app()
