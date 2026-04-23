@@ -4,7 +4,7 @@ patch:
     cargo release patch --no-publish --execute
 
 publish:
-    cargo publish --workspace
+    bash scripts/publish-workspace.sh
 
 check-generated:
     python3 scripts/gen_advanced.py

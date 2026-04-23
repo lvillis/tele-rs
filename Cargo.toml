@@ -36,7 +36,6 @@ proc-macro2 = { version = "1.0.106", default-features = false, features = ["proc
 quote = { version = "1.0.45", default-features = false, features = ["proc-macro"] }
 syn = { version = "2.0.117", default-features = false, features = ["full", "derive", "parsing", "printing", "clone-impls", "proc-macro"] }
 
-tele = { version = "0.1.17", path = "crates/tele", default-features = false, features = ["bot", "async-tls-rustls-ring"] }
 tele-macros = { version = "0.1.17", path = "crates/tele-macros", default-features = false }
 
 criterion = { version = "0.8.2", features = ["async_tokio"] }
