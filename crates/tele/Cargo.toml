@@ -34,37 +34,34 @@ async-tls-rustls-aws-lc-rs = ["_async", "reqx/async-tls-rustls-aws-lc-rs", "reqx
 blocking-tls-native = ["_blocking", "reqx/blocking-tls-native", "reqx/strict-feature-guards"]
 blocking-tls-rustls-ring = ["_blocking", "reqx/blocking-tls-rustls-ring", "reqx/strict-feature-guards"]
 blocking-tls-rustls-aws-lc-rs = ["_blocking", "reqx/blocking-tls-rustls-aws-lc-rs", "reqx/strict-feature-guards"]
-async = ["async-tls-rustls-ring"]
-blocking = ["blocking-tls-rustls-ring"]
 bot = ["_async"]
 axum = ["bot", "dep:axum"]
 macros = ["bot", "dep:tele-macros"]
 otel = ["reqx/otel"]
 tracing = ["dep:tracing"]
 redis-session = ["bot", "dep:redis"]
-postgres-session = ["bot", "dep:tokio-postgres"]
+postgres-session = ["bot", "dep:sqlx"]
 
 [dependencies]
 axum = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
-hmac = { workspace = true }
+graviola = { workspace = true }
 http = { workspace = true }
 reqx = { workspace = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
-tele-macros = { version = "0.1.3", default-features = false, optional = true }
+sqlx = { workspace = true, optional = true }
+tele-macros = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time", "sync"], optional = true }
-tokio-postgres = { workspace = true, optional = true }
-tracing = { version = "0.1.41", default-features = false, features = ["std"], optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 url = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["async_tokio"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+criterion = { workspace = true }
+tokio = { workspace = true }
 
 [lints]
 workspace = true

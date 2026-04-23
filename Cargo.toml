@@ -9,31 +9,38 @@ resolver = "3"
 [workspace.package]
 version = "0.1.16"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95.0"
 license = "MIT"
 repository = "https://github.com/lvillis/tele-rs"
 homepage = "https://github.com/lvillis/tele-rs"
 
 [workspace.dependencies]
-axum = { version = "0.8.8", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 bytes = { version = "1.11.1", default-features = false, features = ["std"] }
 futures-core = { version = "0.3.32", default-features = false }
-hmac = { version = "0.12.1", default-features = false, features = ["std"] }
 http = { version = "1.4.0", default-features = false, features = ["std"] }
+reqx = { version = "0.1.35", default-features = false }
+tokio = { version = "1.52.1", default-features = false, features = ["macros", "rt", "time", "sync", "rt-multi-thread", "net"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
+
+graviola = { version = "0.3.4", default-features = false }
+redis = { version = "1.2.0", default-features = false, features = ["tokio-comp"] }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.149", default-features = false, features = ["std"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "json"] }
+thiserror = { version = "2.0.18", default-features = false, features = ["std"] }
+
 proc-macro-crate = { version = "3.5.0", default-features = false }
 proc-macro2 = { version = "1.0.106", default-features = false, features = ["proc-macro"] }
 quote = { version = "1.0.45", default-features = false, features = ["proc-macro"] }
-redis = { version = "1.0.4", default-features = false, features = ["tokio-comp"] }
-reqx = { version = "0.1.27", default-features = false }
-serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
-serde_json = { version = "1.0.149", default-features = false, features = ["std"] }
-sha2 = { version = "0.10.9", default-features = false, features = ["std"] }
 syn = { version = "2.0.117", default-features = false, features = ["full", "derive", "parsing", "printing", "clone-impls", "proc-macro"] }
-thiserror = { version = "2.0.18", default-features = false, features = ["std"] }
-tokio = { version = "1.50.0", default-features = false }
-tokio-postgres = { version = "0.7.16", default-features = false, features = ["runtime"] }
+
+tele = { version = "0.1.16", path = "crates/tele", default-features = false, features = ["bot", "async-tls-rustls-ring"] }
+tele-macros = { version = "0.1.16", path = "crates/tele-macros", default-features = false }
+
+criterion = { version = "0.8.2", features = ["async_tokio"] }
 trybuild = { version = "1.0.116", default-features = false }
-url = { version = "2.5.8", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use graviola::hashing::{HashOutput, Sha256, hmac::Hmac};
 use url::form_urlencoded;
 
 use crate::Error;
 
 type HmacSha256 = Hmac<Sha256>;
+type Sha256Digest = [u8; 32];
 const WEB_APP_DATA_KEY: &[u8] = b"WebAppData";
 
 /// Verified Mini App `initData` payload.
@@ -88,17 +88,11 @@ pub fn verify_web_app_init_data(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let secret_key = web_app_secret_key(bot_token)?;
-    let mut mac = HmacSha256::new_from_slice(secret_key.as_slice()).map_err(|error| {
-        Error::InvalidRequest {
-            reason: format!("failed to initialize initData verifier: {error}"),
-        }
-    })?;
-    mac.update(data_check_string.as_bytes());
-    let expected_hash = mac.finalize().into_bytes();
+    let secret_key = web_app_secret_key(bot_token);
+    let expected_hash = hmac_sha256(secret_key, data_check_string.as_bytes());
 
     let actual_hash = decode_hex(hash_hex.as_str())?;
-    if !constant_time_eq(expected_hash.as_ref(), actual_hash.as_slice()) {
+    if !expected_hash.ct_equal(actual_hash.as_slice()) {
         return Err(Error::InvalidRequest {
             reason: "invalid initData signature".to_owned(),
         });
@@ -140,16 +134,20 @@ pub fn verify_web_app_init_data(
     Ok(VerifiedWebAppInitData { auth_date, fields })
 }
 
-fn web_app_secret_key(bot_token: &str) -> Result<[u8; 32], Error> {
-    let mut mac =
-        HmacSha256::new_from_slice(WEB_APP_DATA_KEY).map_err(|error| Error::InvalidRequest {
-            reason: format!("failed to derive Mini App secret key: {error}"),
-        })?;
-    mac.update(bot_token.as_bytes());
-    let secret = mac.finalize().into_bytes();
+fn web_app_secret_key(bot_token: &str) -> Sha256Digest {
+    hmac_sha256_bytes(WEB_APP_DATA_KEY, bot_token.as_bytes())
+}
+
+fn hmac_sha256(key: impl AsRef<[u8]>, data: impl AsRef<[u8]>) -> HashOutput {
+    let mut mac = HmacSha256::new(key);
+    mac.update(data);
+    mac.finish()
+}
+
+fn hmac_sha256_bytes(key: impl AsRef<[u8]>, data: impl AsRef<[u8]>) -> Sha256Digest {
     let mut output = [0_u8; 32];
-    output.copy_from_slice(secret.as_ref());
-    Ok(output)
+    output.copy_from_slice(hmac_sha256(key, data).as_ref());
+    output
 }
 
 fn decode_hex(input: &str) -> Result<Vec<u8>, Error> {
@@ -183,19 +181,6 @@ fn decode_hex_nibble(value: u8) -> Option<u8> {
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
     }
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-
-    let mut diff = 0_u8;
-    for (lhs, rhs) in left.iter().zip(right.iter()) {
-        diff |= lhs ^ rhs;
-    }
-
-    diff == 0
 }
 
 /// Authentication strategy for Telegram Bot API requests.
@@ -289,10 +274,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let secret_key = web_app_secret_key(bot_token)?;
-        let mut mac = HmacSha256::new_from_slice(secret_key.as_slice())?;
-        mac.update(data_check_string.as_bytes());
-        let hash = mac.finalize().into_bytes();
+        let secret_key = web_app_secret_key(bot_token);
+        let hash = hmac_sha256(secret_key, data_check_string.as_bytes());
         let hash_hex = encode_hex(hash.as_ref());
 
         let mut serializer = form_urlencoded::Serializer::new(String::new());

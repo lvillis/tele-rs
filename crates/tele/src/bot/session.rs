@@ -336,7 +336,7 @@ pub struct PostgresSessionStore<S>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
-    client: Arc<tokio_postgres::Client>,
+    pool: sqlx::PgPool,
     table: String,
     _state: std::marker::PhantomData<S>,
 }
@@ -348,7 +348,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            client: Arc::clone(&self.client),
+            pool: self.pool.clone(),
             table: self.table.clone(),
             _state: std::marker::PhantomData,
         }
@@ -364,7 +364,8 @@ where
         let table = table.into();
         validate_sql_identifier(&table)?;
 
-        let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(database_url)
             .await
             .map_err(|source| {
                 invalid_request(format!(
@@ -372,21 +373,27 @@ where
                 ))
             })?;
 
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
+        Self::with_pool(pool, table).await
+    }
+
+    pub async fn with_pool(pool: sqlx::PgPool, table: impl Into<String>) -> Result<Self> {
+        let table = table.into();
+        validate_sql_identifier(&table)?;
 
         let create = format!(
-            "CREATE TABLE IF NOT EXISTS {table} (chat_id BIGINT PRIMARY KEY, state TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS {table} (chat_id BIGINT PRIMARY KEY, state JSONB NOT NULL)"
         );
-        client.execute(&create, &[]).await.map_err(|source| {
-            invalid_request(format!(
-                "failed to create postgres session table `{table}`: {source}"
-            ))
-        })?;
+        sqlx::query(&create)
+            .execute(&pool)
+            .await
+            .map_err(|source| {
+                invalid_request(format!(
+                    "failed to create postgres session table `{table}`: {source}"
+                ))
+            })?;
 
         Ok(Self {
-            client: Arc::new(client),
+            pool,
             table,
             _state: std::marker::PhantomData,
         })
@@ -394,6 +401,10 @@ where
 
     pub fn table(&self) -> &str {
         self.table.as_str()
+    }
+
+    pub fn pool(&self) -> &sqlx::PgPool {
+        &self.pool
     }
 }
 
@@ -404,10 +415,12 @@ where
 {
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
         Box::pin(async move {
+            use sqlx::Row as _;
+
             let query = format!("SELECT state FROM {} WHERE chat_id = $1", self.table);
-            let row = self
-                .client
-                .query_opt(&query, &[&chat_id])
+            let row = sqlx::query(&query)
+                .bind(chat_id)
+                .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| {
                     invalid_request(format!(
@@ -419,16 +432,12 @@ where
                 return Ok(None);
             };
 
-            let payload: String = row.try_get(0).map_err(|source| {
+            let sqlx::types::Json(state) = row.try_get(0).map_err(|source| {
                 invalid_request(format!(
                     "postgres session payload decode failed for chat_id `{chat_id}`: {source}"
                 ))
             })?;
-            let state = serde_json::from_str::<S>(&payload).map_err(|source| {
-                invalid_request(format!(
-                    "postgres session json decode failed for chat_id `{chat_id}`: {source}"
-                ))
-            })?;
+
             Ok(Some(state))
         })
     }
@@ -440,10 +449,10 @@ where
                  ON CONFLICT (chat_id) DO UPDATE SET state = EXCLUDED.state",
                 self.table
             );
-            let payload = serde_json::to_string(&state)
-                .map_err(|source| Error::SerializeRequest { source })?;
-            self.client
-                .execute(&query, &[&chat_id, &payload])
+            sqlx::query(&query)
+                .bind(chat_id)
+                .bind(sqlx::types::Json(state))
+                .execute(&self.pool)
                 .await
                 .map_err(|source| {
                     invalid_request(format!(
@@ -457,8 +466,9 @@ where
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
         Box::pin(async move {
             let query = format!("DELETE FROM {} WHERE chat_id = $1", self.table);
-            self.client
-                .execute(&query, &[&chat_id])
+            sqlx::query(&query)
+                .bind(chat_id)
+                .execute(&self.pool)
                 .await
                 .map_err(|source| {
                     invalid_request(format!(

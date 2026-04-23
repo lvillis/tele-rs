@@ -27,7 +27,7 @@ quote = { workspace = true }
 syn = { workspace = true }
 
 [dev-dependencies]
-tele = { path = "../tele", default-features = false, features = ["bot", "async-tls-rustls-ring"] }
+tele = { workspace = true }
 trybuild = { workspace = true }
 
 [lints]
