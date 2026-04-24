@@ -37,6 +37,7 @@ unbanChatMember
 restrictChatMember
 promoteChatMember
 setChatAdministratorCustomTitle
+setChatMemberTag
 banChatSenderChat
 unbanChatSenderChat
 setChatPermissions
@@ -78,6 +79,8 @@ unpinAllGeneralForumTopicMessages
 answerCallbackQuery
 getUserChatBoosts
 getBusinessConnection
+getManagedBotToken
+replaceManagedBotToken
 setMyCommands
 deleteMyCommands
 getMyCommands
@@ -120,6 +123,9 @@ postStory
 repostStory
 editStory
 deleteStory
+answerWebAppQuery
+savePreparedInlineMessage
+savePreparedKeyboardButton
 editMessageText
 editMessageCaption
 editMessageMedia
@@ -149,8 +155,6 @@ setStickerSetThumbnail
 setCustomEmojiStickerSetThumbnail
 deleteStickerSet
 answerInlineQuery
-answerWebAppQuery
-savePreparedInlineMessage
 sendInvoice
 createInvoiceLink
 answerShippingQuery

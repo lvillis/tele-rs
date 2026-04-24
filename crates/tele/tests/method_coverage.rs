@@ -3,7 +3,33 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EMBEDDED_METHOD_SPEC: &str = include_str!("fixtures/telegram_bot_api_9_4_all_methods.txt");
+use serde::Deserialize;
+
+const EMBEDDED_METHOD_SPEC: &str = include_str!("fixtures/bot_api_all_methods.txt");
+
+#[derive(Debug, Deserialize)]
+struct MethodCoverageSpec {
+    all_methods: Vec<String>,
+}
+
+fn parse_expected_methods(text: &str, path: &Path) -> Option<BTreeSet<String>> {
+    if path.extension().is_some_and(|ext| ext == "json") {
+        let spec: MethodCoverageSpec = serde_json::from_str(text).ok()?;
+        if spec.all_methods.is_empty() {
+            return None;
+        }
+        return Some(spec.all_methods.into_iter().collect());
+    }
+
+    let methods = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>();
+
+    (!methods.is_empty()).then_some(methods)
+}
 
 fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
@@ -24,7 +50,7 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn telegram_bot_api_methods_are_fully_covered() {
+fn telegram_bot_api_methods_are_fully_covered() -> Result<(), Box<dyn std::error::Error>> {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = crate_root
         .parent()
@@ -36,36 +62,31 @@ fn telegram_bot_api_methods_are_fully_covered() {
     if let Ok(path) = env::var("TELE_METHOD_COVERAGE_SPEC_PATH") {
         candidate_paths.push(PathBuf::from(path));
     }
-    candidate_paths.push(workspace_root.join(".docs/spec/telegram_bot_api_9_4_all_methods.txt"));
-    candidate_paths.push(workspace_root.join("scripts/spec/telegram_bot_api_9_4_all_methods.txt"));
+    candidate_paths.push(workspace_root.join("crates/tele-codegen/spec/bot_api.json"));
 
-    let mut expected_text = None;
+    let mut expected_methods = None;
     for path in &candidate_paths {
         if let Ok(text) = fs::read_to_string(path)
-            && !text.trim().is_empty()
+            && let Some(methods) = parse_expected_methods(&text, path)
         {
-            expected_text = Some(text);
+            expected_methods = Some(methods);
             break;
         }
     }
 
-    let expected_text = match expected_text {
-        Some(text) => text,
+    let expected_methods = match expected_methods {
+        Some(methods) => methods,
         None => {
             assert!(
                 !EMBEDDED_METHOD_SPEC.trim().is_empty(),
                 "embedded method spec fixture is empty"
             );
-            EMBEDDED_METHOD_SPEC.to_owned()
+            parse_expected_methods(EMBEDDED_METHOD_SPEC, Path::new("bot_api_all_methods.txt"))
+                .ok_or_else(|| {
+                    std::io::Error::other("embedded method spec fixture must contain methods")
+                })?
         }
     };
-
-    let expected_methods: BTreeSet<String> = expected_text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect();
 
     let api_dir = crate_root.join("src/api");
     let mut api_files = Vec::new();
@@ -101,4 +122,6 @@ fn telegram_bot_api_methods_are_fully_covered() {
         missing_methods.is_empty(),
         "missing Telegram Bot API methods in service layer: {missing_methods:?}"
     );
+
+    Ok(())
 }

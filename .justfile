@@ -4,16 +4,14 @@ patch:
     cargo release patch --no-publish --execute
 
 publish:
-    bash scripts/publish-workspace.sh
+    cargo publish --workspace
 
 check-generated:
-    python3 scripts/gen_advanced.py
-    cargo fmt --all
-    git diff --exit-code -- crates/tele/src/types/advanced.rs crates/tele/src/api/advanced.rs
+    cargo run -p tele-codegen -- check-advanced
 
 ci:
     just check-generated
-    cargo fmt --all
+    cargo fmt --all --check
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     cargo nextest run --workspace --all-features
     cargo test --workspace --all-features --doc
