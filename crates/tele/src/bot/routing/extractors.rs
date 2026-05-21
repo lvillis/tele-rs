@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::update::{ChatJoinRequest, ChatMemberUpdated};
+use crate::types::update::{BusinessMessagesDeleted, ChatJoinRequest, ChatMemberUpdated};
 
 /// Parsed slash command with command name and trailing arguments.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -340,7 +340,9 @@ pub fn parse_command_text(text: &str) -> Option<CommandData> {
 /// Parses a slash command from raw message text with optional bot-username targeting.
 ///
 /// When a command contains `@botname`, it is accepted only if `bot_username`
-/// is provided and matches case-insensitively.
+/// is provided and matches case-insensitively. Bot usernames must follow
+/// Telegram bot mention rules: 5-32 ASCII letters, digits, or underscores, and
+/// an ending `bot` suffix.
 pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Option<CommandData> {
     let token = text.split_whitespace().next()?;
     let (name, mention) = parse_command_token(token)?;
@@ -359,8 +361,13 @@ pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Opt
 }
 
 pub(crate) fn normalize_bot_username(value: &str) -> Option<String> {
-    let normalized = value.trim().trim_start_matches('@').trim();
-    if normalized.is_empty() || !is_valid_bot_username(normalized) {
+    let value = value.trim();
+    let normalized = value.strip_prefix('@').unwrap_or(value);
+    if normalized.is_empty()
+        || normalized.trim() != normalized
+        || normalized.starts_with('@')
+        || !is_valid_bot_username(normalized)
+    {
         None
     } else {
         Some(normalized.to_owned())
@@ -370,6 +377,7 @@ pub(crate) fn normalize_bot_username(value: &str) -> Option<String> {
 pub(crate) fn parse_command_token(token: &str) -> Option<(&str, Option<String>)> {
     let command = token.strip_prefix('/')?;
     let (name, mention) = match command.split_once('@') {
+        Some((_, mention)) if mention.starts_with('@') => return None,
         Some((name, mention)) => (name, Some(normalize_bot_username(mention)?)),
         None => (command, None),
     };
@@ -394,9 +402,11 @@ fn is_valid_command_name(name: &str) -> bool {
 }
 
 fn is_valid_bot_username(username: &str) -> bool {
-    username
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    (5..=32).contains(&username.len())
+        && username
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && username.to_ascii_lowercase().ends_with("bot")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -499,6 +509,15 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
     if let Some(message) = update.edited_channel_post.as_deref() {
         return Some(message);
     }
+    if let Some(message) = update.business_message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.edited_business_message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.guest_message.as_deref() {
+        return Some(message);
+    }
 
     update
         .callback_query
@@ -516,6 +535,9 @@ pub fn extract_chat(update: &Update) -> Option<&Chat> {
     }
     if let Some(member_update) = extract_my_chat_member_update(update) {
         return Some(&member_update.chat);
+    }
+    if let Some(deleted) = update.deleted_business_messages.as_ref() {
+        return Some(&deleted.chat);
     }
 
     extract_chat_join_request(update).map(|request| &request.chat)
@@ -547,6 +569,15 @@ pub fn extract_actor(update: &Update) -> Option<&User> {
         return message.from_user();
     }
     if let Some(message) = update.edited_channel_post.as_deref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.business_message.as_deref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.edited_business_message.as_deref() {
+        return message.from_user();
+    }
+    if let Some(message) = update.guest_message.as_deref() {
         return message.from_user();
     }
     if let Some(request) = update.chat_join_request.as_ref() {
@@ -626,6 +657,11 @@ pub fn extract_chat_member_update(update: &Update) -> Option<&ChatMemberUpdated>
 /// Returns typed current-bot member update payload from update.
 pub fn extract_my_chat_member_update(update: &Update) -> Option<&ChatMemberUpdated> {
     update.my_chat_member()
+}
+
+/// Returns typed business-message deletion payload from update.
+pub fn extract_deleted_business_messages(update: &Update) -> Option<&BusinessMessagesDeleted> {
+    update.deleted_business_messages()
 }
 
 /// Returns callback query data payload from update.
@@ -786,6 +822,9 @@ pub trait UpdateExt {
     fn my_chat_member_update(&self) -> Option<&ChatMemberUpdated> {
         None
     }
+    fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
+        None
+    }
     fn callback_data(&self) -> Option<&str>;
     fn callback_json<T>(&self) -> Option<T>
     where
@@ -859,6 +898,10 @@ impl UpdateExt for Update {
 
     fn my_chat_member_update(&self) -> Option<&ChatMemberUpdated> {
         extract_my_chat_member_update(self)
+    }
+
+    fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
+        extract_deleted_business_messages(self)
     }
 
     fn callback_data(&self) -> Option<&str> {
@@ -939,6 +982,9 @@ pub fn update_chat_id(update: &Update) -> Option<i64> {
     }
     if let Some(member_update) = extract_my_chat_member_update(update) {
         return Some(member_update.chat.id);
+    }
+    if let Some(deleted) = update.deleted_business_messages.as_ref() {
+        return Some(deleted.chat.id);
     }
 
     extract_chat_join_request(update).map(|request| request.chat.id)

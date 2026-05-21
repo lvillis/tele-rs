@@ -1,4 +1,6 @@
-use super::support::{callback_query_id, reply_chat_id, serialize_request_value};
+use super::support::{
+    callback_query_id, reply_business_connection_id, reply_chat_id, reply_parameters,
+};
 use super::*;
 
 fn text_send_request(
@@ -8,18 +10,66 @@ fn text_send_request(
     SendMessageRequest::new(chat_id, text)
 }
 
+trait ReplyContextRequest {
+    fn apply_reply_context(&mut self, update: &Update);
+}
+
+macro_rules! impl_reply_context_request {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl ReplyContextRequest for $ty {
+                fn apply_reply_context(&mut self, update: &Update) {
+                    self.reply_parameters = reply_parameters(update);
+                    self.business_connection_id = reply_business_connection_id(update);
+                }
+            }
+        )*
+    };
+}
+
+impl_reply_context_request!(
+    SendMessageRequest,
+    SendPhotoRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAudioRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    SendStickerRequest,
+    SendMediaGroupRequest
+);
+
+fn apply_reply_context(request: &mut impl ReplyContextRequest, update: &Update) {
+    request.apply_reply_context(update);
+}
+
 fn reply_text_request(update: &Update, text: impl Into<String>) -> Result<SendMessageRequest> {
     let chat_id = reply_chat_id(update)?;
-    text_send_request(chat_id, text)
+    let mut request = text_send_request(chat_id, text)?;
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn photo_send_request(chat_id: impl Into<ChatId>, photo: impl Into<String>) -> SendPhotoRequest {
     SendPhotoRequest::new(chat_id, photo)
 }
 
+fn photo_upload_request(chat_id: impl Into<ChatId>) -> SendPhotoRequest {
+    SendPhotoRequest::for_upload(chat_id)
+}
+
 fn reply_photo_request(update: &Update, photo: impl Into<String>) -> Result<SendPhotoRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(photo_send_request(chat_id, photo))
+    let mut request = photo_send_request(chat_id, photo);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_photo_upload_request(update: &Update) -> Result<SendPhotoRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = photo_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn document_send_request(
@@ -29,30 +79,69 @@ fn document_send_request(
     SendDocumentRequest::new(chat_id, document)
 }
 
+fn document_upload_request(chat_id: impl Into<ChatId>) -> SendDocumentRequest {
+    SendDocumentRequest::for_upload(chat_id)
+}
+
 fn reply_document_request(
     update: &Update,
     document: impl Into<String>,
 ) -> Result<SendDocumentRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(document_send_request(chat_id, document))
+    let mut request = document_send_request(chat_id, document);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_document_upload_request(update: &Update) -> Result<SendDocumentRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = document_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn video_send_request(chat_id: impl Into<ChatId>, video: impl Into<String>) -> SendVideoRequest {
     SendVideoRequest::new(chat_id, video)
 }
 
+fn video_upload_request(chat_id: impl Into<ChatId>) -> SendVideoRequest {
+    SendVideoRequest::for_upload(chat_id)
+}
+
 fn reply_video_request(update: &Update, video: impl Into<String>) -> Result<SendVideoRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(video_send_request(chat_id, video))
+    let mut request = video_send_request(chat_id, video);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_video_upload_request(update: &Update) -> Result<SendVideoRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = video_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn audio_send_request(chat_id: impl Into<ChatId>, audio: impl Into<String>) -> SendAudioRequest {
     SendAudioRequest::new(chat_id, audio)
 }
 
+fn audio_upload_request(chat_id: impl Into<ChatId>) -> SendAudioRequest {
+    SendAudioRequest::for_upload(chat_id)
+}
+
 fn reply_audio_request(update: &Update, audio: impl Into<String>) -> Result<SendAudioRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(audio_send_request(chat_id, audio))
+    let mut request = audio_send_request(chat_id, audio);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_audio_upload_request(update: &Update) -> Result<SendAudioRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = audio_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn animation_send_request(
@@ -62,21 +151,47 @@ fn animation_send_request(
     SendAnimationRequest::new(chat_id, animation)
 }
 
+fn animation_upload_request(chat_id: impl Into<ChatId>) -> SendAnimationRequest {
+    SendAnimationRequest::for_upload(chat_id)
+}
+
 fn reply_animation_request(
     update: &Update,
     animation: impl Into<String>,
 ) -> Result<SendAnimationRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(animation_send_request(chat_id, animation))
+    let mut request = animation_send_request(chat_id, animation);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_animation_upload_request(update: &Update) -> Result<SendAnimationRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = animation_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn voice_send_request(chat_id: impl Into<ChatId>, voice: impl Into<String>) -> SendVoiceRequest {
     SendVoiceRequest::new(chat_id, voice)
 }
 
+fn voice_upload_request(chat_id: impl Into<ChatId>) -> SendVoiceRequest {
+    SendVoiceRequest::for_upload(chat_id)
+}
+
 fn reply_voice_request(update: &Update, voice: impl Into<String>) -> Result<SendVoiceRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(voice_send_request(chat_id, voice))
+    let mut request = voice_send_request(chat_id, voice);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_voice_upload_request(update: &Update) -> Result<SendVoiceRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = voice_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn sticker_send_request(
@@ -86,12 +201,25 @@ fn sticker_send_request(
     SendStickerRequest::new(chat_id, sticker)
 }
 
+fn sticker_upload_request(chat_id: impl Into<ChatId>) -> SendStickerRequest {
+    SendStickerRequest::for_upload(chat_id)
+}
+
 fn reply_sticker_request(
     update: &Update,
     sticker: impl Into<String>,
 ) -> Result<SendStickerRequest> {
     let chat_id = reply_chat_id(update)?;
-    Ok(sticker_send_request(chat_id, sticker))
+    let mut request = sticker_send_request(chat_id, sticker);
+    apply_reply_context(&mut request, update);
+    Ok(request)
+}
+
+fn reply_sticker_upload_request(update: &Update) -> Result<SendStickerRequest> {
+    let chat_id = reply_chat_id(update)?;
+    let mut request = sticker_upload_request(chat_id);
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn media_group_send_request<I, M>(
@@ -111,7 +239,9 @@ where
     M: Into<InputMedia>,
 {
     let chat_id = reply_chat_id(update)?;
-    media_group_send_request(chat_id, media)
+    let mut request = media_group_send_request(chat_id, media)?;
+    apply_reply_context(&mut request, update);
+    Ok(request)
 }
 
 fn callback_answer_request(
@@ -201,6 +331,15 @@ macro_rules! impl_common_media_builder_methods {
                 self
             }
 
+            /// Sends on behalf of a Telegram Business connection.
+            pub fn business_connection_id(
+                mut self,
+                business_connection_id: impl Into<String>,
+            ) -> Self {
+                self.request.business_connection_id = Some(business_connection_id.into());
+                self
+            }
+
             /// Targets a forum topic / message thread when applicable.
             pub fn message_thread_id(mut self, message_thread_id: i64) -> Self {
                 self.request.message_thread_id = Some(message_thread_id);
@@ -248,6 +387,15 @@ macro_rules! impl_common_media_group_builder_methods {
                 self
             }
 
+            /// Sends on behalf of a Telegram Business connection.
+            pub fn business_connection_id(
+                mut self,
+                business_connection_id: impl Into<String>,
+            ) -> Self {
+                self.request.business_connection_id = Some(business_connection_id.into());
+                self
+            }
+
             /// Targets a forum topic / message thread when applicable.
             pub fn message_thread_id(mut self, message_thread_id: i64) -> Self {
                 self.request.message_thread_id = Some(message_thread_id);
@@ -284,22 +432,30 @@ macro_rules! impl_common_sticker_builder_methods {
             }
 
             /// Attaches reply markup such as an inline keyboard.
-            pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Result<Self> {
-                self.request.reply_markup = Some(serialize_request_value(reply_markup.into())?);
-                Ok(self)
+            pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
+                self.request.reply_markup = Some(reply_markup.into());
+                self
             }
 
             /// Sets explicit reply parameters.
-            pub fn reply_parameters(mut self, reply_parameters: ReplyParameters) -> Result<Self> {
-                self.request.reply_parameters = Some(serialize_request_value(reply_parameters)?);
-                Ok(self)
+            pub fn reply_parameters(mut self, reply_parameters: ReplyParameters) -> Self {
+                self.request.reply_parameters = Some(reply_parameters);
+                self
             }
 
             /// Replies to a concrete message by id.
-            pub fn reply_to_message(mut self, message_id: MessageId) -> Result<Self> {
-                self.request.reply_parameters =
-                    Some(serialize_request_value(ReplyParameters::new(message_id))?);
-                Ok(self)
+            pub fn reply_to_message(mut self, message_id: MessageId) -> Self {
+                self.request.reply_parameters = Some(ReplyParameters::new(message_id));
+                self
+            }
+
+            /// Sends on behalf of a Telegram Business connection.
+            pub fn business_connection_id(
+                mut self,
+                business_connection_id: impl Into<String>,
+            ) -> Self {
+                self.request.business_connection_id = Some(business_connection_id.into());
+                self
             }
 
             /// Targets a forum topic / message thread when applicable.
@@ -396,6 +552,12 @@ impl TextSendBuilder {
     /// Replies to a concrete message by id.
     pub fn reply_to_message(mut self, message_id: MessageId) -> Self {
         self.request = self.request.reply_to_message(message_id);
+        self
+    }
+
+    /// Sends on behalf of a Telegram Business connection.
+    pub fn business_connection_id(mut self, business_connection_id: impl Into<String>) -> Self {
+        self.request = self.request.business_connection_id(business_connection_id);
         self
     }
 
@@ -521,6 +683,18 @@ impl DocumentSendBuilder {
             .send_document_upload(&self.request, file)
             .await
     }
+
+    /// Uploads local bytes as the document payload plus extra `attach://` parts.
+    pub async fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_document_upload_parts(&self.request, file, extra_files)
+            .await
+    }
 }
 
 #[cfg(feature = "_async")]
@@ -591,6 +765,18 @@ impl VideoSendBuilder {
             .send_video_upload(&self.request, file)
             .await
     }
+
+    /// Uploads local bytes as the video payload plus extra `attach://` parts.
+    pub async fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_video_upload_parts(&self.request, file, extra_files)
+            .await
+    }
 }
 
 #[cfg(feature = "_async")]
@@ -647,6 +833,18 @@ impl AudioSendBuilder {
         self.client
             .messages()
             .send_audio_upload(&self.request, file)
+            .await
+    }
+
+    /// Uploads local bytes as the audio payload plus extra `attach://` parts.
+    pub async fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_audio_upload_parts(&self.request, file, extra_files)
             .await
     }
 }
@@ -711,6 +909,18 @@ impl AnimationSendBuilder {
         self.client
             .messages()
             .send_animation_upload(&self.request, file)
+            .await
+    }
+
+    /// Uploads local bytes as the animation payload plus extra `attach://` parts.
+    pub async fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_animation_upload_parts(&self.request, file, extra_files)
             .await
     }
 }
@@ -797,7 +1007,7 @@ impl_common_sticker_builder_methods!(StickerSendBuilder, SendStickerRequest);
 /// Start this from [`AppApi::media_group`] or [`AppApi::reply_media_group`].
 #[cfg(feature = "_async")]
 #[derive(Clone)]
-#[must_use = "call `.send().await` or `.into_request()` to finish the send"]
+#[must_use = "call `.send().await`, `.send_upload(...)`, or `.into_request()` to finish the send"]
 pub struct MediaGroupSendBuilder {
     client: Client,
     request: SendMediaGroupRequest,
@@ -812,6 +1022,14 @@ impl MediaGroupSendBuilder {
     /// Sends the media group.
     pub async fn send(self) -> Result<Vec<Message>> {
         self.client.messages().send_media_group(&self.request).await
+    }
+
+    /// Uploads local files referenced by `attach://...` media entries.
+    pub async fn send_upload(self, files: &[UploadPart]) -> Result<Vec<Message>> {
+        self.client
+            .messages()
+            .send_media_group_upload(&self.request, files)
+            .await
     }
 }
 
@@ -889,7 +1107,7 @@ impl AppApi {
         Ok(TextSendBuilder::new(self.client.clone(), request))
     }
 
-    /// Starts a text-send builder using the canonical reply chat derived from an update.
+    /// Starts a text-send builder using the update reply target and quoting its source message when present.
     pub fn reply(&self, update: &Update, text: impl Into<String>) -> Result<TextSendBuilder> {
         let request = reply_text_request(update, text)?;
         Ok(TextSendBuilder::new(self.client.clone(), request))
@@ -901,13 +1119,25 @@ impl AppApi {
         PhotoSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a photo-send builder using the canonical reply chat derived from an update.
+    /// Starts a photo-upload builder for a target chat.
+    pub fn photo_upload(&self, chat_id: impl Into<ChatId>) -> PhotoSendBuilder {
+        let request = photo_upload_request(chat_id);
+        PhotoSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a photo-send builder using the update reply target and quoting its source message when present.
     pub fn reply_photo(
         &self,
         update: &Update,
         photo: impl Into<String>,
     ) -> Result<PhotoSendBuilder> {
         let request = reply_photo_request(update, photo)?;
+        Ok(PhotoSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts a photo-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_photo_upload(&self, update: &Update) -> Result<PhotoSendBuilder> {
+        let request = reply_photo_upload_request(update)?;
         Ok(PhotoSendBuilder::new(self.client.clone(), request))
     }
 
@@ -921,7 +1151,13 @@ impl AppApi {
         DocumentSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a document-send builder using the canonical reply chat derived from an update.
+    /// Starts a document-upload builder for a target chat.
+    pub fn document_upload(&self, chat_id: impl Into<ChatId>) -> DocumentSendBuilder {
+        let request = document_upload_request(chat_id);
+        DocumentSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a document-send builder using the update reply target and quoting its source message when present.
     pub fn reply_document(
         &self,
         update: &Update,
@@ -931,13 +1167,25 @@ impl AppApi {
         Ok(DocumentSendBuilder::new(self.client.clone(), request))
     }
 
+    /// Starts a document-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_document_upload(&self, update: &Update) -> Result<DocumentSendBuilder> {
+        let request = reply_document_upload_request(update)?;
+        Ok(DocumentSendBuilder::new(self.client.clone(), request))
+    }
+
     /// Starts a video-send builder for a target chat.
     pub fn video(&self, chat_id: impl Into<ChatId>, video: impl Into<String>) -> VideoSendBuilder {
         let request = video_send_request(chat_id, video);
         VideoSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a video-send builder using the canonical reply chat derived from an update.
+    /// Starts a video-upload builder for a target chat.
+    pub fn video_upload(&self, chat_id: impl Into<ChatId>) -> VideoSendBuilder {
+        let request = video_upload_request(chat_id);
+        VideoSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a video-send builder using the update reply target and quoting its source message when present.
     pub fn reply_video(
         &self,
         update: &Update,
@@ -947,19 +1195,37 @@ impl AppApi {
         Ok(VideoSendBuilder::new(self.client.clone(), request))
     }
 
+    /// Starts a video-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_video_upload(&self, update: &Update) -> Result<VideoSendBuilder> {
+        let request = reply_video_upload_request(update)?;
+        Ok(VideoSendBuilder::new(self.client.clone(), request))
+    }
+
     /// Starts an audio-send builder for a target chat.
     pub fn audio(&self, chat_id: impl Into<ChatId>, audio: impl Into<String>) -> AudioSendBuilder {
         let request = audio_send_request(chat_id, audio);
         AudioSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts an audio-send builder using the canonical reply chat derived from an update.
+    /// Starts an audio-upload builder for a target chat.
+    pub fn audio_upload(&self, chat_id: impl Into<ChatId>) -> AudioSendBuilder {
+        let request = audio_upload_request(chat_id);
+        AudioSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts an audio-send builder using the update reply target and quoting its source message when present.
     pub fn reply_audio(
         &self,
         update: &Update,
         audio: impl Into<String>,
     ) -> Result<AudioSendBuilder> {
         let request = reply_audio_request(update, audio)?;
+        Ok(AudioSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts an audio-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_audio_upload(&self, update: &Update) -> Result<AudioSendBuilder> {
+        let request = reply_audio_upload_request(update)?;
         Ok(AudioSendBuilder::new(self.client.clone(), request))
     }
 
@@ -973,7 +1239,13 @@ impl AppApi {
         AnimationSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts an animation-send builder using the canonical reply chat derived from an update.
+    /// Starts an animation-upload builder for a target chat.
+    pub fn animation_upload(&self, chat_id: impl Into<ChatId>) -> AnimationSendBuilder {
+        let request = animation_upload_request(chat_id);
+        AnimationSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts an animation-send builder using the update reply target and quoting its source message when present.
     pub fn reply_animation(
         &self,
         update: &Update,
@@ -983,19 +1255,37 @@ impl AppApi {
         Ok(AnimationSendBuilder::new(self.client.clone(), request))
     }
 
+    /// Starts an animation-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_animation_upload(&self, update: &Update) -> Result<AnimationSendBuilder> {
+        let request = reply_animation_upload_request(update)?;
+        Ok(AnimationSendBuilder::new(self.client.clone(), request))
+    }
+
     /// Starts a voice-send builder for a target chat.
     pub fn voice(&self, chat_id: impl Into<ChatId>, voice: impl Into<String>) -> VoiceSendBuilder {
         let request = voice_send_request(chat_id, voice);
         VoiceSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a voice-send builder using the canonical reply chat derived from an update.
+    /// Starts a voice-upload builder for a target chat.
+    pub fn voice_upload(&self, chat_id: impl Into<ChatId>) -> VoiceSendBuilder {
+        let request = voice_upload_request(chat_id);
+        VoiceSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a voice-send builder using the update reply target and quoting its source message when present.
     pub fn reply_voice(
         &self,
         update: &Update,
         voice: impl Into<String>,
     ) -> Result<VoiceSendBuilder> {
         let request = reply_voice_request(update, voice)?;
+        Ok(VoiceSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts a voice-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_voice_upload(&self, update: &Update) -> Result<VoiceSendBuilder> {
+        let request = reply_voice_upload_request(update)?;
         Ok(VoiceSendBuilder::new(self.client.clone(), request))
     }
 
@@ -1009,7 +1299,13 @@ impl AppApi {
         StickerSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a sticker-send builder using the canonical reply chat derived from an update.
+    /// Starts a sticker-upload builder for a target chat.
+    pub fn sticker_upload(&self, chat_id: impl Into<ChatId>) -> StickerSendBuilder {
+        let request = sticker_upload_request(chat_id);
+        StickerSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a sticker-send builder using the update reply target and quoting its source message when present.
     pub fn reply_sticker(
         &self,
         update: &Update,
@@ -1019,9 +1315,15 @@ impl AppApi {
         Ok(StickerSendBuilder::new(self.client.clone(), request))
     }
 
+    /// Starts a sticker-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_sticker_upload(&self, update: &Update) -> Result<StickerSendBuilder> {
+        let request = reply_sticker_upload_request(update)?;
+        Ok(StickerSendBuilder::new(self.client.clone(), request))
+    }
+
     /// Starts a media-group builder for a target chat.
     ///
-    /// `media` must contain at least one item. Build items with the typed `InputMedia` models.
+    /// `media` must contain 2-10 items. Build items with the typed `InputMedia` models.
     pub fn media_group<I, M>(
         &self,
         chat_id: impl Into<ChatId>,
@@ -1035,7 +1337,7 @@ impl AppApi {
         Ok(MediaGroupSendBuilder::new(self.client.clone(), request))
     }
 
-    /// Starts a media-group builder using the canonical reply chat derived from an update.
+    /// Starts a media-group builder using the update reply target and quoting its source message when present.
     pub fn reply_media_group<I, M>(
         &self,
         update: &Update,
@@ -1155,6 +1457,12 @@ impl BlockingTextSendBuilder {
     /// Replies to a concrete message by id.
     pub fn reply_to_message(mut self, message_id: MessageId) -> Self {
         self.request = self.request.reply_to_message(message_id);
+        self
+    }
+
+    /// Sends on behalf of a Telegram Business connection.
+    pub fn business_connection_id(mut self, business_connection_id: impl Into<String>) -> Self {
+        self.request = self.request.business_connection_id(business_connection_id);
         self
     }
 
@@ -1278,6 +1586,17 @@ impl BlockingDocumentSendBuilder {
             .messages()
             .send_document_upload(&self.request, file)
     }
+
+    /// Uploads local bytes as the document payload plus extra `attach://` parts.
+    pub fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_document_upload_parts(&self.request, file, extra_files)
+    }
 }
 
 #[cfg(feature = "_blocking")]
@@ -1347,6 +1666,17 @@ impl BlockingVideoSendBuilder {
             .messages()
             .send_video_upload(&self.request, file)
     }
+
+    /// Uploads local bytes as the video payload plus extra `attach://` parts.
+    pub fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_video_upload_parts(&self.request, file, extra_files)
+    }
 }
 
 #[cfg(feature = "_blocking")]
@@ -1403,6 +1733,17 @@ impl BlockingAudioSendBuilder {
         self.client
             .messages()
             .send_audio_upload(&self.request, file)
+    }
+
+    /// Uploads local bytes as the audio payload plus extra `attach://` parts.
+    pub fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_audio_upload_parts(&self.request, file, extra_files)
     }
 }
 
@@ -1466,6 +1807,17 @@ impl BlockingAnimationSendBuilder {
         self.client
             .messages()
             .send_animation_upload(&self.request, file)
+    }
+
+    /// Uploads local bytes as the animation payload plus extra `attach://` parts.
+    pub fn send_upload_parts(
+        self,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        self.client
+            .messages()
+            .send_animation_upload_parts(&self.request, file, extra_files)
     }
 }
 
@@ -1549,7 +1901,7 @@ impl_common_sticker_builder_methods!(BlockingStickerSendBuilder, SendStickerRequ
 /// Blocking mirror of [`MediaGroupSendBuilder`].
 #[cfg(feature = "_blocking")]
 #[derive(Clone)]
-#[must_use = "call `.send()` or `.into_request()` to finish the send"]
+#[must_use = "call `.send()`, `.send_upload(...)`, or `.into_request()` to finish the send"]
 pub struct BlockingMediaGroupSendBuilder {
     client: BlockingClient,
     request: SendMediaGroupRequest,
@@ -1564,6 +1916,13 @@ impl BlockingMediaGroupSendBuilder {
     /// Sends the media group.
     pub fn send(self) -> Result<Vec<Message>> {
         self.client.messages().send_media_group(&self.request)
+    }
+
+    /// Uploads local files referenced by `attach://...` media entries.
+    pub fn send_upload(self, files: &[UploadPart]) -> Result<Vec<Message>> {
+        self.client
+            .messages()
+            .send_media_group_upload(&self.request, files)
     }
 }
 
@@ -1636,7 +1995,7 @@ impl BlockingAppApi {
         Ok(BlockingTextSendBuilder::new(self.client.clone(), request))
     }
 
-    /// Starts a text-send builder using the canonical reply chat derived from an update.
+    /// Starts a text-send builder using the update reply target and quoting its source message when present.
     pub fn reply(
         &self,
         update: &Update,
@@ -1656,13 +2015,25 @@ impl BlockingAppApi {
         BlockingPhotoSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a photo-send builder using the canonical reply chat derived from an update.
+    /// Starts a photo-upload builder for a target chat.
+    pub fn photo_upload(&self, chat_id: impl Into<ChatId>) -> BlockingPhotoSendBuilder {
+        let request = photo_upload_request(chat_id);
+        BlockingPhotoSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a photo-send builder using the update reply target and quoting its source message when present.
     pub fn reply_photo(
         &self,
         update: &Update,
         photo: impl Into<String>,
     ) -> Result<BlockingPhotoSendBuilder> {
         let request = reply_photo_request(update, photo)?;
+        Ok(BlockingPhotoSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts a photo-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_photo_upload(&self, update: &Update) -> Result<BlockingPhotoSendBuilder> {
+        let request = reply_photo_upload_request(update)?;
         Ok(BlockingPhotoSendBuilder::new(self.client.clone(), request))
     }
 
@@ -1676,13 +2047,28 @@ impl BlockingAppApi {
         BlockingDocumentSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a document-send builder using the canonical reply chat derived from an update.
+    /// Starts a document-upload builder for a target chat.
+    pub fn document_upload(&self, chat_id: impl Into<ChatId>) -> BlockingDocumentSendBuilder {
+        let request = document_upload_request(chat_id);
+        BlockingDocumentSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a document-send builder using the update reply target and quoting its source message when present.
     pub fn reply_document(
         &self,
         update: &Update,
         document: impl Into<String>,
     ) -> Result<BlockingDocumentSendBuilder> {
         let request = reply_document_request(update, document)?;
+        Ok(BlockingDocumentSendBuilder::new(
+            self.client.clone(),
+            request,
+        ))
+    }
+
+    /// Starts a document-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_document_upload(&self, update: &Update) -> Result<BlockingDocumentSendBuilder> {
+        let request = reply_document_upload_request(update)?;
         Ok(BlockingDocumentSendBuilder::new(
             self.client.clone(),
             request,
@@ -1699,13 +2085,25 @@ impl BlockingAppApi {
         BlockingVideoSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a video-send builder using the canonical reply chat derived from an update.
+    /// Starts a video-upload builder for a target chat.
+    pub fn video_upload(&self, chat_id: impl Into<ChatId>) -> BlockingVideoSendBuilder {
+        let request = video_upload_request(chat_id);
+        BlockingVideoSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a video-send builder using the update reply target and quoting its source message when present.
     pub fn reply_video(
         &self,
         update: &Update,
         video: impl Into<String>,
     ) -> Result<BlockingVideoSendBuilder> {
         let request = reply_video_request(update, video)?;
+        Ok(BlockingVideoSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts a video-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_video_upload(&self, update: &Update) -> Result<BlockingVideoSendBuilder> {
+        let request = reply_video_upload_request(update)?;
         Ok(BlockingVideoSendBuilder::new(self.client.clone(), request))
     }
 
@@ -1719,13 +2117,25 @@ impl BlockingAppApi {
         BlockingAudioSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts an audio-send builder using the canonical reply chat derived from an update.
+    /// Starts an audio-upload builder for a target chat.
+    pub fn audio_upload(&self, chat_id: impl Into<ChatId>) -> BlockingAudioSendBuilder {
+        let request = audio_upload_request(chat_id);
+        BlockingAudioSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts an audio-send builder using the update reply target and quoting its source message when present.
     pub fn reply_audio(
         &self,
         update: &Update,
         audio: impl Into<String>,
     ) -> Result<BlockingAudioSendBuilder> {
         let request = reply_audio_request(update, audio)?;
+        Ok(BlockingAudioSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts an audio-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_audio_upload(&self, update: &Update) -> Result<BlockingAudioSendBuilder> {
+        let request = reply_audio_upload_request(update)?;
         Ok(BlockingAudioSendBuilder::new(self.client.clone(), request))
     }
 
@@ -1739,13 +2149,28 @@ impl BlockingAppApi {
         BlockingAnimationSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts an animation-send builder using the canonical reply chat derived from an update.
+    /// Starts an animation-upload builder for a target chat.
+    pub fn animation_upload(&self, chat_id: impl Into<ChatId>) -> BlockingAnimationSendBuilder {
+        let request = animation_upload_request(chat_id);
+        BlockingAnimationSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts an animation-send builder using the update reply target and quoting its source message when present.
     pub fn reply_animation(
         &self,
         update: &Update,
         animation: impl Into<String>,
     ) -> Result<BlockingAnimationSendBuilder> {
         let request = reply_animation_request(update, animation)?;
+        Ok(BlockingAnimationSendBuilder::new(
+            self.client.clone(),
+            request,
+        ))
+    }
+
+    /// Starts an animation-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_animation_upload(&self, update: &Update) -> Result<BlockingAnimationSendBuilder> {
+        let request = reply_animation_upload_request(update)?;
         Ok(BlockingAnimationSendBuilder::new(
             self.client.clone(),
             request,
@@ -1762,13 +2187,25 @@ impl BlockingAppApi {
         BlockingVoiceSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a voice-send builder using the canonical reply chat derived from an update.
+    /// Starts a voice-upload builder for a target chat.
+    pub fn voice_upload(&self, chat_id: impl Into<ChatId>) -> BlockingVoiceSendBuilder {
+        let request = voice_upload_request(chat_id);
+        BlockingVoiceSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a voice-send builder using the update reply target and quoting its source message when present.
     pub fn reply_voice(
         &self,
         update: &Update,
         voice: impl Into<String>,
     ) -> Result<BlockingVoiceSendBuilder> {
         let request = reply_voice_request(update, voice)?;
+        Ok(BlockingVoiceSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Starts a voice-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_voice_upload(&self, update: &Update) -> Result<BlockingVoiceSendBuilder> {
+        let request = reply_voice_upload_request(update)?;
         Ok(BlockingVoiceSendBuilder::new(self.client.clone(), request))
     }
 
@@ -1782,7 +2219,13 @@ impl BlockingAppApi {
         BlockingStickerSendBuilder::new(self.client.clone(), request)
     }
 
-    /// Starts a sticker-send builder using the canonical reply chat derived from an update.
+    /// Starts a sticker-upload builder for a target chat.
+    pub fn sticker_upload(&self, chat_id: impl Into<ChatId>) -> BlockingStickerSendBuilder {
+        let request = sticker_upload_request(chat_id);
+        BlockingStickerSendBuilder::new(self.client.clone(), request)
+    }
+
+    /// Starts a sticker-send builder using the update reply target and quoting its source message when present.
     pub fn reply_sticker(
         &self,
         update: &Update,
@@ -1795,9 +2238,18 @@ impl BlockingAppApi {
         ))
     }
 
+    /// Starts a sticker-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_sticker_upload(&self, update: &Update) -> Result<BlockingStickerSendBuilder> {
+        let request = reply_sticker_upload_request(update)?;
+        Ok(BlockingStickerSendBuilder::new(
+            self.client.clone(),
+            request,
+        ))
+    }
+
     /// Starts a media-group builder for a target chat.
     ///
-    /// `media` must contain at least one item. Build items with the typed `InputMedia` models.
+    /// `media` must contain 2-10 items. Build items with the typed `InputMedia` models.
     pub fn media_group<I, M>(
         &self,
         chat_id: impl Into<ChatId>,
@@ -1814,7 +2266,7 @@ impl BlockingAppApi {
         ))
     }
 
-    /// Starts a media-group builder using the canonical reply chat derived from an update.
+    /// Starts a media-group builder using the update reply target and quoting its source message when present.
     pub fn reply_media_group<I, M>(
         &self,
         update: &Update,

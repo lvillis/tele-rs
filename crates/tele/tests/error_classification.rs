@@ -70,3 +70,22 @@ fn configuration_errors_are_not_retryable() {
     assert_eq!(error.classification(), ErrorClass::Configuration);
     assert!(!error.is_retryable());
 }
+
+#[test]
+fn storage_errors_preserve_retry_policy() {
+    let retryable = Error::Storage {
+        operation: "redis GET".into(),
+        message: "connection reset".into(),
+        retryable: true,
+    };
+    assert_eq!(retryable.classification(), ErrorClass::Storage);
+    assert!(retryable.is_retryable());
+
+    let permanent = Error::Storage {
+        operation: "postgres decode".into(),
+        message: "invalid json payload".into(),
+        retryable: false,
+    };
+    assert_eq!(permanent.classification(), ErrorClass::Storage);
+    assert!(!permanent.is_retryable());
+}

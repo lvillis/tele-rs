@@ -644,6 +644,8 @@ pub struct SetChatAdministratorCustomTitleRequest {
 
 impl SetChatAdministratorCustomTitleRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
         validate_text_limit(
             "custom_title",
             &self.custom_title,
@@ -712,6 +714,7 @@ pub struct CreateChatInviteLinkRequest {
 
 impl CreateChatInviteLinkRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_invite_link_options(
             self.name.as_deref(),
             self.member_limit,
@@ -736,6 +739,7 @@ pub struct EditChatInviteLinkRequest {
 
 impl EditChatInviteLinkRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_required_text("invite_link", &self.invite_link)?;
         validate_invite_link_options(
             self.name.as_deref(),
@@ -753,6 +757,7 @@ pub struct RevokeChatInviteLinkRequest {
 
 impl RevokeChatInviteLinkRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_required_text("invite_link", &self.invite_link)
     }
 }
@@ -765,6 +770,7 @@ pub struct SetChatTitleRequest {
 
 impl SetChatTitleRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_text_limit(
             "title",
             &self.title,
@@ -784,6 +790,7 @@ pub struct SetChatDescriptionRequest {
 
 impl SetChatDescriptionRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         let Some(description) = self.description.as_deref() else {
             return Ok(());
         };
@@ -824,6 +831,19 @@ pub struct DeleteChatPhotoRequest {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct SetChatPhotoRequest {
+    pub chat_id: ChatId,
+}
+
+impl SetChatPhotoRequest {
+    pub fn new(chat_id: impl Into<ChatId>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct SetChatStickerSetRequest {
     pub chat_id: ChatId,
     pub sticker_set_name: String,
@@ -831,6 +851,7 @@ pub struct SetChatStickerSetRequest {
 
 impl SetChatStickerSetRequest {
     pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_text_limit(
             "sticker_set_name",
             &self.sticker_set_name,
@@ -844,6 +865,84 @@ impl SetChatStickerSetRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct DeleteChatStickerSetRequest {
     pub chat_id: ChatId,
+}
+
+macro_rules! impl_chat_id_validate {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn validate(&self) -> Result<()> {
+                    self.chat_id.validate()
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_chat_and_user_validate {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn validate(&self) -> Result<()> {
+                    self.chat_id.validate()?;
+                    self.user_id.validate()
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_chat_and_sender_chat_validate {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn validate(&self) -> Result<()> {
+                    self.chat_id.validate()?;
+                    ChatId::Id(self.sender_chat_id).validate()
+                }
+            }
+        )*
+    };
+}
+
+impl_chat_id_validate!(
+    GetChatRequest,
+    GetChatAdministratorsRequest,
+    GetChatMemberCountRequest,
+    LeaveChatRequest,
+    SetChatPermissionsRequest,
+    ExportChatInviteLinkRequest,
+    UnpinAllChatMessagesRequest,
+    DeleteChatPhotoRequest,
+    SetChatPhotoRequest,
+    DeleteChatStickerSetRequest,
+);
+
+impl_chat_and_user_validate!(
+    GetChatMemberRequest,
+    BanChatMemberRequest,
+    UnbanChatMemberRequest,
+    RestrictChatMemberRequest,
+    PromoteChatMemberRequest,
+);
+
+impl_chat_and_sender_chat_validate!(BanChatSenderChatRequest, UnbanChatSenderChatRequest,);
+
+impl PinChatMessageRequest {
+    pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.message_id.validate()
+    }
+}
+
+impl UnpinChatMessageRequest {
+    pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(message_id) = self.message_id {
+            message_id.validate()?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1023,6 +1122,64 @@ mod tests {
         };
         assert!(matches!(
             sticker_set.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_chat_id_on_chat_requests() {
+        let get_chat = GetChatRequest {
+            chat_id: ChatId::from(0),
+        };
+        assert!(matches!(
+            get_chat.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let ban = BanChatMemberRequest::new("channel", UserId::from(2));
+        assert!(matches!(ban.validate(), Err(Error::InvalidRequest { .. })));
+
+        let invalid_user = BanChatMemberRequest::new(1, UserId::from(0));
+        assert!(matches!(
+            invalid_user.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_sender_chat = BanChatSenderChatRequest {
+            chat_id: ChatId::from(1),
+            sender_chat_id: 0,
+        };
+        assert!(matches!(
+            invalid_sender_chat.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invite = CreateChatInviteLinkRequest {
+            chat_id: ChatId::from("channel"),
+            name: None,
+            expire_date: None,
+            member_limit: None,
+            creates_join_request: None,
+        };
+        assert!(matches!(
+            invite.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let pin = PinChatMessageRequest {
+            chat_id: ChatId::from("@channel"),
+            message_id: MessageId::from(1),
+            disable_notification: None,
+        };
+        assert!(pin.validate().is_ok());
+
+        let invalid_pin = PinChatMessageRequest {
+            chat_id: ChatId::from("@channel"),
+            message_id: MessageId::from(0),
+            disable_notification: None,
+        };
+        assert!(matches!(
+            invalid_pin.validate(),
             Err(Error::InvalidRequest { .. })
         ));
     }

@@ -293,7 +293,13 @@ async fn run_outbox_worker(
             config.max_message_age,
             unix_timestamp_millis_now(),
         ) {
-            let entry = match commit_outbox_front(&config, &mut queue).await {
+            let entry = match dead_letter_front_and_commit(
+                &config,
+                &mut queue,
+                "message expired in outbox before delivery".to_owned(),
+            )
+            .await
+            {
                 Ok(Some(entry)) => entry,
                 Ok(None) => continue,
                 Err(_error) => {
@@ -301,16 +307,6 @@ async fn run_outbox_worker(
                     continue;
                 }
             };
-            let dead_letter = to_dead_letter(
-                &entry.payload,
-                "message expired in outbox before delivery".to_owned(),
-            );
-            let _ = append_dead_letter_async(
-                config.dead_letter_path.clone(),
-                config.max_dead_letters,
-                dead_letter,
-            )
-            .await;
             if let Some(responder) = entry.responder {
                 let _ = responder.send(Err(invalid_request("message expired in outbox queue")));
             }
@@ -382,27 +378,41 @@ async fn run_outbox_worker(
                     continue;
                 }
 
-                let entry = match commit_outbox_front(&config, &mut queue).await {
-                    Ok(Some(entry)) => entry,
-                    Ok(None) => continue,
-                    Err(_error) => {
-                        sleep(outbox_persistence_retry_delay(&config)).await;
-                        continue;
-                    }
-                };
-                let dead_letter = to_dead_letter(&entry.payload, error_message);
-                let _ = append_dead_letter_async(
-                    config.dead_letter_path.clone(),
-                    config.max_dead_letters,
-                    dead_letter,
-                )
-                .await;
+                let entry =
+                    match dead_letter_front_and_commit(&config, &mut queue, error_message).await {
+                        Ok(Some(entry)) => entry,
+                        Ok(None) => continue,
+                        Err(_error) => {
+                            sleep(outbox_persistence_retry_delay(&config)).await;
+                            continue;
+                        }
+                    };
                 if let Some(responder) = entry.responder {
                     let _ = responder.send(Err(error));
                 }
             }
         }
     }
+}
+
+async fn dead_letter_front_and_commit(
+    config: &OutboxConfig,
+    queue: &mut VecDeque<QueuedOutboxCommand>,
+    reason: String,
+) -> Result<Option<QueuedOutboxCommand>> {
+    let Some(entry) = queue.front() else {
+        return Ok(None);
+    };
+
+    let dead_letter = to_dead_letter(&entry.payload, reason);
+    append_dead_letter_async(
+        config.dead_letter_path.clone(),
+        config.max_dead_letters,
+        dead_letter,
+    )
+    .await?;
+
+    commit_outbox_front(config, queue).await
 }
 
 fn outbox_persistence_retry_delay(config: &OutboxConfig) -> Duration {
@@ -597,9 +607,15 @@ fn load_dead_letter_snapshot(path: &Path) -> Result<DeadLetterSnapshot> {
         });
     }
 
-    let raw = fs::read(path).map_err(|source| Error::ReadLocalFile {
-        path: path.display().to_string(),
-        source,
+    let raw = fs::read(path).map_err(|source| {
+        storage_error(
+            "dead-letter read",
+            format!(
+                "failed to read dead-letter snapshot `{}`: {source}",
+                path.display()
+            ),
+            true,
+        )
     })?;
     if raw.is_empty() {
         return Ok(DeadLetterSnapshot {
@@ -627,9 +643,15 @@ fn load_outbox_queue(config: &OutboxConfig) -> Result<Vec<PersistedOutboxCommand
         return Ok(Vec::new());
     }
 
-    let raw = fs::read(path).map_err(|source| Error::ReadLocalFile {
-        path: path.display().to_string(),
-        source,
+    let raw = fs::read(path).map_err(|source| {
+        storage_error(
+            "outbox read",
+            format!(
+                "failed to read outbox snapshot `{}`: {source}",
+                path.display()
+            ),
+            true,
+        )
     })?;
     if raw.is_empty() {
         return Ok(Vec::new());
@@ -674,4 +696,51 @@ async fn persist_outbox_queue_async(
 async fn send_once(client: &Client, chat_id: &ChatId, text: &str) -> Result<Message> {
     let request = SendMessageRequest::new(chat_id.clone(), text.to_owned())?;
     client.messages().send_message(&request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dead_letter_failure_keeps_queue_entry()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "tele-outbox-dlq-failure-{}-{}",
+            std::process::id(),
+            unix_timestamp_millis_now()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let queue_path = root.join("queue.json");
+        let blocked_parent = root.join("dead-letter-parent");
+        let dead_letter_path = blocked_parent.join("dead-letter.json");
+        fs::write(&blocked_parent, b"not a directory")?;
+
+        let config = OutboxConfig::default()
+            .with_persistence_path(queue_path.clone())
+            .with_dead_letter_path(dead_letter_path);
+        let mut queue = VecDeque::from([QueuedOutboxCommand {
+            payload: PersistedOutboxCommand {
+                chat_id: ChatId::from(12_i64),
+                text: "hello".to_owned(),
+                idempotency_key: Some("dead-letter-key".to_owned()),
+                enqueued_at_unix_ms: unix_timestamp_millis_now(),
+                attempt: 1,
+                last_error: Some("failed".to_owned()),
+            },
+            responder: None,
+        }]);
+
+        let result =
+            dead_letter_front_and_commit(&config, &mut queue, "delivery failed".to_owned()).await;
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        assert_eq!(queue.len(), 1);
+        assert!(!queue_path.exists());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }

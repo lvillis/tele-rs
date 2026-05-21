@@ -670,9 +670,9 @@ async fn blocking_richer_media_builders_support_common_send_options() -> Result<
         .app()
         .sticker(1_i64, "blocking-sticker-file-id")
         .emoji(":ok:")
-        .reply_to_message(MessageId(71))?
+        .reply_to_message(MessageId(71))
         .message_thread_id(27)
-        .reply_markup(sticker_markup)?
+        .reply_markup(sticker_markup)
         .send()?;
     assert_eq!(sticker.message_id.0, 26);
 
@@ -723,22 +723,22 @@ async fn blocking_sticker_builder_supports_common_send_options() -> Result<(), D
         .app()
         .sticker(1_i64, "blocking-sticker-file-id")
         .emoji(":ok:")
-        .reply_to_message(MessageId(71))?
+        .reply_to_message(MessageId(71))
         .message_thread_id(27)
-        .reply_markup(markup)?
+        .reply_markup(markup)
         .into_request();
 
     assert_eq!(request.emoji.as_deref(), Some(":ok:"));
     assert_eq!(request.message_thread_id, Some(27));
     assert_eq!(
-        request.reply_parameters,
-        Some(serde_json::json!({"message_id":71}))
+        serde_json::to_value(request.reply_parameters.as_ref())?,
+        serde_json::json!({"message_id":71})
     );
     assert_eq!(
-        request.reply_markup,
-        Some(serde_json::json!({
+        serde_json::to_value(request.reply_markup.as_ref())?,
+        serde_json::json!({
             "inline_keyboard": [[{"text":"Review blocking sticker","callback_data":"blocking-sticker:1"}]]
-        }))
+        })
     );
 
     Ok(())

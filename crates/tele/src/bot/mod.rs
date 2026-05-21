@@ -162,6 +162,18 @@ fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
+fn storage_error(
+    operation: impl Into<Box<str>>,
+    message: impl Into<Box<str>>,
+    retryable: bool,
+) -> Error {
+    Error::Storage {
+        operation: operation.into(),
+        message: message.into(),
+        retryable,
+    }
+}
+
 async fn run_blocking_io<T, F>(task: F) -> Result<T>
 where
     T: Send + 'static,
@@ -169,7 +181,7 @@ where
 {
     tokio::task::spawn_blocking(task)
         .await
-        .map_err(|error| invalid_request(format!("blocking I/O task failed: {error}")))?
+        .map_err(|error| storage_error("blocking I/O task", error.to_string(), false))?
 }
 
 mod app;
@@ -196,10 +208,14 @@ pub use session::*;
 fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|source| {
-        invalid_request(format!(
-            "failed to create directory for {subject} `{}`: {source}",
-            parent.display()
-        ))
+        storage_error(
+            format!("{subject} directory create"),
+            format!(
+                "failed to create directory for {subject} `{}`: {source}",
+                parent.display()
+            ),
+            true,
+        )
     })?;
 
     let file_name = path
@@ -221,16 +237,24 @@ fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> 
             Ok(mut file) => {
                 let write_result = (|| -> Result<()> {
                     file.write_all(contents).map_err(|source| {
-                        invalid_request(format!(
-                            "failed to write temp file for {subject} `{}`: {source}",
-                            temp_path.display()
-                        ))
+                        storage_error(
+                            format!("{subject} temp write"),
+                            format!(
+                                "failed to write temp file for {subject} `{}`: {source}",
+                                temp_path.display()
+                            ),
+                            true,
+                        )
                     })?;
                     file.sync_all().map_err(|source| {
-                        invalid_request(format!(
-                            "failed to sync temp file for {subject} `{}`: {source}",
-                            temp_path.display()
-                        ))
+                        storage_error(
+                            format!("{subject} temp sync"),
+                            format!(
+                                "failed to sync temp file for {subject} `{}`: {source}",
+                                temp_path.display()
+                            ),
+                            true,
+                        )
                     })?;
                     Ok(())
                 })();
@@ -241,28 +265,40 @@ fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> 
 
                 fs::rename(&temp_path, path).map_err(|source| {
                     let _ = fs::remove_file(&temp_path);
-                    invalid_request(format!(
-                        "failed to replace {subject} `{}` atomically: {source}",
-                        path.display()
-                    ))
+                    storage_error(
+                        format!("{subject} replace"),
+                        format!(
+                            "failed to replace {subject} `{}` atomically: {source}",
+                            path.display()
+                        ),
+                        true,
+                    )
                 })?;
                 sync_parent_directory(parent, subject)?;
                 return Ok(());
             }
             Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(source) => {
-                return Err(invalid_request(format!(
-                    "failed to create temp file for {subject} `{}`: {source}",
-                    temp_path.display()
-                )));
+                return Err(storage_error(
+                    format!("{subject} temp create"),
+                    format!(
+                        "failed to create temp file for {subject} `{}`: {source}",
+                        temp_path.display()
+                    ),
+                    true,
+                ));
             }
         }
     }
 
-    Err(invalid_request(format!(
-        "failed to allocate unique temp file for {subject} `{}`",
-        path.display()
-    )))
+    Err(storage_error(
+        format!("{subject} temp allocate"),
+        format!(
+            "failed to allocate unique temp file for {subject} `{}`",
+            path.display()
+        ),
+        true,
+    ))
 }
 
 #[cfg(unix)]
@@ -270,10 +306,14 @@ fn sync_parent_directory(parent: &Path, subject: &str) -> Result<()> {
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| {
-            invalid_request(format!(
-                "failed to sync directory for {subject} `{}`: {source}",
-                parent.display()
-            ))
+            storage_error(
+                format!("{subject} directory sync"),
+                format!(
+                    "failed to sync directory for {subject} `{}`: {source}",
+                    parent.display()
+                ),
+                true,
+            )
         })
 }
 

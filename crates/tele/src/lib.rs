@@ -115,4 +115,4 @@ pub use client::{ClientBuilder, RateLimitConfig, RetryConfig};
 pub use error::{Error, ErrorClass, Result};
 #[cfg(feature = "macros")]
 pub use tele_macros::BotCommands;
-pub use types::UploadFile;
+pub use types::{UploadFile, UploadPart};

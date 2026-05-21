@@ -80,6 +80,23 @@ impl RawApi {
             .await
     }
 
+    /// Calls any Telegram method with multiple multipart file parts.
+    pub async fn call_multipart_files<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.client
+            .call_method_multipart_files(method, payload, skip_fields, files)
+            .await
+    }
+
     /// Calls multipart method with method-scoped retry policy.
     pub async fn call_multipart_with_retry<R, P>(
         &self,
@@ -96,6 +113,27 @@ impl RawApi {
         retry_with_config_async(&retry, || async {
             self.client
                 .call_method_multipart(method, payload, file_field_name, file)
+                .await
+        })
+        .await
+    }
+
+    /// Calls multi-file multipart method with method-scoped retry policy.
+    pub async fn call_multipart_files_with_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+        retry: RetryConfig,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        retry_with_config_async(&retry, || async {
+            self.client
+                .call_method_multipart_files(method, payload, skip_fields, files)
                 .await
         })
         .await
@@ -170,6 +208,22 @@ impl BlockingRawApi {
             .call_method_multipart(method, payload, file_field_name, file)
     }
 
+    /// Calls any Telegram method with multiple multipart file parts.
+    pub fn call_multipart_files<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.client
+            .call_method_multipart_files(method, payload, skip_fields, files)
+    }
+
     /// Calls multipart method with method-scoped retry policy.
     pub fn call_multipart_with_retry<R, P>(
         &self,
@@ -186,6 +240,25 @@ impl BlockingRawApi {
         retry_with_config_blocking(&retry, || {
             self.client
                 .call_method_multipart(method, payload, file_field_name, file)
+        })
+    }
+
+    /// Calls multi-file multipart method with method-scoped retry policy.
+    pub fn call_multipart_files_with_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+        retry: RetryConfig,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        retry_with_config_blocking(&retry, || {
+            self.client
+                .call_method_multipart_files(method, payload, skip_fields, files)
         })
     }
 }

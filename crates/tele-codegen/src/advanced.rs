@@ -84,11 +84,13 @@ fn render_generated_files() -> Result<Vec<GeneratedFile>, Box<dyn std::error::Er
     spec.validate()
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
 
+    let advanced_methods = json_advanced_methods(&spec);
+
     let mut grouped: HashMap<&'static str, Vec<&MethodSpec>> = DOMAIN_ORDER
         .into_iter()
         .map(|domain| (domain, Vec::new()))
         .collect();
-    for method in &spec.advanced_methods {
+    for &method in &advanced_methods {
         let domain = domain_for_method(&method.fn_name);
         let Some(methods) = grouped.get_mut(domain) else {
             return Err(format!("unknown advanced method domain `{domain}`").into());
@@ -111,7 +113,7 @@ fn render_generated_files() -> Result<Vec<GeneratedFile>, Box<dyn std::error::Er
 
     files.push(GeneratedFile {
         path: paths.api_methods,
-        content: generate_api_methods(&spec.advanced_methods),
+        content: generate_api_methods(&advanced_methods),
     });
     Ok(files)
 }
@@ -246,8 +248,23 @@ fn typed_fn_name(fn_name: &str) -> String {
     format!("{fn_name}_typed")
 }
 
+fn requires_multipart_upload(method: &MethodSpec) -> bool {
+    method
+        .params
+        .iter()
+        .any(|param| param.required && param.type_raw == "InputFile")
+}
+
+fn json_advanced_methods(spec: &BotApiSpec) -> Vec<&MethodSpec> {
+    spec.advanced_methods
+        .iter()
+        .filter(|method| !requires_multipart_upload(method))
+        .collect()
+}
+
 fn qualify_common_type(field_ty: &str) -> String {
     field_ty
+        .replace("NumericChatId", "crate::types::common::NumericChatId")
         .replace("ChatId", "crate::types::common::ChatId")
         .replace("MessageId", "crate::types::common::MessageId")
         .replace("UserId", "crate::types::common::UserId")
@@ -257,13 +274,16 @@ fn ctor_arg_type(field_ty: &str) -> &str {
     match field_ty {
         "String" => "impl Into<String>",
         "crate::types::common::ChatId" => "impl Into<crate::types::common::ChatId>",
+        "crate::types::common::NumericChatId" => "impl Into<crate::types::common::NumericChatId>",
         _ => field_ty,
     }
 }
 
 fn ctor_assign(field_name: &str, field_ty: &str) -> String {
     match field_ty {
-        "String" | "crate::types::common::ChatId" => format!("{field_name}: {field_name}.into()"),
+        "String" | "crate::types::common::ChatId" | "crate::types::common::NumericChatId" => {
+            format!("{field_name}: {field_name}.into()")
+        }
         _ => field_name.to_owned(),
     }
 }
@@ -280,9 +300,14 @@ fn map_raw_type(type_raw: &str) -> Option<String> {
             "crate::types::telegram::InlineQueryResult",
         ),
         ("InputChecklist", "crate::types::telegram::InputChecklist"),
+        ("KeyboardButton", "crate::types::telegram::KeyboardButton"),
         (
             "InlineKeyboardMarkup",
             "crate::types::telegram::InlineKeyboardMarkup",
+        ),
+        (
+            "InputProfilePhoto",
+            "crate::types::telegram::InputProfilePhoto",
         ),
         (
             "InputStoryContent",
@@ -330,6 +355,30 @@ fn map_raw_type(type_raw: &str) -> Option<String> {
 }
 
 fn resolve_param_type(param: &ParamSpec) -> String {
+    match param.field_name.as_str() {
+        "parse_mode"
+        | "caption_parse_mode"
+        | "explanation_parse_mode"
+        | "text_parse_mode"
+        | "quote_parse_mode"
+            if param.type_raw == "String" =>
+        {
+            return "crate::types::common::ParseMode".to_owned();
+        }
+        "chat_id" | "from_chat_id" | "new_owner_chat_id"
+            if param.type_raw == "Integer" && param.type_rust == "i64" =>
+        {
+            return "crate::types::common::NumericChatId".to_owned();
+        }
+        "sticker_format" | "format" if param.type_raw == "String" => {
+            return "crate::types::sticker::StickerFormat".to_owned();
+        }
+        "sticker_type" if param.type_raw == "String" => {
+            return "crate::types::sticker::StickerType".to_owned();
+        }
+        _ => {}
+    }
+
     let current = qualify_common_type(&param.type_rust);
     if !current.contains("Value") {
         return current;
@@ -414,12 +463,171 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
     }
 }
 
+const TYPES_WITH_VALIDATE: &[&str] = &[
+    "crate::types::common::ChatId",
+    "crate::types::common::NumericChatId",
+    "crate::types::common::UserId",
+    "crate::types::common::MessageId",
+    "crate::types::sticker::InputSticker",
+    "crate::types::sticker::MaskPosition",
+    "crate::types::telegram::AcceptedGiftTypes",
+    "crate::types::telegram::InlineKeyboardMarkup",
+    "crate::types::telegram::InlineQueryResult",
+    "crate::types::telegram::InputChecklist",
+    "crate::types::telegram::InputPaidMedia",
+    "crate::types::telegram::InputProfilePhoto",
+    "crate::types::telegram::InputStoryContent",
+    "crate::types::telegram::KeyboardButton",
+    "crate::types::telegram::MenuButton",
+    "crate::types::telegram::PassportElementError",
+    "crate::types::telegram::ReactionType",
+    "crate::types::telegram::ReplyMarkup",
+    "crate::types::telegram::ReplyParameters",
+    "crate::types::telegram::StoryArea",
+    "crate::types::telegram::SuggestedPostParameters",
+];
+
+fn type_has_validate(field_ty: &str) -> bool {
+    TYPES_WITH_VALIDATE.contains(&field_ty)
+}
+
+fn validated_vec_item_type(field_ty: &str) -> Option<&str> {
+    field_ty
+        .strip_prefix("Vec<")
+        .and_then(|inner| inner.strip_suffix('>'))
+        .filter(|inner| type_has_validate(inner))
+}
+
+fn positive_i64_field(field_name: &str) -> bool {
+    matches!(
+        field_name,
+        "active_period"
+            | "direct_messages_topic_id"
+            | "draft_id"
+            | "duration"
+            | "emoji_status_expiration_date"
+            | "from_story_id"
+            | "length"
+            | "limit"
+            | "max_tip_amount"
+            | "message_thread_id"
+            | "month_count"
+            | "photo_height"
+            | "photo_size"
+            | "photo_width"
+            | "send_date"
+            | "star_count"
+            | "story_id"
+            | "subscription_period"
+            | "subscription_price"
+    )
+}
+
+fn non_negative_i64_field(field_name: &str) -> bool {
+    matches!(field_name, "offset" | "position" | "score")
+}
+
+fn string_id_field(field_name: &str) -> bool {
+    matches!(
+        field_name,
+        "business_connection_id"
+            | "custom_emoji_id"
+            | "inline_message_id"
+            | "message_effect_id"
+            | "prepared_message_id"
+            | "web_app_query_id"
+    ) || field_name.ends_with("_id")
+}
+
 fn validation_rule(param: &ParamSpec) -> Option<String> {
+    let field_ty = resolve_param_type(param);
+    if type_has_validate(&field_ty) {
+        if param.required {
+            return Some(format!("        self.{}.validate()?;", param.field_name));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_ref() {{\n            value.validate()?;\n        }}",
+            param.field_name
+        ));
+    }
+
+    if field_ty == "Vec<crate::types::common::MessageId>" {
+        if param.required {
+            return Some(format!(
+                "        validate_required_message_ids(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(values) = self.{}.as_deref() {{\n            validate_message_ids(values)?;\n        }}",
+            param.field_name
+        ));
+    }
+
+    if let Some(item_ty) = validated_vec_item_type(&field_ty) {
+        if param.required {
+            return Some(format!(
+                "        validate_required_items::<{}>(\"{}\", &self.{})?;",
+                item_ty, param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(values) = self.{}.as_deref() {{\n            validate_items(values)?;\n        }}",
+            param.field_name
+        ));
+    }
+
+    if field_ty == "i64" {
+        if positive_i64_field(&param.field_name) {
+            if param.required {
+                return Some(format!(
+                    "        validate_positive_i64(\"{}\", self.{})?;",
+                    param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(value) = self.{} {{\n            validate_positive_i64(\"{}\", value)?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+
+        if non_negative_i64_field(&param.field_name) {
+            if param.required {
+                return Some(format!(
+                    "        validate_non_negative_i64(\"{}\", self.{})?;",
+                    param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(value) = self.{} {{\n            validate_non_negative_i64(\"{}\", value)?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+    }
+
+    if field_ty == "String" && string_id_field(&param.field_name) {
+        if param.required {
+            return Some(format!(
+                "        validate_string_id(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_string_id(\"{}\", value)?;\n        }}",
+            param.field_name, param.name
+        ));
+    }
+
     if !param.required {
         return None;
     }
 
-    let field_ty = resolve_param_type(param);
     if field_ty == "String" {
         return Some(format!(
             "        validate_required_string(\"{}\", &self.{})?;",
@@ -624,8 +832,31 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         .join("\n\n");
     let uses_value = body.contains("Value");
     let uses_required_string_validator = body.contains("validate_required_string(");
+    let uses_string_id_validator = body.contains("validate_string_id(");
     let uses_required_vec_validator = body.contains("validate_required_vec(");
-    let uses_validation = uses_required_string_validator || uses_required_vec_validator;
+    let uses_required_message_ids_validator = body.contains("validate_required_message_ids(");
+    let uses_message_ids_validator = body.contains("validate_message_ids(");
+    let uses_required_items_validator = body.contains("validate_required_items::<");
+    let uses_items_validator = body.contains("validate_items(");
+    let uses_positive_i64_validator = body.contains("validate_positive_i64(");
+    let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
+    let uses_error = uses_required_string_validator
+        || uses_string_id_validator
+        || uses_required_vec_validator
+        || uses_required_message_ids_validator
+        || uses_required_items_validator
+        || uses_positive_i64_validator
+        || uses_non_negative_i64_validator;
+    let uses_result = body.contains("fn validate(&self) -> Result<()>")
+        || uses_required_string_validator
+        || uses_string_id_validator
+        || uses_required_vec_validator
+        || uses_required_message_ids_validator
+        || uses_message_ids_validator
+        || uses_required_items_validator
+        || uses_items_validator
+        || uses_positive_i64_validator
+        || uses_non_negative_i64_validator;
 
     let mut out = String::new();
     let _ = writeln!(
@@ -641,8 +872,11 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "use serde_json::Value;");
     }
     let _ = writeln!(&mut out);
-    if uses_validation {
+    if uses_error {
         let _ = writeln!(&mut out, "use crate::{{Error, Result}};");
+        let _ = writeln!(&mut out);
+    } else if uses_result {
+        let _ = writeln!(&mut out, "use crate::Result;");
         let _ = writeln!(&mut out);
     }
     let _ = writeln!(&mut out, "use super::AdvancedRequest;");
@@ -657,6 +891,32 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(
             &mut out,
             "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_string_id_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_string_id(field: &str, value: &str) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if value.trim().is_empty() {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out, "    if value.chars().any(char::is_control) {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} must not contain control characters\"),"
         );
         let _ = writeln!(&mut out, "        }});");
         let _ = writeln!(&mut out, "    }}");
@@ -683,13 +943,126 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
     }
+    if uses_positive_i64_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_positive_i64(field: &str, value: i64) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if value <= 0 {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} must be greater than 0\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_non_negative_i64_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_non_negative_i64(field: &str, value: i64) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if value < 0 {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be negative\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_items_validator || uses_required_items_validator {
+        let _ = writeln!(&mut out, "trait GeneratedValidate {{");
+        let _ = writeln!(&mut out, "    fn validate_generated(&self) -> Result<()>;");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+        for ty in TYPES_WITH_VALIDATE {
+            let _ = writeln!(&mut out, "impl GeneratedValidate for {ty} {{");
+            let _ = writeln!(
+                &mut out,
+                "    fn validate_generated(&self) -> Result<()> {{"
+            );
+            let _ = writeln!(&mut out, "        self.validate()");
+            let _ = writeln!(&mut out, "    }}");
+            let _ = writeln!(&mut out, "}}");
+            let _ = writeln!(&mut out);
+        }
+        let _ = writeln!(
+            &mut out,
+            "fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    for value in values {{");
+        let _ = writeln!(&mut out, "        value.validate_generated()?;");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_required_items_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if values.is_empty() {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    validate_items(values)");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_message_ids_validator || uses_required_message_ids_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    for value in values {{");
+        let _ = writeln!(&mut out, "        value.validate()?;");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_required_message_ids_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_message_ids(field: &str, values: &[crate::types::common::MessageId]) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if values.is_empty() {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    validate_message_ids(values)");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
     if !body.is_empty() {
         let _ = writeln!(&mut out, "{body}");
     }
     out
 }
 
-fn generate_api_methods(methods: &[MethodSpec]) -> String {
+fn generate_api_methods(methods: &[&MethodSpec]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         &mut out,
@@ -749,6 +1122,48 @@ mod tests {
     }
 
     #[test]
+    fn upload_only_methods_are_not_generated_for_json_advanced_service() {
+        let spec = BotApiSpec {
+            version: "test".to_owned(),
+            generated_from: "test".to_owned(),
+            all_methods: vec!["setChatPhoto".to_owned(), "getMe".to_owned()],
+            advanced_methods: vec![
+                MethodSpec {
+                    fn_name: "set_chat_photo".to_owned(),
+                    method: "setChatPhoto".to_owned(),
+                    return_desc: "True on success".to_owned(),
+                    params: vec![
+                        ParamSpec {
+                            name: "chat_id".to_owned(),
+                            field_name: "chat_id".to_owned(),
+                            required: true,
+                            type_raw: "Integer or String".to_owned(),
+                            type_rust: "ChatId".to_owned(),
+                        },
+                        ParamSpec {
+                            name: "photo".to_owned(),
+                            field_name: "photo".to_owned(),
+                            required: true,
+                            type_raw: "InputFile".to_owned(),
+                            type_rust: "Value".to_owned(),
+                        },
+                    ],
+                },
+                MethodSpec {
+                    fn_name: "get_me".to_owned(),
+                    method: "getMe".to_owned(),
+                    return_desc: "the bot user".to_owned(),
+                    params: Vec::new(),
+                },
+            ],
+        };
+
+        let methods = json_advanced_methods(&spec);
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].method, "getMe");
+    }
+
+    #[test]
     fn domain_module_imports_value_when_needed() {
         let method = MethodSpec {
             fn_name: "demo".to_owned(),
@@ -766,6 +1181,318 @@ mod tests {
         let generated = generate_domain_module(&[&method]);
         assert!(generated.contains("use serde_json::Value;"));
         assert!(generated.contains("pub payload: Option<Value>,"));
+    }
+
+    #[test]
+    fn generated_validation_uses_common_id_invariants() {
+        let method = MethodSpec {
+            fn_name: "demo".to_owned(),
+            method: "demo".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "chat_id".to_owned(),
+                    field_name: "chat_id".to_owned(),
+                    required: true,
+                    type_raw: "Integer or String".to_owned(),
+                    type_rust: "ChatId".to_owned(),
+                },
+                ParamSpec {
+                    name: "message_ids".to_owned(),
+                    field_name: "message_ids".to_owned(),
+                    required: true,
+                    type_raw: "Array of Integer".to_owned(),
+                    type_rust: "Vec<MessageId>".to_owned(),
+                },
+                ParamSpec {
+                    name: "user_id".to_owned(),
+                    field_name: "user_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "UserId".to_owned(),
+                },
+                ParamSpec {
+                    name: "result".to_owned(),
+                    field_name: "result".to_owned(),
+                    required: true,
+                    type_raw: "InlineQueryResult".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "results".to_owned(),
+                    field_name: "results".to_owned(),
+                    required: true,
+                    type_raw: "Array of InlineQueryResult".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "reply_markup".to_owned(),
+                    field_name: "reply_markup".to_owned(),
+                    required: false,
+                    type_raw: "InlineKeyboardMarkup or ReplyKeyboardMarkup or ReplyKeyboardRemove or ForceReply".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "inline_keyboard".to_owned(),
+                    field_name: "inline_keyboard".to_owned(),
+                    required: false,
+                    type_raw: "InlineKeyboardMarkup".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "menu_button".to_owned(),
+                    field_name: "menu_button".to_owned(),
+                    required: false,
+                    type_raw: "MenuButton".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "photo".to_owned(),
+                    field_name: "photo".to_owned(),
+                    required: true,
+                    type_raw: "InputProfilePhoto".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "button".to_owned(),
+                    field_name: "button".to_owned(),
+                    required: true,
+                    type_raw: "KeyboardButton".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "media".to_owned(),
+                    field_name: "media".to_owned(),
+                    required: true,
+                    type_raw: "Array of InputPaidMedia".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "reactions".to_owned(),
+                    field_name: "reactions".to_owned(),
+                    required: false,
+                    type_raw: "Array of ReactionType".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "accepted_gift_types".to_owned(),
+                    field_name: "accepted_gift_types".to_owned(),
+                    required: false,
+                    type_raw: "AcceptedGiftTypes".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "reply_parameters".to_owned(),
+                    field_name: "reply_parameters".to_owned(),
+                    required: false,
+                    type_raw: "ReplyParameters".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "business_connection_id".to_owned(),
+                    field_name: "business_connection_id".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "inline_message_id".to_owned(),
+                    field_name: "inline_message_id".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("self.chat_id.validate()?;"));
+        assert!(generated.contains("validate_required_message_ids(\"message_ids\""));
+        assert!(generated.contains("if let Some(value) = self.user_id.as_ref()"));
+        assert!(generated.contains("self.result.validate()?;"));
+        assert!(generated.contains("pub photo: crate::types::telegram::InputProfilePhoto,"));
+        assert!(generated.contains("self.photo.validate()?;"));
+        assert!(generated.contains("pub button: crate::types::telegram::KeyboardButton,"));
+        assert!(generated.contains("self.button.validate()?;"));
+        assert!(
+            generated
+                .contains("validate_required_items::<crate::types::telegram::InlineQueryResult>")
+        );
+        assert!(
+            generated
+                .contains("impl GeneratedValidate for crate::types::telegram::InlineQueryResult")
+        );
+        assert!(generated.contains("if let Some(value) = self.reply_parameters.as_ref()"));
+        assert!(generated.contains("if let Some(value) = self.reply_markup.as_ref()"));
+        assert!(generated.contains("if let Some(value) = self.inline_keyboard.as_ref()"));
+        assert!(generated.contains("if let Some(value) = self.menu_button.as_ref()"));
+        assert!(
+            generated.contains("validate_required_items::<crate::types::telegram::InputPaidMedia>")
+        );
+        assert!(generated.contains("if let Some(values) = self.reactions.as_deref()"));
+        assert!(generated.contains("if let Some(value) = self.accepted_gift_types.as_ref()"));
+        assert!(generated.contains("validate_string_id(\"inline_message_id\""));
+        assert!(generated.contains("if let Some(value) = self.business_connection_id.as_deref()"));
+        assert!(generated.contains("validate_string_id(\"business_connection_id\", value)?;"));
+    }
+
+    #[test]
+    fn generated_integer_chat_ids_use_numeric_wrapper() {
+        let method = MethodSpec {
+            fn_name: "demo".to_owned(),
+            method: "demo".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "chat_id".to_owned(),
+                    field_name: "chat_id".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "from_chat_id".to_owned(),
+                    field_name: "from_chat_id".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "new_owner_chat_id".to_owned(),
+                    field_name: "new_owner_chat_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("pub chat_id: crate::types::common::NumericChatId"));
+        assert!(generated.contains("pub from_chat_id: crate::types::common::NumericChatId"));
+        assert!(
+            generated
+                .contains("pub new_owner_chat_id: Option<crate::types::common::NumericChatId>")
+        );
+        assert!(generated.contains("self.chat_id.validate()?;"));
+        assert!(generated.contains("self.from_chat_id.validate()?;"));
+        assert!(generated.contains("if let Some(value) = self.new_owner_chat_id.as_ref()"));
+    }
+
+    #[test]
+    fn generated_numeric_fields_use_domain_bounds() {
+        let method = MethodSpec {
+            fn_name: "demo".to_owned(),
+            method: "demo".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "star_count".to_owned(),
+                    field_name: "star_count".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "limit".to_owned(),
+                    field_name: "limit".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "position".to_owned(),
+                    field_name: "position".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "offset".to_owned(),
+                    field_name: "offset".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("fn validate_positive_i64("));
+        assert!(generated.contains("fn validate_non_negative_i64("));
+        assert!(generated.contains("validate_positive_i64(\"star_count\", self.star_count)?;"));
+        assert!(generated.contains("validate_positive_i64(\"limit\", value)?;"));
+        assert!(generated.contains("validate_non_negative_i64(\"position\", self.position)?;"));
+        assert!(generated.contains("validate_non_negative_i64(\"offset\", value)?;"));
+    }
+
+    #[test]
+    fn generated_sticker_requests_use_typed_enums_and_nested_validation() {
+        let method = MethodSpec {
+            fn_name: "create_new_sticker_set".to_owned(),
+            method: "createNewStickerSet".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "stickers".to_owned(),
+                    field_name: "stickers".to_owned(),
+                    required: true,
+                    type_raw: "Array of InputSticker".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "sticker_type".to_owned(),
+                    field_name: "sticker_type".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "sticker_format".to_owned(),
+                    field_name: "sticker_format".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("Vec<crate::types::sticker::InputSticker>"));
+        assert!(generated.contains("Option<crate::types::sticker::StickerType>"));
+        assert!(generated.contains("pub sticker_format: crate::types::sticker::StickerFormat"));
+        assert!(
+            generated.contains("validate_required_items::<crate::types::sticker::InputSticker>")
+        );
+    }
+
+    #[test]
+    fn generated_parse_modes_use_shared_enum() {
+        let method = MethodSpec {
+            fn_name: "demo".to_owned(),
+            method: "demo".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "parse_mode".to_owned(),
+                    field_name: "parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "text_parse_mode".to_owned(),
+                    field_name: "text_parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("pub parse_mode: Option<crate::types::common::ParseMode>"));
+        assert!(generated.contains("pub text_parse_mode: Option<crate::types::common::ParseMode>"));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::api::{
 use crate::auth::Auth;
 use crate::transport::async_transport::AsyncTransport;
 use crate::transport::serialize_multipart_fields;
-use crate::types::upload::UploadFile;
+use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 use super::config::BuilderParts;
@@ -192,6 +192,39 @@ impl Client {
             &fields,
             file_field_name,
             file,
+            &self.inner.defaults,
+        );
+        let result = request_future.await;
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
+    }
+
+    pub async fn call_method_multipart_files<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        let token = self.require_token()?;
+        let fields = serialize_multipart_fields(payload, skip_fields)?;
+        let started_at = Instant::now();
+        #[cfg(feature = "tracing")]
+        let request_future = self
+            .inner
+            .transport
+            .execute_multipart_files(method, token, &fields, files, &self.inner.defaults)
+            .instrument(tracing::debug_span!("tele.client.request", method));
+        #[cfg(not(feature = "tracing"))]
+        let request_future = self.inner.transport.execute_multipart_files(
+            method,
+            token,
+            &fields,
+            files,
             &self.inner.defaults,
         );
         let result = request_future.await;

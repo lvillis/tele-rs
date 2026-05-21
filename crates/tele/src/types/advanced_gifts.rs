@@ -6,10 +6,35 @@ use crate::{Error, Result};
 
 use super::AdvancedRequest;
 
-fn validate_required_string(field: &str, value: &str) -> Result<()> {
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{field} cannot be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_non_negative_i64(field: &str, value: i64) -> Result<()> {
+    if value < 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be negative"),
         });
     }
 
@@ -44,7 +69,7 @@ pub struct AdvancedSendGiftRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_parse_mode: Option<String>,
+    pub text_parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_entities: Option<Vec<crate::types::message::MessageEntity>>,
 }
@@ -68,7 +93,13 @@ impl AdvancedRequest for AdvancedSendGiftRequest {
     const METHOD: &'static str = "sendGift";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("gift_id", &self.gift_id)?;
+        if let Some(value) = self.user_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        validate_string_id("gift_id", &self.gift_id)?;
         Ok(())
     }
 }
@@ -82,7 +113,7 @@ pub struct AdvancedGiftPremiumSubscriptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_parse_mode: Option<String>,
+    pub text_parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_entities: Option<Vec<crate::types::message::MessageEntity>>,
 }
@@ -103,6 +134,13 @@ impl AdvancedGiftPremiumSubscriptionRequest {
 impl AdvancedRequest for AdvancedGiftPremiumSubscriptionRequest {
     type Response = bool;
     const METHOD: &'static str = "giftPremiumSubscription";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        validate_positive_i64("month_count", self.month_count)?;
+        validate_positive_i64("star_count", self.star_count)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getUserGifts`.
@@ -146,6 +184,14 @@ impl AdvancedGetUserGiftsRequest {
 impl AdvancedRequest for AdvancedGetUserGiftsRequest {
     type Response = Value;
     const METHOD: &'static str = "getUserGifts";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        if let Some(value) = self.limit {
+            validate_positive_i64("limit", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getChatGifts`.
@@ -195,6 +241,14 @@ impl AdvancedGetChatGiftsRequest {
 impl AdvancedRequest for AdvancedGetChatGiftsRequest {
     type Response = Value;
     const METHOD: &'static str = "getChatGifts";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(value) = self.limit {
+            validate_positive_i64("limit", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `convertGiftToStars`.
@@ -221,8 +275,8 @@ impl AdvancedRequest for AdvancedConvertGiftToStarsRequest {
     const METHOD: &'static str = "convertGiftToStars";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
-        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("owned_gift_id", &self.owned_gift_id)?;
         Ok(())
     }
 }
@@ -257,8 +311,11 @@ impl AdvancedRequest for AdvancedUpgradeGiftRequest {
     const METHOD: &'static str = "upgradeGift";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
-        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("owned_gift_id", &self.owned_gift_id)?;
+        if let Some(value) = self.star_count {
+            validate_positive_i64("star_count", value)?;
+        }
         Ok(())
     }
 }
@@ -268,7 +325,7 @@ impl AdvancedRequest for AdvancedUpgradeGiftRequest {
 pub struct AdvancedTransferGiftRequest {
     pub business_connection_id: String,
     pub owned_gift_id: String,
-    pub new_owner_chat_id: i64,
+    pub new_owner_chat_id: crate::types::common::NumericChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub star_count: Option<i64>,
 }
@@ -277,12 +334,12 @@ impl AdvancedTransferGiftRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
         owned_gift_id: impl Into<String>,
-        new_owner_chat_id: i64,
+        new_owner_chat_id: impl Into<crate::types::common::NumericChatId>,
     ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
             owned_gift_id: owned_gift_id.into(),
-            new_owner_chat_id,
+            new_owner_chat_id: new_owner_chat_id.into(),
             star_count: None,
         }
     }
@@ -293,8 +350,12 @@ impl AdvancedRequest for AdvancedTransferGiftRequest {
     const METHOD: &'static str = "transferGift";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
-        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("owned_gift_id", &self.owned_gift_id)?;
+        self.new_owner_chat_id.validate()?;
+        if let Some(value) = self.star_count {
+            validate_positive_i64("star_count", value)?;
+        }
         Ok(())
     }
 }
@@ -332,6 +393,16 @@ impl AdvancedGetStarTransactionsRequest {
 impl AdvancedRequest for AdvancedGetStarTransactionsRequest {
     type Response = Value;
     const METHOD: &'static str = "getStarTransactions";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.offset {
+            validate_non_negative_i64("offset", value)?;
+        }
+        if let Some(value) = self.limit {
+            validate_positive_i64("limit", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `refundStarPayment`.
@@ -358,7 +429,8 @@ impl AdvancedRequest for AdvancedRefundStarPaymentRequest {
     const METHOD: &'static str = "refundStarPayment";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string(
+        self.user_id.validate()?;
+        validate_string_id(
             "telegram_payment_charge_id",
             &self.telegram_payment_charge_id,
         )?;
@@ -393,7 +465,8 @@ impl AdvancedRequest for AdvancedEditUserStarSubscriptionRequest {
     const METHOD: &'static str = "editUserStarSubscription";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string(
+        self.user_id.validate()?;
+        validate_string_id(
             "telegram_payment_charge_id",
             &self.telegram_payment_charge_id,
         )?;

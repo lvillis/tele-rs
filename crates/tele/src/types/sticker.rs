@@ -6,11 +6,114 @@ use serde_json::Value;
 use crate::Error;
 use crate::types::common::{ChatId, UserId};
 use crate::types::message::PhotoSize;
+use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
+
+const MAX_CUSTOM_EMOJI_IDS: usize = 200;
+const MAX_STICKER_EMOJIS: usize = 20;
+const MAX_STICKER_KEYWORDS: usize = 20;
 
 fn ensure_non_empty(method: &str, field: &str, value: &str) -> Result<(), Error> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{method} requires non-empty `{field}`"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_optional_non_empty(
+    method: &str,
+    field: &str,
+    value: Option<&str>,
+) -> Result<(), Error> {
+    if let Some(value) = value {
+        ensure_non_empty(method, field, value)?;
+    }
+
+    Ok(())
+}
+
+fn validate_business_connection_id(method: &str, value: Option<&str>) -> Result<(), Error> {
+    validate_string_id(method, "business_connection_id", value)
+}
+
+fn validate_message_effect_id(method: &str, value: Option<&str>) -> Result<(), Error> {
+    validate_string_id(method, "message_effect_id", value)
+}
+
+fn validate_string_id(method: &str, field: &str, value: Option<&str>) -> Result<(), Error> {
+    if let Some(value) = value {
+        ensure_non_empty(method, field, value)?;
+        if value.chars().any(char::is_control) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{method} requires `{field}` without control characters"),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_input_stickers(
+    method: &str,
+    stickers: &[InputSticker],
+    max_items: usize,
+) -> Result<(), Error> {
+    if stickers.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires at least one input sticker"),
+        });
+    }
+    if stickers.len() > max_items {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} supports at most {max_items} input stickers"),
+        });
+    }
+
+    for sticker in stickers {
+        sticker.validate()?;
+    }
+
+    Ok(())
+}
+
+fn validate_reply_parameters(reply_parameters: Option<&ReplyParameters>) -> Result<(), Error> {
+    if let Some(reply_parameters) = reply_parameters {
+        reply_parameters.validate()?;
+    }
+
+    Ok(())
+}
+
+fn validate_reply_markup(reply_markup: Option<&ReplyMarkup>) -> Result<(), Error> {
+    if let Some(reply_markup) = reply_markup {
+        reply_markup.validate()?;
+    }
+
+    Ok(())
+}
+
+fn validate_suggested_post_parameters(
+    suggested_post_parameters: Option<&SuggestedPostParameters>,
+) -> Result<(), Error> {
+    if let Some(suggested_post_parameters) = suggested_post_parameters {
+        suggested_post_parameters.validate()?;
+    }
+
+    Ok(())
+}
+
+fn validate_optional_positive_i64(
+    method: &str,
+    field: &str,
+    value: Option<i64>,
+) -> Result<(), Error> {
+    if let Some(value) = value
+        && value <= 0
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires `{field}` to be greater than zero"),
         });
     }
 
@@ -35,6 +138,71 @@ pub enum StickerType {
     CustomEmoji,
 }
 
+/// Sticker type returned by Telegram.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum StickerKind {
+    Regular,
+    Mask,
+    CustomEmoji,
+    Unknown(String),
+}
+
+impl StickerKind {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Regular => "regular",
+            Self::Mask => "mask",
+            Self::CustomEmoji => "custom_emoji",
+            Self::Unknown(kind) => kind.as_str(),
+        }
+    }
+}
+
+impl From<StickerType> for StickerKind {
+    fn from(value: StickerType) -> Self {
+        match value {
+            StickerType::Regular => Self::Regular,
+            StickerType::Mask => Self::Mask,
+            StickerType::CustomEmoji => Self::CustomEmoji,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StickerKind {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let kind = String::deserialize(deserializer)?;
+        Ok(match kind.as_str() {
+            "regular" => Self::Regular,
+            "mask" => Self::Mask,
+            "custom_emoji" => Self::CustomEmoji,
+            _ => Self::Unknown(kind),
+        })
+    }
+}
+
+impl Serialize for StickerKind {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Face point used by a sticker mask.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskPositionPoint {
+    Forehead,
+    Eyes,
+    Mouth,
+    Chin,
+}
+
 /// Telegram sticker object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -42,7 +210,7 @@ pub struct Sticker {
     pub file_id: String,
     pub file_unique_id: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: StickerKind,
     pub width: u32,
     pub height: u32,
     pub is_animated: bool,
@@ -70,7 +238,7 @@ pub struct StickerSet {
     pub name: String,
     pub title: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: StickerKind,
     pub stickers: Vec<Sticker>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<PhotoSize>,
@@ -96,34 +264,63 @@ impl InputSticker {
         format: StickerFormat,
         emoji_list: Vec<String>,
     ) -> Result<Self, Error> {
-        let sticker = sticker.into();
-        ensure_non_empty("inputSticker", "sticker", &sticker)?;
-
-        if emoji_list.is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "input sticker requires at least one emoji".to_owned(),
-            });
-        }
-        if emoji_list.iter().any(|emoji| emoji.trim().is_empty()) {
-            return Err(Error::InvalidRequest {
-                reason: "input sticker requires non-empty emoji entries".to_owned(),
-            });
-        }
-
-        Ok(Self {
-            sticker,
+        let request = Self {
+            sticker: sticker.into(),
             format,
             emoji_list,
             mask_position: None,
             keywords: None,
-        })
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        ensure_non_empty("inputSticker", "sticker", &self.sticker)?;
+
+        if self.emoji_list.is_empty() {
+            return Err(Error::InvalidRequest {
+                reason: "input sticker requires at least one emoji".to_owned(),
+            });
+        }
+        if self.emoji_list.len() > MAX_STICKER_EMOJIS {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "input sticker supports at most {MAX_STICKER_EMOJIS} emoji entries"
+                ),
+            });
+        }
+        if self.emoji_list.iter().any(|emoji| emoji.trim().is_empty()) {
+            return Err(Error::InvalidRequest {
+                reason: "input sticker requires non-empty emoji entries".to_owned(),
+            });
+        }
+        if let Some(mask_position) = self.mask_position.as_ref() {
+            mask_position.validate()?;
+        }
+        if let Some(keywords) = self.keywords.as_ref()
+            && keywords.iter().any(|keyword| keyword.trim().is_empty())
+        {
+            return Err(Error::InvalidRequest {
+                reason: "input sticker requires non-empty keyword entries".to_owned(),
+            });
+        }
+        if let Some(keywords) = self.keywords.as_ref()
+            && keywords.len() > MAX_STICKER_KEYWORDS
+        {
+            return Err(Error::InvalidRequest {
+                reason: format!("input sticker supports at most {MAX_STICKER_KEYWORDS} keywords"),
+            });
+        }
+
+        Ok(())
     }
 }
 
 /// Sticker mask position descriptor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MaskPosition {
-    pub point: String,
+    pub point: MaskPositionPoint,
     pub x_shift: f64,
     pub y_shift: f64,
     pub scale: f64,
@@ -131,20 +328,34 @@ pub struct MaskPosition {
 
 impl MaskPosition {
     pub fn new(
-        point: impl Into<String>,
+        point: MaskPositionPoint,
         x_shift: f64,
         y_shift: f64,
         scale: f64,
     ) -> Result<Self, Error> {
-        let point = point.into();
-        ensure_non_empty("maskPosition", "point", &point)?;
-
-        Ok(Self {
+        let request = Self {
             point,
             x_shift,
             y_shift,
             scale,
-        })
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        if !(self.x_shift.is_finite() && self.y_shift.is_finite() && self.scale.is_finite()) {
+            return Err(Error::InvalidRequest {
+                reason: "maskPosition coordinates and scale must be finite".to_owned(),
+            });
+        }
+        if self.scale <= 0.0 {
+            return Err(Error::InvalidRequest {
+                reason: "maskPosition scale must be greater than 0".to_owned(),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -152,7 +363,8 @@ impl MaskPosition {
 #[derive(Clone, Debug, Serialize)]
 pub struct SendStickerRequest {
     pub chat_id: ChatId,
-    pub sticker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_connection_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,18 +382,36 @@ pub struct SendStickerRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effect_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suggested_post_parameters: Option<Value>,
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_parameters: Option<Value>,
+    pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<Value>,
+    pub reply_markup: Option<ReplyMarkup>,
 }
 
 impl SendStickerRequest {
     pub fn new(chat_id: impl Into<ChatId>, sticker: impl Into<String>) -> Self {
         Self {
             chat_id: chat_id.into(),
-            sticker: sticker.into(),
+            sticker: Some(sticker.into()),
+            business_connection_id: None,
+            message_thread_id: None,
+            direct_messages_topic_id: None,
+            emoji: None,
+            disable_notification: None,
+            protect_content: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
+            reply_parameters: None,
+            reply_markup: None,
+        }
+    }
+
+    pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            sticker: None,
             business_connection_id: None,
             message_thread_id: None,
             direct_messages_topic_id: None,
@@ -197,7 +427,77 @@ impl SendStickerRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("sendSticker", "sticker", &self.sticker)
+        validate_business_connection_id("sendSticker", self.business_connection_id.as_deref())?;
+        self.chat_id.validate()?;
+        validate_optional_positive_i64("sendSticker", "message_thread_id", self.message_thread_id)?;
+        validate_optional_positive_i64(
+            "sendSticker",
+            "direct_messages_topic_id",
+            self.direct_messages_topic_id,
+        )?;
+        validate_reply_parameters(self.reply_parameters.as_ref())?;
+        validate_reply_markup(self.reply_markup.as_ref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
+        validate_message_effect_id("sendSticker", self.message_effect_id.as_deref())?;
+        let Some(sticker) = self.sticker.as_deref() else {
+            return Err(Error::InvalidRequest {
+                reason: "sendSticker requires non-empty `sticker`".to_owned(),
+            });
+        };
+        ensure_non_empty("sendSticker", "sticker", sticker)
+    }
+
+    pub(crate) fn validate_upload(&self) -> Result<(), Error> {
+        validate_business_connection_id("sendSticker", self.business_connection_id.as_deref())?;
+        self.chat_id.validate()?;
+        validate_optional_positive_i64("sendSticker", "message_thread_id", self.message_thread_id)?;
+        validate_optional_positive_i64(
+            "sendSticker",
+            "direct_messages_topic_id",
+            self.direct_messages_topic_id,
+        )?;
+        validate_message_effect_id("sendSticker", self.message_effect_id.as_deref())?;
+        if self.sticker.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "sticker must be omitted for multipart upload requests".to_owned(),
+            });
+        }
+        validate_reply_parameters(self.reply_parameters.as_ref())?;
+        validate_reply_markup(self.reply_markup.as_ref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())
+    }
+
+    pub fn suggested_post_parameters(
+        mut self,
+        suggested_post_parameters: SuggestedPostParameters,
+    ) -> Self {
+        self.suggested_post_parameters = Some(suggested_post_parameters);
+        self
+    }
+
+    pub fn business_connection_id(mut self, business_connection_id: impl Into<String>) -> Self {
+        self.business_connection_id = Some(business_connection_id.into());
+        self
+    }
+
+    pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+        self.message_effect_id = Some(message_effect_id.into());
+        self
+    }
+
+    pub fn reply_parameters(mut self, reply_parameters: ReplyParameters) -> Self {
+        self.reply_parameters = Some(reply_parameters);
+        self
+    }
+
+    pub fn reply_to_message(mut self, message_id: crate::types::common::MessageId) -> Self {
+        self.reply_parameters = Some(ReplyParameters::new(message_id));
+        self
+    }
+
+    pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
+        self.reply_markup = Some(reply_markup.into());
+        self
     }
 }
 
@@ -230,6 +530,13 @@ impl GetCustomEmojiStickersRequest {
                 reason: "getCustomEmojiStickers requires at least one custom emoji id".to_owned(),
             });
         }
+        if custom_emoji_ids.len() > MAX_CUSTOM_EMOJI_IDS {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "getCustomEmojiStickers supports at most {MAX_CUSTOM_EMOJI_IDS} custom emoji ids"
+                ),
+            });
+        }
         if custom_emoji_ids
             .iter()
             .any(|emoji_id| emoji_id.trim().is_empty())
@@ -246,6 +553,13 @@ impl GetCustomEmojiStickersRequest {
         if self.custom_emoji_ids.is_empty() {
             return Err(Error::InvalidRequest {
                 reason: "getCustomEmojiStickers requires at least one custom emoji id".to_owned(),
+            });
+        }
+        if self.custom_emoji_ids.len() > MAX_CUSTOM_EMOJI_IDS {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "getCustomEmojiStickers supports at most {MAX_CUSTOM_EMOJI_IDS} custom emoji ids"
+                ),
             });
         }
         if self
@@ -265,21 +579,19 @@ impl GetCustomEmojiStickersRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct UploadStickerFileRequest {
     pub user_id: UserId,
-    pub sticker: String,
     pub sticker_format: StickerFormat,
 }
 
 impl UploadStickerFileRequest {
-    pub fn new(user_id: UserId, sticker: impl Into<String>, sticker_format: StickerFormat) -> Self {
+    pub fn new(user_id: UserId, sticker_format: StickerFormat) -> Self {
         Self {
             user_id,
-            sticker: sticker.into(),
             sticker_format,
         }
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("uploadStickerFile", "sticker", &self.sticker)
+        self.user_id.validate()
     }
 }
 
@@ -308,17 +620,6 @@ impl CreateNewStickerSetRequest {
         ensure_non_empty("createNewStickerSet", "name", &name)?;
         ensure_non_empty("createNewStickerSet", "title", &title)?;
 
-        if stickers.is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "createNewStickerSet requires at least one input sticker".to_owned(),
-            });
-        }
-        if stickers.len() > 50 {
-            return Err(Error::InvalidRequest {
-                reason: "createNewStickerSet supports at most 50 input stickers".to_owned(),
-            });
-        }
-
         let request = Self {
             user_id,
             name,
@@ -332,19 +633,10 @@ impl CreateNewStickerSetRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        self.user_id.validate()?;
         ensure_non_empty("createNewStickerSet", "name", &self.name)?;
         ensure_non_empty("createNewStickerSet", "title", &self.title)?;
-        if self.stickers.is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "createNewStickerSet requires at least one input sticker".to_owned(),
-            });
-        }
-        if self.stickers.len() > 50 {
-            return Err(Error::InvalidRequest {
-                reason: "createNewStickerSet supports at most 50 input stickers".to_owned(),
-            });
-        }
-        Ok(())
+        validate_input_stickers("createNewStickerSet", &self.stickers, 50)
     }
 }
 
@@ -366,7 +658,9 @@ impl AddStickerToSetRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("addStickerToSet", "name", &self.name)
+        self.user_id.validate()?;
+        ensure_non_empty("addStickerToSet", "name", &self.name)?;
+        self.sticker.validate()
     }
 }
 
@@ -433,9 +727,10 @@ impl ReplaceStickerInSetRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        self.user_id.validate()?;
         ensure_non_empty("replaceStickerInSet", "name", &self.name)?;
         ensure_non_empty("replaceStickerInSet", "old_sticker", &self.old_sticker)?;
-        Ok(())
+        self.sticker.validate()
     }
 }
 
@@ -456,6 +751,13 @@ impl SetStickerEmojiListRequest {
                 reason: "setStickerEmojiList requires at least one emoji".to_owned(),
             });
         }
+        if emoji_list.len() > MAX_STICKER_EMOJIS {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "setStickerEmojiList supports at most {MAX_STICKER_EMOJIS} emoji entries"
+                ),
+            });
+        }
         if emoji_list.iter().any(|emoji| emoji.trim().is_empty()) {
             return Err(Error::InvalidRequest {
                 reason: "setStickerEmojiList requires non-empty emoji entries".to_owned(),
@@ -473,6 +775,13 @@ impl SetStickerEmojiListRequest {
         if self.emoji_list.is_empty() {
             return Err(Error::InvalidRequest {
                 reason: "setStickerEmojiList requires at least one emoji".to_owned(),
+            });
+        }
+        if self.emoji_list.len() > MAX_STICKER_EMOJIS {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "setStickerEmojiList supports at most {MAX_STICKER_EMOJIS} emoji entries"
+                ),
             });
         }
         if self.emoji_list.iter().any(|emoji| emoji.trim().is_empty()) {
@@ -501,9 +810,11 @@ impl SetStickerKeywordsRequest {
 
     pub fn validate(&self) -> Result<(), Error> {
         ensure_non_empty("setStickerKeywords", "sticker", &self.sticker)?;
-        if self.keywords.len() > 20 {
+        if self.keywords.len() > MAX_STICKER_KEYWORDS {
             return Err(Error::InvalidRequest {
-                reason: "setStickerKeywords supports at most 20 keywords".to_owned(),
+                reason: format!(
+                    "setStickerKeywords supports at most {MAX_STICKER_KEYWORDS} keywords"
+                ),
             });
         }
         if self
@@ -536,7 +847,11 @@ impl SetStickerMaskPositionRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("setStickerMaskPosition", "sticker", &self.sticker)
+        ensure_non_empty("setStickerMaskPosition", "sticker", &self.sticker)?;
+        if let Some(mask_position) = self.mask_position.as_ref() {
+            mask_position.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -583,7 +898,13 @@ impl SetStickerSetThumbnailRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("setStickerSetThumbnail", "name", &self.name)
+        ensure_non_empty("setStickerSetThumbnail", "name", &self.name)?;
+        self.user_id.validate()?;
+        validate_optional_non_empty(
+            "setStickerSetThumbnail",
+            "thumbnail",
+            self.thumbnail.as_deref(),
+        )
     }
 }
 
@@ -604,7 +925,12 @@ impl SetCustomEmojiStickerSetThumbnailRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("setCustomEmojiStickerSetThumbnail", "name", &self.name)
+        ensure_non_empty("setCustomEmojiStickerSetThumbnail", "name", &self.name)?;
+        validate_optional_non_empty(
+            "setCustomEmojiStickerSetThumbnail",
+            "custom_emoji_id",
+            self.custom_emoji_id.as_deref(),
+        )
     }
 }
 
@@ -621,5 +947,121 @@ impl DeleteStickerSetRequest {
 
     pub fn validate(&self) -> Result<(), Error> {
         ensure_non_empty("deleteStickerSet", "name", &self.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::common::ChatId;
+
+    #[test]
+    fn validates_sticker_request_ids_and_nested_input() -> Result<(), Error> {
+        let send = SendStickerRequest::new(ChatId::from(0), "sticker-file-id");
+        assert!(matches!(send.validate(), Err(Error::InvalidRequest { .. })));
+
+        let send = SendStickerRequest::new(ChatId::from(1), "sticker-file-id")
+            .reply_markup(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()));
+        assert!(matches!(send.validate(), Err(Error::InvalidRequest { .. })));
+
+        let mut threaded = SendStickerRequest::new(ChatId::from(1), "sticker-file-id");
+        threaded.message_thread_id = Some(0);
+        assert!(matches!(
+            threaded.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        threaded.message_thread_id = None;
+        threaded.direct_messages_topic_id = Some(-1);
+        assert!(matches!(
+            threaded.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        threaded.direct_messages_topic_id = None;
+        threaded.message_effect_id = Some("bad\nid".to_owned());
+        assert!(matches!(
+            threaded.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let upload = UploadStickerFileRequest::new(UserId(0), StickerFormat::Static);
+        assert!(matches!(
+            upload.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut input = InputSticker::new(
+            "sticker-file-id",
+            StickerFormat::Static,
+            vec!["😀".to_owned()],
+        )?;
+        input.emoji_list = vec!["😀".to_owned(); MAX_STICKER_EMOJIS + 1];
+        assert!(matches!(
+            input.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        input.emoji_list = vec!["😀".to_owned()];
+        input.keywords = Some(vec!["tag".to_owned(); MAX_STICKER_KEYWORDS + 1]);
+        assert!(matches!(
+            input.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        input.keywords = None;
+        input.mask_position = Some(MaskPosition {
+            point: MaskPositionPoint::Forehead,
+            x_shift: 0.0,
+            y_shift: 0.0,
+            scale: 0.0,
+        });
+        let add = AddStickerToSetRequest::new(UserId(1), "set_name", input);
+        assert!(matches!(add.validate(), Err(Error::InvalidRequest { .. })));
+
+        let mut custom = SetCustomEmojiStickerSetThumbnailRequest::new("set_name");
+        custom.custom_emoji_id = Some("  ".to_owned());
+        assert!(matches!(
+            custom.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let custom_emoji_ids = vec!["emoji-id".to_owned(); MAX_CUSTOM_EMOJI_IDS + 1];
+        assert!(matches!(
+            GetCustomEmojiStickersRequest::new(custom_emoji_ids),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let emoji_list = vec!["😀".to_owned(); MAX_STICKER_EMOJIS + 1];
+        assert!(matches!(
+            SetStickerEmojiListRequest::new("sticker-file-id", emoji_list),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn sticker_response_types_are_typed_and_forward_compatible()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let known: Sticker = serde_json::from_value(serde_json::json!({
+            "file_id": "file",
+            "file_unique_id": "unique",
+            "type": "custom_emoji",
+            "width": 512,
+            "height": 512,
+            "is_animated": false,
+            "is_video": false
+        }))?;
+        assert_eq!(known.kind, StickerKind::CustomEmoji);
+
+        let unknown: StickerSet = serde_json::from_value(serde_json::json!({
+            "name": "set",
+            "title": "Set",
+            "type": "future_kind",
+            "stickers": []
+        }))?;
+        assert_eq!(unknown.kind, StickerKind::Unknown("future_kind".to_owned()));
+
+        let value = serde_json::to_value(&known)?;
+        assert_eq!(value["type"], "custom_emoji");
+
+        Ok(())
     }
 }

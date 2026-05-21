@@ -5,8 +5,9 @@ use std::str::FromStr;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
 
-use crate::types::common::{ChatId, MessageId, ParseMode};
+use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode};
 use crate::types::message::MessageEntity;
 use crate::{Error, Result};
 
@@ -30,6 +31,347 @@ fn validate_callback_data(data: impl Into<String>) -> Result<String> {
         )));
     }
     Ok(data)
+}
+
+fn validate_required_visible_text(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(invalid_request(format!(
+            "{field} must not contain control characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn is_disallowed_display_control(character: char) -> bool {
+    character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+}
+
+fn validate_required_display_text(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+    if value.chars().any(is_disallowed_display_control) {
+        return Err(invalid_request(format!(
+            "{field} must not contain non-whitespace control characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_string_without_control_chars(field: &str, value: &str) -> Result<()> {
+    if value.chars().any(char::is_control) {
+        return Err(invalid_request(format!(
+            "{field} must not contain control characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn value_as_object<'a>(
+    field: &str,
+    value: &'a Value,
+) -> Result<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| invalid_request(format!("{field} must be a JSON object")))
+}
+
+fn value_as_str<'a>(field: &str, value: &'a Value) -> Result<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| invalid_request(format!("{field} must be a string")))
+}
+
+fn value_as_bool(field: &str, value: &Value) -> Result<bool> {
+    value
+        .as_bool()
+        .ok_or_else(|| invalid_request(format!("{field} must be a boolean")))
+}
+
+fn validate_true_value(field: &str, value: &Value) -> Result<()> {
+    if !value_as_bool(field, value)? {
+        return Err(invalid_request(format!("{field} must be true")));
+    }
+
+    Ok(())
+}
+
+fn validate_optional_bool_field(
+    object: &serde_json::Map<String, Value>,
+    object_name: &str,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        value_as_bool(&format!("{object_name}.{field}"), value)?;
+    }
+
+    Ok(())
+}
+
+fn validate_required_i64_field(
+    object: &serde_json::Map<String, Value>,
+    object_name: &str,
+    field: &str,
+) -> Result<()> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid_request(format!("{object_name}.{field} must be an integer")))?;
+    if value <= 0 {
+        return Err(invalid_request(format!(
+            "{object_name}.{field} must be greater than 0"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_url(field: &str, value: &str) -> Result<()> {
+    let parsed = Url::parse(value)
+        .map_err(|source| invalid_request(format!("{field} must be a valid URL: {source}")))?;
+    match parsed.scheme() {
+        "http" | "https" | "tg" => {}
+        scheme => {
+            return Err(invalid_request(format!(
+                "{field} must use http, https, or tg scheme, got `{scheme}`"
+            )));
+        }
+    }
+    if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_none() {
+        return Err(invalid_request(format!("{field} must include a host")));
+    }
+
+    Ok(())
+}
+
+fn validate_https_url(field: &str, value: &str) -> Result<()> {
+    let parsed = Url::parse(value)
+        .map_err(|source| invalid_request(format!("{field} must be a valid URL: {source}")))?;
+    if parsed.scheme() != "https" {
+        return Err(invalid_request(format!("{field} must use HTTPS")));
+    }
+    if parsed.host_str().is_none() {
+        return Err(invalid_request(format!("{field} must include a host")));
+    }
+
+    Ok(())
+}
+
+fn validate_login_url_payload(value: &Value) -> Result<()> {
+    let object = value_as_object("login_url", value)?;
+    let url = object
+        .get("url")
+        .map(|value| value_as_str("login_url.url", value))
+        .transpose()?
+        .ok_or_else(|| invalid_request("login_url.url is required"))?;
+    validate_https_url("login_url.url", url)
+}
+
+fn validate_switch_inline_query_chosen_chat(value: &Value) -> Result<()> {
+    let object = value_as_object("switch_inline_query_chosen_chat", value)?;
+    if let Some(query) = object.get("query") {
+        validate_string_without_control_chars(
+            "switch_inline_query_chosen_chat.query",
+            value_as_str("switch_inline_query_chosen_chat.query", query)?,
+        )?;
+    }
+    for field in [
+        "allow_user_chats",
+        "allow_bot_chats",
+        "allow_group_chats",
+        "allow_channel_chats",
+    ] {
+        validate_optional_bool_field(object, "switch_inline_query_chosen_chat", field)?;
+    }
+
+    Ok(())
+}
+
+fn validate_copy_text_button(value: &Value) -> Result<()> {
+    let object = value_as_object("copy_text", value)?;
+    let text = object
+        .get("text")
+        .map(|value| value_as_str("copy_text.text", value))
+        .transpose()?
+        .ok_or_else(|| invalid_request("copy_text.text is required"))?;
+    validate_required_visible_text("copy_text.text", text)
+}
+
+fn validate_keyboard_button_request_users(value: &Value) -> Result<()> {
+    let object = value_as_object("request_users", value)?;
+    validate_required_i64_field(object, "request_users", "request_id")?;
+    for field in [
+        "user_is_bot",
+        "user_is_premium",
+        "request_name",
+        "request_username",
+        "request_photo",
+    ] {
+        validate_optional_bool_field(object, "request_users", field)?;
+    }
+
+    Ok(())
+}
+
+fn validate_keyboard_button_request_chat(value: &Value) -> Result<()> {
+    let object = value_as_object("request_chat", value)?;
+    validate_required_i64_field(object, "request_chat", "request_id")?;
+    object
+        .get("chat_is_channel")
+        .map(|value| value_as_bool("request_chat.chat_is_channel", value))
+        .transpose()?
+        .ok_or_else(|| invalid_request("request_chat.chat_is_channel is required"))?;
+    for field in [
+        "chat_is_forum",
+        "chat_has_username",
+        "chat_is_created",
+        "bot_is_member",
+        "request_title",
+        "request_username",
+        "request_photo",
+    ] {
+        validate_optional_bool_field(object, "request_chat", field)?;
+    }
+
+    Ok(())
+}
+
+fn validate_keyboard_button_request_poll(value: &Value) -> Result<()> {
+    let object = value_as_object("request_poll", value)?;
+    if let Some(poll_type) = object.get("type") {
+        let poll_type = value_as_str("request_poll.type", poll_type)?;
+        validate_required_visible_text("request_poll.type", poll_type)?;
+        if !matches!(poll_type, "quiz" | "regular") {
+            return Err(invalid_request(
+                "request_poll.type must be `quiz` or `regular`",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_typed_object_payload(field: &str, value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(invalid_request(format!("{field} must be a JSON object")));
+    };
+    let Some(kind) = object.get("type").and_then(Value::as_str) else {
+        return Err(invalid_request(format!(
+            "{field} requires a string `type` field"
+        )));
+    };
+    validate_required_visible_text(&format!("{field}.type"), kind)
+}
+
+fn validate_object_payload(field: &str, value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(invalid_request(format!("{field} must be a JSON object")));
+    };
+    if object.is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+
+    Ok(())
+}
+
+fn validate_source_object_payload(field: &str, value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(invalid_request(format!("{field} must be a JSON object")));
+    };
+    let Some(source) = object.get("source").and_then(Value::as_str) else {
+        return Err(invalid_request(format!(
+            "{field} requires a string `source` field"
+        )));
+    };
+    validate_required_visible_text(&format!("{field}.source"), source)
+}
+
+fn validate_accepted_gift_types_payload(field: &str, value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(invalid_request(format!("{field} must be a JSON object")));
+    };
+    if object.is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+    for key in [
+        "unlimited_gifts",
+        "limited_gifts",
+        "unique_gifts",
+        "premium_subscription",
+    ] {
+        if object.get(key).is_some_and(|value| !value.is_boolean()) {
+            return Err(invalid_request(format!("{field}.{key} must be a boolean")));
+        }
+    }
+
+    Ok(())
+}
+
+macro_rules! json_payload_wrapper {
+    ($(#[$meta:meta])* $name:ident, $label:literal, $validator:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, Serialize)]
+        #[serde(transparent)]
+        pub struct $name(Value);
+
+        impl $name {
+            pub fn new(value: Value) -> Result<Self> {
+                $validator($label, &value)?;
+                Ok(Self(value))
+            }
+
+            pub fn try_from_typed<T>(value: T) -> Result<Self>
+            where
+                T: Serialize,
+            {
+                let value = serde_json::to_value(value)
+                    .map_err(|source| Error::SerializeRequest { source })?;
+                Self::new(value)
+            }
+
+            pub fn validate(&self) -> Result<()> {
+                $validator($label, &self.0)
+            }
+
+            pub fn as_value(&self) -> &Value {
+                &self.0
+            }
+
+            pub fn into_value(self) -> Value {
+                self.0
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let value = Value::deserialize(deserializer)?;
+                Self::new(value).map_err(serde::de::Error::custom)
+            }
+        }
+
+        impl TryFrom<Value> for $name {
+            type Error = Error;
+
+            fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+                Self::new(value)
+            }
+        }
+
+        impl From<$name> for Value {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+    };
 }
 
 fn is_compact_callback_safe(byte: u8) -> bool {
@@ -296,24 +638,67 @@ where
     }
 }
 
-/// Generic inline query result payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InlineQueryResult(pub Value);
+const MAX_INLINE_QUERY_RESULT_ID_BYTES: usize = 64;
 
-impl InlineQueryResult {
-    pub fn new(value: Value) -> Self {
-        Self(value)
+fn validate_inline_query_result_value(value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(invalid_request("inline query result must be a JSON object"));
+    };
+
+    let Some(kind) = object.get("type").and_then(Value::as_str) else {
+        return Err(invalid_request(
+            "inline query result requires a string `type` field",
+        ));
+    };
+    if kind.trim().is_empty() || kind.chars().any(char::is_control) {
+        return Err(invalid_request(
+            "inline query result `type` must be a non-empty visible string",
+        ));
     }
 
-    pub fn try_from_typed<T>(value: T) -> std::result::Result<Self, serde_json::Error>
+    let Some(id) = object.get("id").and_then(Value::as_str) else {
+        return Err(invalid_request(
+            "inline query result requires a string `id` field",
+        ));
+    };
+    if id.trim().is_empty() {
+        return Err(invalid_request("inline query result `id` cannot be empty"));
+    }
+    if id.len() > MAX_INLINE_QUERY_RESULT_ID_BYTES {
+        return Err(invalid_request(format!(
+            "inline query result `id` exceeds {MAX_INLINE_QUERY_RESULT_ID_BYTES} bytes"
+        )));
+    }
+    if id.chars().any(char::is_control) {
+        return Err(invalid_request(
+            "inline query result `id` must not contain control characters",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Generic inline query result payload.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct InlineQueryResult(Value);
+
+impl InlineQueryResult {
+    pub fn new(value: Value) -> Result<Self> {
+        validate_inline_query_result_value(&value)?;
+        Ok(Self(value))
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
     where
         T: Serialize,
     {
-        serde_json::to_value(value).map(Self)
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::new(value)
     }
 
-    pub fn from_typed<T>(value: T) -> std::result::Result<Self, serde_json::Error>
+    pub fn from_typed<T>(value: T) -> Result<Self>
     where
         T: Serialize,
     {
@@ -324,8 +709,12 @@ impl InlineQueryResult {
         id: impl Into<String>,
         title: impl Into<String>,
         message_text: impl Into<String>,
-    ) -> std::result::Result<Self, serde_json::Error> {
+    ) -> Result<Self> {
         InlineQueryResult::try_from(InlineQueryResultArticle::new(id, title, message_text))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_inline_query_result_value(&self.0)
     }
 
     pub fn as_value(&self) -> &Value {
@@ -337,9 +726,13 @@ impl InlineQueryResult {
     }
 }
 
-impl From<Value> for InlineQueryResult {
-    fn from(value: Value) -> Self {
-        Self(value)
+impl<'de> Deserialize<'de> for InlineQueryResult {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -380,11 +773,19 @@ impl InputTextMessageContent {
 }
 
 /// Typed inline query article result.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum InlineQueryResultArticleKind {
+    #[default]
+    #[serde(rename = "article")]
+    Article,
+}
+
+/// Typed inline query article result.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct InlineQueryResultArticle {
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: InlineQueryResultArticleKind,
     pub id: String,
     pub title: String,
     pub input_message_content: InputTextMessageContent,
@@ -413,7 +814,7 @@ impl InlineQueryResultArticle {
         message_text: impl Into<String>,
     ) -> Self {
         Self {
-            kind: "article".to_owned(),
+            kind: InlineQueryResultArticleKind::Article,
             id: id.into(),
             title: title.into(),
             input_message_content: InputTextMessageContent::new(message_text),
@@ -430,150 +831,61 @@ impl InlineQueryResultArticle {
 }
 
 impl TryFrom<InlineQueryResultArticle> for InlineQueryResult {
-    type Error = serde_json::Error;
+    type Error = Error;
 
     fn try_from(value: InlineQueryResultArticle) -> std::result::Result<Self, Self::Error> {
         Self::try_from_typed(value)
     }
 }
 
-/// Generic checklist input payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InputChecklist(pub Value);
+json_payload_wrapper!(
+    /// Generic checklist input payload.
+    InputChecklist,
+    "input_checklist",
+    validate_object_payload
+);
 
-impl InputChecklist {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
+json_payload_wrapper!(
+    /// Generic story content payload.
+    InputStoryContent,
+    "input_story_content",
+    validate_typed_object_payload
+);
 
-impl From<Value> for InputChecklist {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
+json_payload_wrapper!(
+    /// Generic story area payload.
+    StoryArea,
+    "story_area",
+    validate_typed_object_payload
+);
 
-impl From<InputChecklist> for Value {
-    fn from(value: InputChecklist) -> Self {
-        value.0
-    }
-}
+json_payload_wrapper!(
+    /// Generic paid media item payload.
+    InputPaidMedia,
+    "input_paid_media",
+    validate_typed_object_payload
+);
 
-/// Generic story content payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InputStoryContent(pub Value);
+json_payload_wrapper!(
+    /// Generic suggested-post payload.
+    SuggestedPostParameters,
+    "suggested_post_parameters",
+    validate_object_payload
+);
 
-impl InputStoryContent {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
+json_payload_wrapper!(
+    /// Generic accepted-gift-types payload.
+    AcceptedGiftTypes,
+    "accepted_gift_types",
+    validate_accepted_gift_types_payload
+);
 
-impl From<Value> for InputStoryContent {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<InputStoryContent> for Value {
-    fn from(value: InputStoryContent) -> Self {
-        value.0
-    }
-}
-
-/// Generic story area payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct StoryArea(pub Value);
-
-impl StoryArea {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for StoryArea {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<StoryArea> for Value {
-    fn from(value: StoryArea) -> Self {
-        value.0
-    }
-}
-
-/// Generic paid media item payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InputPaidMedia(pub Value);
-
-impl InputPaidMedia {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for InputPaidMedia {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<InputPaidMedia> for Value {
-    fn from(value: InputPaidMedia) -> Self {
-        value.0
-    }
-}
-
-/// Generic suggested-post payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SuggestedPostParameters(pub Value);
-
-impl SuggestedPostParameters {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for SuggestedPostParameters {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<SuggestedPostParameters> for Value {
-    fn from(value: SuggestedPostParameters) -> Self {
-        value.0
-    }
-}
-
-/// Generic accepted-gift-types payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AcceptedGiftTypes(pub Value);
-
-impl AcceptedGiftTypes {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for AcceptedGiftTypes {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<AcceptedGiftTypes> for Value {
-    fn from(value: AcceptedGiftTypes) -> Self {
-        value.0
-    }
-}
+json_payload_wrapper!(
+    /// Generic profile photo input payload.
+    InputProfilePhoto,
+    "input_profile_photo",
+    validate_typed_object_payload
+);
 
 /// Typed menu button union.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -613,6 +925,14 @@ impl MenuButton {
         match self {
             Self::Typed(MenuButtonKind::WebApp(value)) => Some(value),
             Self::Typed(_) | Self::Other(_) => None,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Typed(MenuButtonKind::Commands | MenuButtonKind::Default) => Ok(()),
+            Self::Typed(MenuButtonKind::WebApp(value)) => value.validate(),
+            Self::Other(value) => validate_typed_object_payload("menu_button", value),
         }
     }
 }
@@ -673,6 +993,10 @@ impl WebAppInfo {
     pub fn new(url: impl Into<String>) -> Self {
         Self { url: url.into() }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_https_url("web_app.url", &self.url)
+    }
 }
 
 impl From<String> for WebAppInfo {
@@ -729,6 +1053,31 @@ impl InlineQueryResultsButton {
         self.web_app = None;
         self
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("inline query results button text", &self.text)?;
+        if let Some(web_app) = self.web_app.as_ref() {
+            web_app.validate()?;
+        }
+        if let Some(start_parameter) = self.start_parameter.as_deref() {
+            validate_required_visible_text(
+                "inline query results button start_parameter",
+                start_parameter,
+            )?;
+        }
+        if self.web_app.is_some() && self.start_parameter.is_some() {
+            return Err(invalid_request(
+                "inline query results button cannot set both web_app and start_parameter",
+            ));
+        }
+        if self.web_app.is_none() && self.start_parameter.is_none() && self.extra.is_empty() {
+            return Err(invalid_request(
+                "inline query results button must define an action",
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Menu button launching a Mini App.
@@ -748,6 +1097,11 @@ impl MenuButtonWebApp {
             web_app: web_app.into(),
             extra: BTreeMap::new(),
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("menu button text", &self.text)?;
+        self.web_app.validate()
     }
 }
 
@@ -778,8 +1132,8 @@ impl WebAppData {
 }
 
 impl crate::types::advanced::AdvancedSetChatMenuButtonRequest {
-    pub fn chat_id(mut self, chat_id: i64) -> Self {
-        self.chat_id = Some(chat_id);
+    pub fn chat_id(mut self, chat_id: impl Into<NumericChatId>) -> Self {
+        self.chat_id = Some(chat_id.into());
         self
     }
 
@@ -808,51 +1162,19 @@ impl crate::types::advanced::AdvancedSetChatMenuButtonRequest {
     }
 }
 
-/// Generic reaction type payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ReactionType(pub Value);
+json_payload_wrapper!(
+    /// Generic reaction type payload.
+    ReactionType,
+    "reaction_type",
+    validate_typed_object_payload
+);
 
-impl ReactionType {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for ReactionType {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<ReactionType> for Value {
-    fn from(value: ReactionType) -> Self {
-        value.0
-    }
-}
-
-/// Generic passport element error payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PassportElementError(pub Value);
-
-impl PassportElementError {
-    pub fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Value> for PassportElementError {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PassportElementError> for Value {
-    fn from(value: PassportElementError) -> Self {
-        value.0
-    }
-}
+json_payload_wrapper!(
+    /// Generic passport element error payload.
+    PassportElementError,
+    "passport_element_error",
+    validate_source_object_payload
+);
 
 /// Inline keyboard button.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -961,6 +1283,67 @@ impl InlineKeyboardButton {
     {
         self.decode_callback_with_codec::<T, CompactCallbackCodec>()
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("inline keyboard button text", &self.text)?;
+
+        let mut known_actions = usize::from(self.web_app.is_some());
+        if let Some(web_app) = self.web_app.as_ref() {
+            web_app.validate()?;
+        }
+
+        for (key, value) in &self.extra {
+            match key.as_str() {
+                "callback_data" => {
+                    let data = value_as_str("callback_data", value)?;
+                    validate_callback_data(data)?;
+                    known_actions += 1;
+                }
+                "url" => {
+                    validate_url("url", value_as_str("url", value)?)?;
+                    known_actions += 1;
+                }
+                "login_url" => {
+                    validate_login_url_payload(value)?;
+                    known_actions += 1;
+                }
+                "switch_inline_query" | "switch_inline_query_current_chat" => {
+                    validate_string_without_control_chars(key, value_as_str(key, value)?)?;
+                    known_actions += 1;
+                }
+                "switch_inline_query_chosen_chat" => {
+                    validate_switch_inline_query_chosen_chat(value)?;
+                    known_actions += 1;
+                }
+                "callback_game" => {
+                    value_as_object("callback_game", value)?;
+                    known_actions += 1;
+                }
+                "pay" => {
+                    validate_true_value("pay", value)?;
+                    known_actions += 1;
+                }
+                "copy_text" => {
+                    validate_copy_text_button(value)?;
+                    known_actions += 1;
+                }
+                _ => {}
+            }
+        }
+
+        if known_actions > 1 {
+            return Err(invalid_request(
+                "inline keyboard button must define exactly one known action",
+            ));
+        }
+        if known_actions == 0 && self.extra.is_empty() {
+            return Err(invalid_request(
+                "inline keyboard button must define an action",
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Inline keyboard markup.
@@ -988,6 +1371,22 @@ impl InlineKeyboardMarkup {
         self.inline_keyboard.push(row);
         self
     }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.inline_keyboard.is_empty() {
+            return Err(invalid_request("inline_keyboard cannot be empty"));
+        }
+        for row in &self.inline_keyboard {
+            if row.is_empty() {
+                return Err(invalid_request("inline_keyboard rows cannot be empty"));
+            }
+            for button in row {
+                button.validate()?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Reply keyboard button.
@@ -1013,6 +1412,42 @@ impl KeyboardButton {
     pub fn web_app(mut self, web_app: impl Into<WebAppInfo>) -> Self {
         self.web_app = Some(web_app.into());
         self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("keyboard button text", &self.text)?;
+        let mut known_actions = usize::from(self.web_app.is_some());
+        if let Some(web_app) = self.web_app.as_ref() {
+            web_app.validate()?;
+        }
+        for (key, value) in &self.extra {
+            match key.as_str() {
+                "request_contact" | "request_location" => {
+                    validate_true_value(key, value)?;
+                    known_actions += 1;
+                }
+                "request_users" => {
+                    validate_keyboard_button_request_users(value)?;
+                    known_actions += 1;
+                }
+                "request_chat" => {
+                    validate_keyboard_button_request_chat(value)?;
+                    known_actions += 1;
+                }
+                "request_poll" => {
+                    validate_keyboard_button_request_poll(value)?;
+                    known_actions += 1;
+                }
+                _ => {}
+            }
+        }
+        if known_actions > 1 {
+            return Err(invalid_request(
+                "keyboard button must define at most one known optional action",
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -1047,6 +1482,25 @@ impl ReplyKeyboardMarkup {
             extra: BTreeMap::new(),
         }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.keyboard.is_empty() {
+            return Err(invalid_request("keyboard cannot be empty"));
+        }
+        for row in &self.keyboard {
+            if row.is_empty() {
+                return Err(invalid_request("keyboard rows cannot be empty"));
+            }
+            for button in row {
+                button.validate()?;
+            }
+        }
+        if let Some(placeholder) = self.input_field_placeholder.as_deref() {
+            validate_required_visible_text("input_field_placeholder", placeholder)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Remove reply keyboard marker.
@@ -1067,6 +1521,16 @@ impl Default for ReplyKeyboardRemove {
             selective: None,
             extra: BTreeMap::new(),
         }
+    }
+}
+
+impl ReplyKeyboardRemove {
+    pub fn validate(&self) -> Result<()> {
+        if !self.remove_keyboard {
+            return Err(invalid_request("remove_keyboard must be true"));
+        }
+
+        Ok(())
     }
 }
 
@@ -1091,6 +1555,19 @@ impl Default for ForceReply {
             selective: None,
             extra: BTreeMap::new(),
         }
+    }
+}
+
+impl ForceReply {
+    pub fn validate(&self) -> Result<()> {
+        if !self.force_reply {
+            return Err(invalid_request("force_reply must be true"));
+        }
+        if let Some(placeholder) = self.input_field_placeholder.as_deref() {
+            validate_required_visible_text("input_field_placeholder", placeholder)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1128,6 +1605,17 @@ impl From<ForceReply> for ReplyMarkup {
     }
 }
 
+impl ReplyMarkup {
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::InlineKeyboardMarkup(value) => value.validate(),
+            Self::ReplyKeyboardMarkup(value) => value.validate(),
+            Self::ReplyKeyboardRemove(value) => value.validate(),
+            Self::ForceReply(value) => value.validate(),
+        }
+    }
+}
+
 /// Reply-to reference parameters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -1161,6 +1649,44 @@ impl ReplyParameters {
             quote_position: None,
             extra: BTreeMap::new(),
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.message_id.validate()?;
+        if let Some(chat_id) = self.chat_id.as_ref() {
+            chat_id.validate()?;
+        }
+        if let Some(quote) = self.quote.as_deref() {
+            validate_required_display_text("reply quote", quote)?;
+        }
+        if self.quote.is_none()
+            && (self.quote_parse_mode.is_some()
+                || self.quote_entities.is_some()
+                || self.quote_position.is_some())
+        {
+            return Err(invalid_request(
+                "quote formatting options require reply quote",
+            ));
+        }
+        if self.quote_parse_mode.is_some() && self.quote_entities.is_some() {
+            return Err(invalid_request(
+                "reply quote cannot set both quote_parse_mode and quote_entities",
+            ));
+        }
+        if let Some(entities) = self.quote_entities.as_ref() {
+            if entities.is_empty() {
+                return Err(invalid_request("quote_entities cannot be empty"));
+            }
+            for entity in entities {
+                if entity.length == 0 {
+                    return Err(invalid_request(
+                        "quote_entities length must be greater than 0",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1199,10 +1725,387 @@ impl LinkPreviewOptions {
         options.is_disabled = Some(true);
         options
     }
+
+    pub fn validate(&self) -> Result<()> {
+        if let Some(url) = self.url.as_deref() {
+            validate_url("link_preview_options.url", url)?;
+        }
+        if self.prefer_small_media == Some(true) && self.prefer_large_media == Some(true) {
+            return Err(invalid_request(
+                "link_preview_options cannot prefer both small and large media",
+            ));
+        }
+        if self.is_disabled == Some(true)
+            && (self.url.is_some()
+                || self.prefer_small_media == Some(true)
+                || self.prefer_large_media == Some(true)
+                || self.show_above_text == Some(true))
+        {
+            return Err(invalid_request(
+                "disabled link preview cannot set preview customization options",
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for LinkPreviewOptions {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_query_article_kind_is_fixed() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let article = InlineQueryResultArticle::new("article-id", "Title", "hello");
+        assert_eq!(article.kind, InlineQueryResultArticleKind::Article);
+
+        let value = serde_json::to_value(&article)?;
+        assert_eq!(value["type"], "article");
+
+        let parsed: InlineQueryResultArticle = serde_json::from_value(value)?;
+        assert_eq!(parsed.kind, InlineQueryResultArticleKind::Article);
+
+        let invalid = serde_json::json!({
+            "type": "photo",
+            "id": "article-id",
+            "title": "Title",
+            "input_message_content": {
+                "message_text": "hello"
+            }
+        });
+        assert!(serde_json::from_value::<InlineQueryResultArticle>(invalid).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn inline_query_result_rejects_invalid_payloads()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let valid = InlineQueryResult::new(serde_json::json!({
+            "type": "article",
+            "id": "result-id",
+            "title": "Title",
+        }))?;
+        assert_eq!(valid.as_value()["type"], "article");
+
+        assert!(matches!(
+            InlineQueryResult::new(serde_json::json!({"id": "result-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InlineQueryResult::new(serde_json::json!({"type": "article", "id": 1})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InlineQueryResult::new(serde_json::json!({"type": "article", "id": "x".repeat(65)})),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let decoded = serde_json::from_value::<InlineQueryResult>(serde_json::json!({
+            "type": "article",
+            "id": "\n"
+        }));
+        assert!(decoded.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_markup_payloads() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let valid_inline = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+            "Open", "open:1",
+        )?]);
+        assert!(valid_inline.validate().is_ok());
+
+        assert!(matches!(
+            InlineKeyboardMarkup::new(Vec::new()).validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_callback = InlineKeyboardButton::new("Open");
+        invalid_callback.extra.insert(
+            "callback_data".to_owned(),
+            Value::String("x".repeat(MAX_CALLBACK_DATA_BYTES + 1)),
+        );
+        assert!(matches!(
+            invalid_callback.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_pay = InlineKeyboardButton::new("Pay");
+        invalid_pay
+            .extra
+            .insert("pay".to_owned(), Value::String("true".to_owned()));
+        assert!(matches!(
+            invalid_pay.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_login_url = InlineKeyboardButton::new("Login");
+        invalid_login_url.extra.insert(
+            "login_url".to_owned(),
+            Value::String("https://example.com".to_owned()),
+        );
+        assert!(matches!(
+            invalid_login_url.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut valid_url = InlineKeyboardButton::new("Docs");
+        valid_url.extra.insert(
+            "url".to_owned(),
+            Value::String("https://example.com/docs".to_owned()),
+        );
+        assert!(valid_url.validate().is_ok());
+
+        let mut valid_copy_text = InlineKeyboardButton::new("Copy");
+        valid_copy_text.extra.insert(
+            "copy_text".to_owned(),
+            serde_json::json!({"text": "copy me"}),
+        );
+        assert!(valid_copy_text.validate().is_ok());
+
+        let mut invalid_copy_text = InlineKeyboardButton::new("Copy");
+        invalid_copy_text
+            .extra
+            .insert("copy_text".to_owned(), serde_json::json!({}));
+        assert!(matches!(
+            invalid_copy_text.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_web_app = InlineKeyboardButton::new("Open").web_app("http://example.com/app");
+        assert!(matches!(
+            invalid_web_app.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut conflicting_inline_action =
+            InlineKeyboardButton::new("Open").web_app("https://example.com/app");
+        conflicting_inline_action
+            .extra
+            .insert("pay".to_owned(), Value::Bool(true));
+        assert!(matches!(
+            conflicting_inline_action.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let valid_keyboard = ReplyKeyboardMarkup::new(vec![vec![
+            KeyboardButton::new("Open").web_app("https://example.com/app"),
+        ]]);
+        assert!(ReplyMarkup::from(valid_keyboard).validate().is_ok());
+
+        let mut invalid_request_contact = KeyboardButton::new("Share contact");
+        invalid_request_contact.extra.insert(
+            "request_contact".to_owned(),
+            Value::String("yes".to_owned()),
+        );
+        assert!(matches!(
+            invalid_request_contact.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut conflicting_keyboard_action =
+            KeyboardButton::new("Open").web_app("https://example.com/app");
+        conflicting_keyboard_action
+            .extra
+            .insert("request_location".to_owned(), Value::Bool(true));
+        assert!(matches!(
+            conflicting_keyboard_action.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_request_users = KeyboardButton::new("Pick user");
+        invalid_request_users
+            .extra
+            .insert("request_users".to_owned(), serde_json::json!({}));
+        assert!(matches!(
+            invalid_request_users.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut valid_request_poll = KeyboardButton::new("Create quiz");
+        valid_request_poll.extra.insert(
+            "request_poll".to_owned(),
+            serde_json::json!({"type": "quiz"}),
+        );
+        assert!(valid_request_poll.validate().is_ok());
+
+        let invalid_remove = ReplyKeyboardRemove {
+            remove_keyboard: false,
+            ..ReplyKeyboardRemove::default()
+        };
+        assert!(matches!(
+            invalid_remove.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        assert!(
+            MenuButton::new(serde_json::json!({
+                "type": "custom_menu_button",
+                "raw_field": "raw_value"
+            }))
+            .validate()
+            .is_ok()
+        );
+        assert!(matches!(
+            MenuButton::new(serde_json::json!({"raw_field": "raw_value"})).validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut conflicting_inline_button =
+            InlineQueryResultsButton::web_app("Open", "https://example.com/app");
+        conflicting_inline_button.start_parameter = Some("start".to_owned());
+        assert!(matches!(
+            conflicting_inline_button.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_reply_and_link_preview_options()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut reply = ReplyParameters::new(MessageId(1));
+        reply.quote = Some("quoted\ntext".to_owned());
+        reply.quote_parse_mode = Some(ParseMode::MarkdownV2);
+        assert!(reply.validate().is_ok());
+
+        reply.quote_entities = Some(Vec::new());
+        assert!(matches!(
+            reply.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut reply_without_quote = ReplyParameters::new(MessageId(1));
+        reply_without_quote.quote_parse_mode = Some(ParseMode::MarkdownV2);
+        assert!(matches!(
+            reply_without_quote.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut link_preview = LinkPreviewOptions::new();
+        link_preview.url = Some("https://example.com/article".to_owned());
+        assert!(link_preview.validate().is_ok());
+
+        link_preview.prefer_small_media = Some(true);
+        link_preview.prefer_large_media = Some(true);
+        assert!(matches!(
+            link_preview.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_disabled = LinkPreviewOptions::disabled();
+        invalid_disabled.url = Some("https://example.com/article".to_owned());
+        assert!(matches!(
+            invalid_disabled.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_url = LinkPreviewOptions::new();
+        invalid_url.url = Some("not a url".to_owned());
+        assert!(matches!(
+            invalid_url.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_generic_json_payload_wrappers()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let checklist = InputChecklist::new(serde_json::json!({
+            "title": "Deploy",
+            "tasks": []
+        }))?;
+        assert_eq!(checklist.as_value()["title"], "Deploy");
+
+        let story_content = InputStoryContent::new(serde_json::json!({
+            "type": "photo",
+            "photo": "file-id"
+        }))?;
+        assert_eq!(story_content.as_value()["type"], "photo");
+
+        let paid_media = InputPaidMedia::new(serde_json::json!({
+            "type": "photo",
+            "media": "file-id"
+        }))?;
+        assert_eq!(paid_media.as_value()["type"], "photo");
+
+        let profile_photo = InputProfilePhoto::new(serde_json::json!({
+            "type": "static",
+            "photo": "file-id"
+        }))?;
+        assert_eq!(profile_photo.as_value()["type"], "static");
+
+        let reaction = ReactionType::new(serde_json::json!({"type": "emoji", "emoji": "ok"}))?;
+        assert_eq!(reaction.as_value()["type"], "emoji");
+
+        let passport_error = PassportElementError::new(serde_json::json!({
+            "source": "data",
+            "type": "passport",
+            "message": "invalid"
+        }))?;
+        assert_eq!(passport_error.as_value()["source"], "data");
+
+        assert!(
+            AcceptedGiftTypes::new(serde_json::json!({
+                "unique_gifts": true
+            }))
+            .is_ok()
+        );
+        assert!(
+            SuggestedPostParameters::new(serde_json::json!({
+                "send_date": 1
+            }))
+            .is_ok()
+        );
+        assert!(
+            StoryArea::new(serde_json::json!({
+                "type": "location",
+                "position": {}
+            }))
+            .is_ok()
+        );
+
+        assert!(matches!(
+            InputChecklist::new(Value::Null),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputPaidMedia::new(serde_json::json!({"media": "file-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputProfilePhoto::new(serde_json::json!({"photo": "file-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            ReactionType::new(serde_json::json!({"type": ""})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            PassportElementError::new(serde_json::json!({"type": "passport"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AcceptedGiftTypes::new(serde_json::json!({"unique_gifts": "yes"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let decoded = serde_json::from_value::<InputStoryContent>(serde_json::json!({
+            "photo": "file-id"
+        }));
+        assert!(decoded.is_err());
+
+        Ok(())
     }
 }

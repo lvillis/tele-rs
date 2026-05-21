@@ -12,7 +12,7 @@ use crate::types::chat::{
 use crate::types::command::{
     BotCommand, BotCommandScope, GetMyCommandsRequest, SetMyCommandsRequest,
 };
-use crate::types::common::{ChatId, MessageId, ParseMode, UserId};
+use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode, UserId};
 use crate::types::message::{
     InputMedia, Message, SendAnimationRequest, SendAudioRequest, SendDocumentRequest,
     SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendVideoRequest,
@@ -23,7 +23,7 @@ use crate::types::telegram::{
     InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters, WebAppData,
 };
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
-use crate::types::upload::UploadFile;
+use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 #[cfg(feature = "_blocking")]

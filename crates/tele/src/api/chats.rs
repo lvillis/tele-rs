@@ -6,11 +6,12 @@ use crate::types::chat::{
     GetChatMemberCountRequest, GetChatMemberRequest, GetChatRequest, LeaveChatRequest,
     PinChatMessageRequest, PromoteChatMemberRequest, RestrictChatMemberRequest,
     RevokeChatInviteLinkRequest, SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest,
-    SetChatPermissionsRequest, SetChatStickerSetRequest, SetChatTitleRequest,
+    SetChatPermissionsRequest, SetChatPhotoRequest, SetChatStickerSetRequest, SetChatTitleRequest,
     UnbanChatMemberRequest, UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest,
     UnpinChatMessageRequest,
 };
 use crate::types::message::Chat;
+use crate::types::upload::UploadFile;
 
 #[cfg(feature = "_blocking")]
 use crate::BlockingClient;
@@ -31,6 +32,7 @@ impl ChatsService {
     }
 
     pub async fn get_chat(&self, request: &GetChatRequest) -> Result<Chat> {
+        request.validate()?;
         self.client.call_method("getChat", request).await
     }
 
@@ -38,36 +40,44 @@ impl ChatsService {
         &self,
         request: &GetChatAdministratorsRequest,
     ) -> Result<Vec<ChatMember>> {
+        request.validate()?;
         self.client
             .call_method("getChatAdministrators", request)
             .await
     }
 
     pub async fn get_chat_member_count(&self, request: &GetChatMemberCountRequest) -> Result<u64> {
+        request.validate()?;
         self.client.call_method("getChatMemberCount", request).await
     }
 
     pub async fn get_chat_member(&self, request: &GetChatMemberRequest) -> Result<ChatMember> {
+        request.validate()?;
         self.client.call_method("getChatMember", request).await
     }
 
     pub async fn leave_chat(&self, request: &LeaveChatRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("leaveChat", request).await
     }
 
     pub async fn ban_chat_member(&self, request: &BanChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("banChatMember", request).await
     }
 
     pub async fn unban_chat_member(&self, request: &UnbanChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unbanChatMember", request).await
     }
 
     pub async fn restrict_chat_member(&self, request: &RestrictChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("restrictChatMember", request).await
     }
 
     pub async fn promote_chat_member(&self, request: &PromoteChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("promoteChatMember", request).await
     }
 
@@ -82,6 +92,7 @@ impl ChatsService {
     }
 
     pub async fn ban_chat_sender_chat(&self, request: &BanChatSenderChatRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("banChatSenderChat", request).await
     }
 
@@ -89,12 +100,14 @@ impl ChatsService {
         &self,
         request: &UnbanChatSenderChatRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("unbanChatSenderChat", request)
             .await
     }
 
     pub async fn set_chat_permissions(&self, request: &SetChatPermissionsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatPermissions", request).await
     }
 
@@ -102,6 +115,7 @@ impl ChatsService {
         &self,
         request: &ExportChatInviteLinkRequest,
     ) -> Result<String> {
+        request.validate()?;
         self.client
             .call_method("exportChatInviteLink", request)
             .await
@@ -146,10 +160,12 @@ impl ChatsService {
     }
 
     pub async fn pin_chat_message(&self, request: &PinChatMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("pinChatMessage", request).await
     }
 
     pub async fn unpin_chat_message(&self, request: &UnpinChatMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unpinChatMessage", request).await
     }
 
@@ -157,13 +173,27 @@ impl ChatsService {
         &self,
         request: &UnpinAllChatMessagesRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("unpinAllChatMessages", request)
             .await
     }
 
     pub async fn delete_chat_photo(&self, request: &DeleteChatPhotoRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteChatPhoto", request).await
+    }
+
+    /// Calls `setChatPhoto` using multipart upload for local bytes.
+    pub async fn set_chat_photo_upload(
+        &self,
+        request: &SetChatPhotoRequest,
+        photo: &UploadFile,
+    ) -> Result<bool> {
+        request.validate()?;
+        self.client
+            .call_method_multipart("setChatPhoto", request, "photo", photo)
+            .await
     }
 
     pub async fn set_chat_sticker_set(&self, request: &SetChatStickerSetRequest) -> Result<bool> {
@@ -175,6 +205,7 @@ impl ChatsService {
         &self,
         request: &DeleteChatStickerSetRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("deleteChatStickerSet", request)
             .await
@@ -195,6 +226,7 @@ impl BlockingChatsService {
     }
 
     pub fn get_chat(&self, request: &GetChatRequest) -> Result<Chat> {
+        request.validate()?;
         self.client.call_method("getChat", request)
     }
 
@@ -202,34 +234,42 @@ impl BlockingChatsService {
         &self,
         request: &GetChatAdministratorsRequest,
     ) -> Result<Vec<ChatMember>> {
+        request.validate()?;
         self.client.call_method("getChatAdministrators", request)
     }
 
     pub fn get_chat_member_count(&self, request: &GetChatMemberCountRequest) -> Result<u64> {
+        request.validate()?;
         self.client.call_method("getChatMemberCount", request)
     }
 
     pub fn get_chat_member(&self, request: &GetChatMemberRequest) -> Result<ChatMember> {
+        request.validate()?;
         self.client.call_method("getChatMember", request)
     }
 
     pub fn leave_chat(&self, request: &LeaveChatRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("leaveChat", request)
     }
 
     pub fn ban_chat_member(&self, request: &BanChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("banChatMember", request)
     }
 
     pub fn unban_chat_member(&self, request: &UnbanChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unbanChatMember", request)
     }
 
     pub fn restrict_chat_member(&self, request: &RestrictChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("restrictChatMember", request)
     }
 
     pub fn promote_chat_member(&self, request: &PromoteChatMemberRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("promoteChatMember", request)
     }
 
@@ -243,18 +283,22 @@ impl BlockingChatsService {
     }
 
     pub fn ban_chat_sender_chat(&self, request: &BanChatSenderChatRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("banChatSenderChat", request)
     }
 
     pub fn unban_chat_sender_chat(&self, request: &UnbanChatSenderChatRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unbanChatSenderChat", request)
     }
 
     pub fn set_chat_permissions(&self, request: &SetChatPermissionsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatPermissions", request)
     }
 
     pub fn export_chat_invite_link(&self, request: &ExportChatInviteLinkRequest) -> Result<String> {
+        request.validate()?;
         self.client.call_method("exportChatInviteLink", request)
     }
 
@@ -293,19 +337,34 @@ impl BlockingChatsService {
     }
 
     pub fn pin_chat_message(&self, request: &PinChatMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("pinChatMessage", request)
     }
 
     pub fn unpin_chat_message(&self, request: &UnpinChatMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unpinChatMessage", request)
     }
 
     pub fn unpin_all_chat_messages(&self, request: &UnpinAllChatMessagesRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("unpinAllChatMessages", request)
     }
 
     pub fn delete_chat_photo(&self, request: &DeleteChatPhotoRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteChatPhoto", request)
+    }
+
+    /// Calls `setChatPhoto` using multipart upload for local bytes.
+    pub fn set_chat_photo_upload(
+        &self,
+        request: &SetChatPhotoRequest,
+        photo: &UploadFile,
+    ) -> Result<bool> {
+        request.validate()?;
+        self.client
+            .call_method_multipart("setChatPhoto", request, "photo", photo)
     }
 
     pub fn set_chat_sticker_set(&self, request: &SetChatStickerSetRequest) -> Result<bool> {
@@ -314,6 +373,7 @@ impl BlockingChatsService {
     }
 
     pub fn delete_chat_sticker_set(&self, request: &DeleteChatStickerSetRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteChatStickerSet", request)
     }
 }

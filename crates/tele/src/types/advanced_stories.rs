@@ -6,11 +6,164 @@ use crate::{Error, Result};
 
 use super::AdvancedRequest;
 
-fn validate_required_string(field: &str, value: &str) -> Result<()> {
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{field} cannot be empty"),
         });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
+trait GeneratedValidate {
+    fn validate_generated(&self) -> Result<()>;
+}
+
+impl GeneratedValidate for crate::types::common::ChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::NumericChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::UserId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::MessageId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::InputSticker {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::MaskPosition {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputChecklist {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputStoryContent {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::KeyboardButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::MenuButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::PassportElementError {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReactionType {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::StoryArea {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {
+    for value in values {
+        value.validate_generated()?;
     }
 
     Ok(())
@@ -25,7 +178,7 @@ pub struct AdvancedPostStoryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parse_mode: Option<String>,
+    pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_entities: Option<Vec<crate::types::message::MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,7 +214,12 @@ impl AdvancedRequest for AdvancedPostStoryRequest {
     const METHOD: &'static str = "postStory";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.content.validate()?;
+        validate_positive_i64("active_period", self.active_period)?;
+        if let Some(values) = self.areas.as_deref() {
+            validate_items(values)?;
+        }
         Ok(())
     }
 }
@@ -70,7 +228,7 @@ impl AdvancedRequest for AdvancedPostStoryRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedRepostStoryRequest {
     pub business_connection_id: String,
-    pub from_chat_id: i64,
+    pub from_chat_id: crate::types::common::NumericChatId,
     pub from_story_id: i64,
     pub active_period: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,13 +240,13 @@ pub struct AdvancedRepostStoryRequest {
 impl AdvancedRepostStoryRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        from_chat_id: i64,
+        from_chat_id: impl Into<crate::types::common::NumericChatId>,
         from_story_id: i64,
         active_period: i64,
     ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
-            from_chat_id,
+            from_chat_id: from_chat_id.into(),
             from_story_id,
             active_period,
             post_to_chat_page: None,
@@ -102,7 +260,10 @@ impl AdvancedRequest for AdvancedRepostStoryRequest {
     const METHOD: &'static str = "repostStory";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.from_chat_id.validate()?;
+        validate_positive_i64("from_story_id", self.from_story_id)?;
+        validate_positive_i64("active_period", self.active_period)?;
         Ok(())
     }
 }
@@ -116,7 +277,7 @@ pub struct AdvancedEditStoryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parse_mode: Option<String>,
+    pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_entities: Option<Vec<crate::types::message::MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,7 +307,12 @@ impl AdvancedRequest for AdvancedEditStoryRequest {
     const METHOD: &'static str = "editStory";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_positive_i64("story_id", self.story_id)?;
+        self.content.validate()?;
+        if let Some(values) = self.areas.as_deref() {
+            validate_items(values)?;
+        }
         Ok(())
     }
 }
@@ -172,7 +338,8 @@ impl AdvancedRequest for AdvancedDeleteStoryRequest {
     const METHOD: &'static str = "deleteStory";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_positive_i64("story_id", self.story_id)?;
         Ok(())
     }
 }

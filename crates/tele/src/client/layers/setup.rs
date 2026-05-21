@@ -19,7 +19,7 @@ fn get_chat_menu_button_request(
     chat_id: i64,
 ) -> crate::types::advanced::AdvancedGetChatMenuButtonRequest {
     crate::types::advanced::AdvancedGetChatMenuButtonRequest {
-        chat_id: Some(chat_id),
+        chat_id: Some(chat_id.into()),
     }
 }
 

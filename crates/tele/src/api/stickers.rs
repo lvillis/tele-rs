@@ -36,13 +36,12 @@ impl StickersService {
     }
 
     /// Calls `sendSticker` using multipart upload for local bytes.
-    /// `request.sticker` is ignored; file content is taken from `file`.
     pub async fn send_sticker_upload(
         &self,
         request: &SendStickerRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendSticker", request, "sticker", file)
             .await
@@ -65,14 +64,7 @@ impl StickersService {
             .await
     }
 
-    /// Calls `uploadStickerFile`.
-    pub async fn upload_sticker_file(&self, request: &UploadStickerFileRequest) -> Result<File> {
-        request.validate()?;
-        self.client.call_method("uploadStickerFile", request).await
-    }
-
     /// Calls `uploadStickerFile` using multipart upload for local bytes.
-    /// `request.sticker` is ignored; file content is taken from `file`.
     pub async fn upload_sticker_file_upload(
         &self,
         request: &UploadStickerFileRequest,
@@ -180,7 +172,6 @@ impl StickersService {
     }
 
     /// Calls `setStickerSetThumbnail` using multipart upload for local bytes.
-    /// `request.thumbnail` is ignored; file content is taken from `file`.
     pub async fn set_sticker_set_thumbnail_upload(
         &self,
         request: &SetStickerSetThumbnailRequest,
@@ -230,13 +221,12 @@ impl BlockingStickersService {
     }
 
     /// Calls `sendSticker` using multipart upload for local bytes.
-    /// `request.sticker` is ignored; file content is taken from `file`.
     pub fn send_sticker_upload(
         &self,
         request: &SendStickerRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendSticker", request, "sticker", file)
     }
@@ -256,14 +246,7 @@ impl BlockingStickersService {
         self.client.call_method("getCustomEmojiStickers", request)
     }
 
-    /// Calls `uploadStickerFile`.
-    pub fn upload_sticker_file(&self, request: &UploadStickerFileRequest) -> Result<File> {
-        request.validate()?;
-        self.client.call_method("uploadStickerFile", request)
-    }
-
     /// Calls `uploadStickerFile` using multipart upload for local bytes.
-    /// `request.sticker` is ignored; file content is taken from `file`.
     pub fn upload_sticker_file_upload(
         &self,
         request: &UploadStickerFileRequest,
@@ -344,7 +327,6 @@ impl BlockingStickersService {
     }
 
     /// Calls `setStickerSetThumbnail` using multipart upload for local bytes.
-    /// `request.thumbnail` is ignored; file content is taken from `file`.
     pub fn set_sticker_set_thumbnail_upload(
         &self,
         request: &SetStickerSetThumbnailRequest,

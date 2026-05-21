@@ -12,7 +12,7 @@ use crate::api::{
 use crate::auth::Auth;
 use crate::transport::blocking_transport::BlockingTransport;
 use crate::transport::serialize_multipart_fields;
-use crate::types::upload::UploadFile;
+use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 use super::config::BuilderParts;
@@ -167,6 +167,33 @@ impl BlockingClient {
             &fields,
             file_field_name,
             file,
+            &self.inner.defaults,
+        );
+        self.emit_metric(method, started_at.elapsed(), &result);
+        result
+    }
+
+    pub fn call_method_multipart_files<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        let token = self.require_token()?;
+        let fields = serialize_multipart_fields(payload, skip_fields)?;
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!("tele.client.request", method).entered();
+        let started_at = Instant::now();
+        let result = self.inner.transport.execute_multipart_files(
+            method,
+            token,
+            &fields,
+            files,
             &self.inner.defaults,
         );
         self.emit_metric(method, started_at.elapsed(), &result);

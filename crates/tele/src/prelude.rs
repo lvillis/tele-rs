@@ -33,10 +33,12 @@ pub use crate::client::{
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};
 
 pub use crate::types::{
-    BotCommand, CallbackCodec, CallbackPayload, ChatAdministratorCapability, ChatId,
-    ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload,
-    Message, MessageEntityKind, MessageId, MessageKind, MessageOrigin, ParseMode, PollKind,
-    ReplyMarkup, ReplyParameters, Update, UpdateKind, WebhookSecretToken,
+    BotCommand, BusinessMessagesDeleted, CallbackCodec, CallbackPayload,
+    ChatAdministratorCapability, ChatId, ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated,
+    ChatPermissions, CompactCallbackPayload, InputMedia, InputMediaAnimation, InputMediaAudio,
+    InputMediaDocument, InputMediaPhoto, InputMediaVideo, Message, MessageEntityKind, MessageId,
+    MessageKind, MessageOrigin, ParseMode, PollKind, ReplyMarkup, ReplyParameters, Update,
+    UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]

@@ -16,6 +16,31 @@ fn validate_required_string(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
 /// Auto-generated request for `getForumTopicIconStickers`.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AdvancedGetForumTopicIconStickersRequest {}
@@ -58,7 +83,11 @@ impl AdvancedRequest for AdvancedCreateForumTopicRequest {
     const METHOD: &'static str = "createForumTopic";
 
     fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_required_string("name", &self.name)?;
+        if let Some(value) = self.icon_custom_emoji_id.as_deref() {
+            validate_string_id("icon_custom_emoji_id", value)?;
+        }
         Ok(())
     }
 }
@@ -88,6 +117,15 @@ impl AdvancedEditForumTopicRequest {
 impl AdvancedRequest for AdvancedEditForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "editForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("message_thread_id", self.message_thread_id)?;
+        if let Some(value) = self.icon_custom_emoji_id.as_deref() {
+            validate_string_id("icon_custom_emoji_id", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `closeForumTopic`.
@@ -109,6 +147,12 @@ impl AdvancedCloseForumTopicRequest {
 impl AdvancedRequest for AdvancedCloseForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "closeForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("message_thread_id", self.message_thread_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `reopenForumTopic`.
@@ -130,6 +174,12 @@ impl AdvancedReopenForumTopicRequest {
 impl AdvancedRequest for AdvancedReopenForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "reopenForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("message_thread_id", self.message_thread_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `deleteForumTopic`.
@@ -151,6 +201,12 @@ impl AdvancedDeleteForumTopicRequest {
 impl AdvancedRequest for AdvancedDeleteForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "deleteForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("message_thread_id", self.message_thread_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `unpinAllForumTopicMessages`.
@@ -172,6 +228,12 @@ impl AdvancedUnpinAllForumTopicMessagesRequest {
 impl AdvancedRequest for AdvancedUnpinAllForumTopicMessagesRequest {
     type Response = bool;
     const METHOD: &'static str = "unpinAllForumTopicMessages";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("message_thread_id", self.message_thread_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editGeneralForumTopic`.
@@ -195,6 +257,7 @@ impl AdvancedRequest for AdvancedEditGeneralForumTopicRequest {
     const METHOD: &'static str = "editGeneralForumTopic";
 
     fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_required_string("name", &self.name)?;
         Ok(())
     }
@@ -217,6 +280,11 @@ impl AdvancedCloseGeneralForumTopicRequest {
 impl AdvancedRequest for AdvancedCloseGeneralForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "closeGeneralForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `reopenGeneralForumTopic`.
@@ -236,6 +304,11 @@ impl AdvancedReopenGeneralForumTopicRequest {
 impl AdvancedRequest for AdvancedReopenGeneralForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "reopenGeneralForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `hideGeneralForumTopic`.
@@ -255,6 +328,11 @@ impl AdvancedHideGeneralForumTopicRequest {
 impl AdvancedRequest for AdvancedHideGeneralForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "hideGeneralForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `unhideGeneralForumTopic`.
@@ -274,6 +352,11 @@ impl AdvancedUnhideGeneralForumTopicRequest {
 impl AdvancedRequest for AdvancedUnhideGeneralForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "unhideGeneralForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `unpinAllGeneralForumTopicMessages`.
@@ -293,4 +376,9 @@ impl AdvancedUnpinAllGeneralForumTopicMessagesRequest {
 impl AdvancedRequest for AdvancedUnpinAllGeneralForumTopicMessagesRequest {
     type Response = bool;
     const METHOD: &'static str = "unpinAllGeneralForumTopicMessages";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }

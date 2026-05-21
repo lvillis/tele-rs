@@ -2,13 +2,76 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::types::common::ChatId;
-use crate::types::telegram::{ReplyMarkup, ReplyParameters};
+use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
+
+const INVOICE_TITLE_MAX_CHARS: usize = 32;
+const INVOICE_DESCRIPTION_MAX_CHARS: usize = 255;
+const INVOICE_PAYLOAD_MAX_BYTES: usize = 128;
+const TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS: u32 = 2_592_000;
 
 fn ensure_non_empty(method: &str, field: &str, value: &str) -> Result<(), Error> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{method} requires non-empty `{field}`"),
         });
+    }
+
+    Ok(())
+}
+
+fn validate_bounded_text(
+    method: &str,
+    field: &str,
+    value: &str,
+    max_chars: usize,
+) -> Result<(), Error> {
+    ensure_non_empty(method, field, value)?;
+    if value.chars().count() > max_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires `{field}` to be at most {max_chars} characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_payload(method: &str, payload: &str) -> Result<(), Error> {
+    ensure_non_empty(method, "payload", payload)?;
+    if payload.len() > INVOICE_PAYLOAD_MAX_BYTES {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} requires `payload` to be at most {INVOICE_PAYLOAD_MAX_BYTES} bytes"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_id(method: &str, field: &str, value: &str) -> Result<(), Error> {
+    ensure_non_empty(method, field, value)?;
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires `{field}` without control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_optional_id(method: &str, field: &str, value: Option<&str>) -> Result<(), Error> {
+    if let Some(value) = value {
+        validate_id(method, field, value)?;
+    }
+
+    Ok(())
+}
+
+fn validate_suggested_post_parameters(
+    suggested_post_parameters: Option<&SuggestedPostParameters>,
+) -> Result<(), Error> {
+    if let Some(suggested_post_parameters) = suggested_post_parameters {
+        suggested_post_parameters.validate()?;
     }
 
     Ok(())
@@ -40,6 +103,29 @@ fn validate_prices(method: &str, prices: &[LabeledPrice]) -> Result<(), Error> {
                 reason: format!("{method} price at index {index} requires non-empty `label`"),
             });
         }
+    }
+
+    Ok(())
+}
+
+fn validate_shipping_options(
+    method: &str,
+    shipping_options: &[ShippingOption],
+) -> Result<(), Error> {
+    if shipping_options.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires at least one shipping option when ok=true"),
+        });
+    }
+
+    for (index, option) in shipping_options.iter().enumerate() {
+        validate_id(method, &format!("shipping_options[{index}].id"), &option.id)?;
+        ensure_non_empty(
+            method,
+            &format!("shipping_options[{index}].title"),
+            &option.title,
+        )?;
+        validate_prices(method, &option.prices)?;
     }
 
     Ok(())
@@ -109,6 +195,50 @@ fn validate_tip_configuration(
     Ok(())
 }
 
+fn validate_optional_positive_i64(
+    method: &str,
+    field: &str,
+    value: Option<i64>,
+) -> Result<(), Error> {
+    if let Some(value) = value
+        && value <= 0
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires `{field}` to be greater than zero"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_optional_positive_u32(
+    method: &str,
+    field: &str,
+    value: Option<u32>,
+) -> Result<(), Error> {
+    if matches!(value, Some(0)) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires `{field}` to be greater than zero"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_subscription_period(method: &str, value: Option<u32>) -> Result<(), Error> {
+    if let Some(value) = value
+        && value != TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} requires `subscription_period` to be {TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS} seconds when provided"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 /// Telegram invoice price item.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LabeledPrice {
@@ -152,8 +282,6 @@ pub struct SendInvoiceRequest {
     pub payload: String,
     pub currency: String,
     pub prices: Vec<LabeledPrice>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub business_connection_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -199,6 +327,8 @@ pub struct SendInvoiceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effect_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -218,9 +348,14 @@ impl SendInvoiceRequest {
         let payload = payload.into();
         let currency = currency.into();
 
-        ensure_non_empty("sendInvoice", "title", &title)?;
-        ensure_non_empty("sendInvoice", "description", &description)?;
-        ensure_non_empty("sendInvoice", "payload", &payload)?;
+        validate_bounded_text("sendInvoice", "title", &title, INVOICE_TITLE_MAX_CHARS)?;
+        validate_bounded_text(
+            "sendInvoice",
+            "description",
+            &description,
+            INVOICE_DESCRIPTION_MAX_CHARS,
+        )?;
+        validate_payload("sendInvoice", &payload)?;
         validate_currency("sendInvoice", &currency)?;
         validate_prices("sendInvoice", &prices)?;
 
@@ -231,7 +366,6 @@ impl SendInvoiceRequest {
             payload,
             currency,
             prices,
-            business_connection_id: None,
             message_thread_id: None,
             direct_messages_topic_id: None,
             provider_token: None,
@@ -254,6 +388,7 @@ impl SendInvoiceRequest {
             protect_content: None,
             allow_paid_broadcast: None,
             message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         };
@@ -262,9 +397,27 @@ impl SendInvoiceRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("sendInvoice", "title", &self.title)?;
-        ensure_non_empty("sendInvoice", "description", &self.description)?;
-        ensure_non_empty("sendInvoice", "payload", &self.payload)?;
+        self.chat_id.validate()?;
+        validate_optional_positive_i64("sendInvoice", "message_thread_id", self.message_thread_id)?;
+        validate_optional_positive_i64(
+            "sendInvoice",
+            "direct_messages_topic_id",
+            self.direct_messages_topic_id,
+        )?;
+        if let Some(reply_parameters) = self.reply_parameters.as_ref() {
+            reply_parameters.validate()?;
+        }
+        if let Some(reply_markup) = self.reply_markup.as_ref() {
+            reply_markup.validate()?;
+        }
+        validate_bounded_text("sendInvoice", "title", &self.title, INVOICE_TITLE_MAX_CHARS)?;
+        validate_bounded_text(
+            "sendInvoice",
+            "description",
+            &self.description,
+            INVOICE_DESCRIPTION_MAX_CHARS,
+        )?;
+        validate_payload("sendInvoice", &self.payload)?;
         validate_currency("sendInvoice", &self.currency)?;
         validate_prices("sendInvoice", &self.prices)?;
         validate_tip_configuration(
@@ -272,7 +425,24 @@ impl SendInvoiceRequest {
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
+        validate_optional_positive_u32("sendInvoice", "photo_size", self.photo_size)?;
+        validate_optional_positive_u32("sendInvoice", "photo_width", self.photo_width)?;
+        validate_optional_positive_u32("sendInvoice", "photo_height", self.photo_height)?;
+        validate_optional_id(
+            "sendInvoice",
+            "message_effect_id",
+            self.message_effect_id.as_deref(),
+        )?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         Ok(())
+    }
+
+    pub fn suggested_post_parameters(
+        mut self,
+        suggested_post_parameters: SuggestedPostParameters,
+    ) -> Self {
+        self.suggested_post_parameters = Some(suggested_post_parameters);
+        self
     }
 
     pub fn reply_parameters(mut self, reply_parameters: ReplyParameters) -> Self {
@@ -343,9 +513,19 @@ impl CreateInvoiceLinkRequest {
         let payload = payload.into();
         let currency = currency.into();
 
-        ensure_non_empty("createInvoiceLink", "title", &title)?;
-        ensure_non_empty("createInvoiceLink", "description", &description)?;
-        ensure_non_empty("createInvoiceLink", "payload", &payload)?;
+        validate_bounded_text(
+            "createInvoiceLink",
+            "title",
+            &title,
+            INVOICE_TITLE_MAX_CHARS,
+        )?;
+        validate_bounded_text(
+            "createInvoiceLink",
+            "description",
+            &description,
+            INVOICE_DESCRIPTION_MAX_CHARS,
+        )?;
+        validate_payload("createInvoiceLink", &payload)?;
         validate_currency("createInvoiceLink", &currency)?;
         validate_prices("createInvoiceLink", &prices)?;
 
@@ -378,9 +558,24 @@ impl CreateInvoiceLinkRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        ensure_non_empty("createInvoiceLink", "title", &self.title)?;
-        ensure_non_empty("createInvoiceLink", "description", &self.description)?;
-        ensure_non_empty("createInvoiceLink", "payload", &self.payload)?;
+        validate_optional_id(
+            "createInvoiceLink",
+            "business_connection_id",
+            self.business_connection_id.as_deref(),
+        )?;
+        validate_bounded_text(
+            "createInvoiceLink",
+            "title",
+            &self.title,
+            INVOICE_TITLE_MAX_CHARS,
+        )?;
+        validate_bounded_text(
+            "createInvoiceLink",
+            "description",
+            &self.description,
+            INVOICE_DESCRIPTION_MAX_CHARS,
+        )?;
+        validate_payload("createInvoiceLink", &self.payload)?;
         validate_currency("createInvoiceLink", &self.currency)?;
         validate_prices("createInvoiceLink", &self.prices)?;
         validate_tip_configuration(
@@ -388,6 +583,10 @@ impl CreateInvoiceLinkRequest {
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
+        validate_subscription_period("createInvoiceLink", self.subscription_period)?;
+        validate_optional_positive_u32("createInvoiceLink", "photo_size", self.photo_size)?;
+        validate_optional_positive_u32("createInvoiceLink", "photo_width", self.photo_width)?;
+        validate_optional_positive_u32("createInvoiceLink", "photo_height", self.photo_height)?;
         Ok(())
     }
 }
@@ -414,10 +613,32 @@ impl AnswerShippingQueryRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        validate_id(
+            "answerShippingQuery",
+            "shipping_query_id",
+            &self.shipping_query_id,
+        )?;
+
         if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery must omit error_message when ok=true".to_owned(),
+                });
+            }
+            let Some(shipping_options) = self.shipping_options.as_deref() else {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery requires shipping_options when ok=true".to_owned(),
+                });
+            };
+            validate_shipping_options("answerShippingQuery", shipping_options)?;
             return Ok(());
         }
 
+        if self.shipping_options.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "answerShippingQuery must omit shipping_options when ok=false".to_owned(),
+            });
+        }
         if self
             .error_message
             .as_deref()
@@ -452,7 +673,19 @@ impl AnswerPreCheckoutQueryRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        validate_id(
+            "answerPreCheckoutQuery",
+            "pre_checkout_query_id",
+            &self.pre_checkout_query_id,
+        )?;
+
         if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerPreCheckoutQuery must omit error_message when ok=true"
+                        .to_owned(),
+                });
+            }
             return Ok(());
         }
 
@@ -466,6 +699,169 @@ impl AnswerPreCheckoutQueryRequest {
                     .to_owned(),
             });
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_payment_request_ids_and_targets() -> Result<(), Error> {
+        let invoice = SendInvoiceRequest::new(
+            0_i64,
+            "title",
+            "description",
+            "payload",
+            "USD",
+            vec![LabeledPrice::new("item", 100)],
+        );
+        assert!(matches!(invoice, Err(Error::InvalidRequest { .. })));
+
+        let invoice = SendInvoiceRequest::new(
+            1_i64,
+            "t".repeat(INVOICE_TITLE_MAX_CHARS + 1),
+            "description",
+            "payload",
+            "USD",
+            vec![LabeledPrice::new("item", 100)],
+        );
+        assert!(matches!(invoice, Err(Error::InvalidRequest { .. })));
+
+        let invoice = SendInvoiceRequest::new(
+            1_i64,
+            "title",
+            "description",
+            "x".repeat(INVOICE_PAYLOAD_MAX_BYTES + 1),
+            "USD",
+            vec![LabeledPrice::new("item", 100)],
+        );
+        assert!(matches!(invoice, Err(Error::InvalidRequest { .. })));
+
+        let mut invoice = SendInvoiceRequest::new(
+            1_i64,
+            "title",
+            "description",
+            "payload",
+            "USD",
+            vec![LabeledPrice::new("item", 100)],
+        )?;
+        invoice.message_thread_id = Some(0);
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice.message_thread_id = None;
+        invoice.direct_messages_topic_id = Some(-1);
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice.direct_messages_topic_id = None;
+        invoice.photo_width = Some(0);
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice.photo_width = None;
+        invoice.reply_markup =
+            Some(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()).into());
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice.reply_markup = None;
+        invoice.message_effect_id = Some("bad\nid".to_owned());
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice.message_effect_id = None;
+        invoice.suggested_post_parameters =
+            Some(SuggestedPostParameters::new(serde_json::json!({
+                "send_date": 1
+            }))?);
+        invoice.validate()?;
+        let serialized =
+            serde_json::to_value(&invoice).map_err(|source| Error::SerializeRequest { source })?;
+        assert!(serialized.get("suggested_post_parameters").is_some());
+
+        let mut invoice_link = CreateInvoiceLinkRequest::new(
+            "title",
+            "description",
+            "payload",
+            "USD",
+            vec![LabeledPrice::new("item", 100)],
+        )?;
+        invoice_link.business_connection_id = Some(" \n ".to_owned());
+        assert!(matches!(
+            invoice_link.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice_link.business_connection_id = None;
+        invoice_link.subscription_period = Some(0);
+        assert!(matches!(
+            invoice_link.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice_link.subscription_period = Some(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS);
+        invoice_link.validate()?;
+
+        let mut shipping = AnswerShippingQueryRequest::new("", true);
+        shipping.shipping_options = Some(vec![ShippingOption::new(
+            "standard",
+            "Standard",
+            vec![LabeledPrice::new("shipping", 100)],
+        )]);
+        assert!(matches!(
+            shipping.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let shipping = AnswerShippingQueryRequest::new("ship-1", true);
+        assert!(matches!(
+            shipping.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut shipping = AnswerShippingQueryRequest::new("ship-1", true);
+        shipping.shipping_options = Some(vec![ShippingOption::new(
+            "standard",
+            "Standard",
+            vec![LabeledPrice::new("shipping", 100)],
+        )]);
+        shipping.error_message = Some("unavailable".to_owned());
+        assert!(matches!(
+            shipping.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut shipping = AnswerShippingQueryRequest::new("ship-1", false);
+        shipping.shipping_options = Some(vec![ShippingOption::new(
+            "standard",
+            "Standard",
+            vec![LabeledPrice::new("shipping", 100)],
+        )]);
+        shipping.error_message = Some("unavailable".to_owned());
+        assert!(matches!(
+            shipping.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let checkout = AnswerPreCheckoutQueryRequest::new("bad\nid", true);
+        assert!(matches!(
+            checkout.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut checkout = AnswerPreCheckoutQueryRequest::new("checkout-1", true);
+        checkout.error_message = Some("declined".to_owned());
+        assert!(matches!(
+            checkout.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         Ok(())
     }

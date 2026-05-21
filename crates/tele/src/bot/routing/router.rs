@@ -60,6 +60,7 @@ pub const CURRENT_BOT_CHAT_MEMBER: RequestStateKey<ChatMember> =
     RequestStateKey::new("current_bot_chat_member");
 
 const CURRENT_BOT_USER: RequestStateKey<User> = RequestStateKey::new("current_bot_user");
+const DEFAULT_HANDLER_ERROR_MESSAGE: &str = "request failed, please try again later";
 
 #[derive(Clone)]
 enum RouteResolution {
@@ -86,7 +87,16 @@ fn user_message_for_error(error: &Error, fallback: &str) -> String {
     match error.classification() {
         ErrorClass::Authentication => "bot authentication failed, please contact admin".to_owned(),
         ErrorClass::RateLimited => "too many requests, please retry shortly".to_owned(),
-        _ => fallback.to_owned(),
+        _ => normalized_fallback_message(fallback),
+    }
+}
+
+fn normalized_fallback_message(fallback: &str) -> String {
+    let fallback = fallback.trim();
+    if fallback.is_empty() {
+        DEFAULT_HANDLER_ERROR_MESSAGE.to_owned()
+    } else {
+        fallback.to_owned()
     }
 }
 

@@ -16,14 +16,50 @@ fn validate_required_string(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_required_vec(field: &str, len: usize) -> Result<()> {
-    if len == 0 {
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {
+    for value in values {
+        value.validate()?;
+    }
+
+    Ok(())
+}
+
+fn validate_required_message_ids(
+    field: &str,
+    values: &[crate::types::common::MessageId],
+) -> Result<()> {
+    if values.is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{field} cannot be empty"),
         });
     }
 
-    Ok(())
+    validate_message_ids(values)
 }
 
 /// Auto-generated request for `getBusinessConnection`.
@@ -45,7 +81,7 @@ impl AdvancedRequest for AdvancedGetBusinessConnectionRequest {
     const METHOD: &'static str = "getBusinessConnection";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         Ok(())
     }
 }
@@ -54,19 +90,19 @@ impl AdvancedRequest for AdvancedGetBusinessConnectionRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedReadBusinessMessageRequest {
     pub business_connection_id: String,
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     pub message_id: crate::types::common::MessageId,
 }
 
 impl AdvancedReadBusinessMessageRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        chat_id: i64,
+        chat_id: impl Into<crate::types::common::NumericChatId>,
         message_id: crate::types::common::MessageId,
     ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
-            chat_id,
+            chat_id: chat_id.into(),
             message_id,
         }
     }
@@ -77,7 +113,9 @@ impl AdvancedRequest for AdvancedReadBusinessMessageRequest {
     const METHOD: &'static str = "readBusinessMessage";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
         Ok(())
     }
 }
@@ -106,8 +144,8 @@ impl AdvancedRequest for AdvancedDeleteBusinessMessagesRequest {
     const METHOD: &'static str = "deleteBusinessMessages";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
-        validate_required_vec("message_ids", self.message_ids.len())?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_required_message_ids("message_ids", &self.message_ids)?;
         Ok(())
     }
 }
@@ -136,7 +174,7 @@ impl AdvancedRequest for AdvancedSetBusinessAccountNameRequest {
     const METHOD: &'static str = "setBusinessAccountName";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         validate_required_string("first_name", &self.first_name)?;
         Ok(())
     }
@@ -164,7 +202,7 @@ impl AdvancedRequest for AdvancedSetBusinessAccountUsernameRequest {
     const METHOD: &'static str = "setBusinessAccountUsername";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         Ok(())
     }
 }
@@ -191,7 +229,7 @@ impl AdvancedRequest for AdvancedSetBusinessAccountBioRequest {
     const METHOD: &'static str = "setBusinessAccountBio";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         Ok(())
     }
 }
@@ -200,13 +238,16 @@ impl AdvancedRequest for AdvancedSetBusinessAccountBioRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSetBusinessAccountProfilePhotoRequest {
     pub business_connection_id: String,
-    pub photo: Value,
+    pub photo: crate::types::telegram::InputProfilePhoto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_public: Option<bool>,
 }
 
 impl AdvancedSetBusinessAccountProfilePhotoRequest {
-    pub fn new(business_connection_id: impl Into<String>, photo: Value) -> Self {
+    pub fn new(
+        business_connection_id: impl Into<String>,
+        photo: crate::types::telegram::InputProfilePhoto,
+    ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
             photo,
@@ -220,7 +261,8 @@ impl AdvancedRequest for AdvancedSetBusinessAccountProfilePhotoRequest {
     const METHOD: &'static str = "setBusinessAccountProfilePhoto";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.photo.validate()?;
         Ok(())
     }
 }
@@ -247,7 +289,7 @@ impl AdvancedRequest for AdvancedRemoveBusinessAccountProfilePhotoRequest {
     const METHOD: &'static str = "removeBusinessAccountProfilePhoto";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         Ok(())
     }
 }
@@ -279,7 +321,8 @@ impl AdvancedRequest for AdvancedSetBusinessAccountGiftSettingsRequest {
     const METHOD: &'static str = "setBusinessAccountGiftSettings";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.accepted_gift_types.validate()?;
         Ok(())
     }
 }
@@ -303,7 +346,7 @@ impl AdvancedRequest for AdvancedGetBusinessAccountStarBalanceRequest {
     const METHOD: &'static str = "getBusinessAccountStarBalance";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
         Ok(())
     }
 }
@@ -329,7 +372,8 @@ impl AdvancedRequest for AdvancedTransferBusinessAccountStarsRequest {
     const METHOD: &'static str = "transferBusinessAccountStars";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        validate_positive_i64("star_count", self.star_count)?;
         Ok(())
     }
 }
@@ -383,7 +427,10 @@ impl AdvancedRequest for AdvancedGetBusinessAccountGiftsRequest {
     const METHOD: &'static str = "getBusinessAccountGifts";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        if let Some(value) = self.limit {
+            validate_positive_i64("limit", value)?;
+        }
         Ok(())
     }
 }

@@ -7,9 +7,7 @@ fn build_answer_web_app_request<T>(
 where
     T: Serialize,
 {
-    let result = InlineQueryResult::from_typed(result).map_err(|source| Error::InvalidRequest {
-        reason: format!("failed to serialize WebApp inline result: {source}"),
-    })?;
+    let result = InlineQueryResult::from_typed(result)?;
     Ok(AdvancedAnswerWebAppQueryRequest::new(
         web_app_query_id,
         result,

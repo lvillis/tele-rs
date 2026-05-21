@@ -6,18 +6,20 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{
     AdvancedAnswerWebAppQueryRequest, AdvancedForwardMessagesRequest,
-    AdvancedGetAvailableGiftsRequest,
+    AdvancedGetAvailableGiftsRequest, AdvancedSendStickerRequest,
 };
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
     GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
-    InlineQueryResult, InlineQueryResultsButton, InputMedia, LabeledPrice, MessageId, ParseMode,
-    SendPhotoRequest, SendStickerRequest, SetMyCommandsRequest, Update, WebAppData,
+    InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto, InputMediaVideo,
+    LabeledPrice, MessageId, ParseMode, SendDocumentRequest, SendMediaGroupRequest,
+    SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest, StickerFormat,
+    Update, UploadStickerFileRequest, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
     Client, ClientMetric, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions, RetryConfig,
-    UploadFile,
+    UploadFile, UploadPart,
 };
 
 #[cfg(feature = "bot")]
@@ -176,6 +178,19 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSendStickerRequest::new(1_i64, "sticker-file-id");
+    request.business_connection_id = Some(" \n ".to_owned());
+    let error = match client
+        .advanced()
+        .send_sticker::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("empty generated string identifiers must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     Ok(())
 }
 
@@ -602,9 +617,9 @@ async fn app_richer_media_builders_support_common_send_options() -> Result<(), D
         .app()
         .sticker(1_i64, "sticker-file-id")
         .emoji(":fire:")
-        .reply_to_message(MessageId(61))?
+        .reply_to_message(MessageId(61))
         .message_thread_id(17)
-        .reply_markup(sticker_markup)?
+        .reply_markup(sticker_markup)
         .send()
         .await?;
     assert_eq!(sticker.message_id.0, 16);
@@ -657,22 +672,22 @@ async fn app_sticker_builder_supports_common_send_options() -> Result<(), DynErr
         .app()
         .sticker(1_i64, "sticker-file-id")
         .emoji(":fire:")
-        .reply_to_message(MessageId(61))?
+        .reply_to_message(MessageId(61))
         .message_thread_id(17)
-        .reply_markup(markup)?
+        .reply_markup(markup)
         .into_request();
 
     assert_eq!(request.emoji.as_deref(), Some(":fire:"));
     assert_eq!(request.message_thread_id, Some(17));
     assert_eq!(
-        request.reply_parameters,
-        Some(serde_json::json!({"message_id":61}))
+        serde_json::to_value(request.reply_parameters.as_ref())?,
+        serde_json::json!({"message_id":61})
     );
     assert_eq!(
-        request.reply_markup,
-        Some(serde_json::json!({
+        serde_json::to_value(request.reply_markup.as_ref())?,
+        serde_json::json!({
             "inline_keyboard": [[{"text":"Review sticker","callback_data":"sticker:1"}]]
-        }))
+        })
     );
 
     Ok(())
@@ -712,6 +727,182 @@ async fn app_reply_text_uses_join_request_user_chat_id() -> Result<(), DynError>
     assert_eq!(sent.message_id.0, 8);
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_quotes_source_message() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":9,"date":1710000002,"chat":{"id":-10010,"type":"supergroup","title":"mods"},"text":"quoted"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"chat_id\":-10010",
+            "\"text\":\"quoted\"",
+            "\"reply_parameters\":{\"message_id\":55",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 44,
+        "message": {
+            "message_id": 55,
+            "date": 1710000001,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "/start"
+        }
+    }))?;
+
+    let sent = client.app().reply(&update, "quoted")?.send().await?;
+    assert_eq!(sent.message_id.0, 9);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_supports_business_message_updates() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":10,"date":1710000003,"chat":{"id":7001,"type":"private","first_name":"customer"},"text":"business reply"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"business_connection_id\":\"business-1\"",
+            "\"chat_id\":7001",
+            "\"text\":\"business reply\"",
+            "\"reply_parameters\":{\"message_id\":77",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 46,
+        "business_message": {
+            "message_id": 77,
+            "business_connection_id": "business-1",
+            "date": 1710000002,
+            "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+            "from": {"id": 7001, "is_bot": false, "first_name": "customer"},
+            "text": "business hello"
+        }
+    }))?;
+
+    let sent = client
+        .app()
+        .reply(&update, "business reply")?
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 10);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_business_media_replies_preserve_reply_context() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendPhoto")
+            .contains_case_insensitive("\"business_connection_id\":\"business-1\"")
+            .contains_case_insensitive("\"chat_id\":7001")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":77")
+            .contains_case_insensitive("\"photo\":\"photo-file-id\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":11,"date":1710000004,"chat":{"id":7001,"type":"private","first_name":"customer"},"photo":[{"file_id":"photo_1","file_unique_id":"photo_unique_1","width":10,"height":10}]}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendSticker")
+            .contains_case_insensitive("\"business_connection_id\":\"business-1\"")
+            .contains_case_insensitive("\"chat_id\":7001")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":77")
+            .contains_case_insensitive("\"sticker\":\"sticker-file-id\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":12,"date":1710000005,"chat":{"id":7001,"type":"private","first_name":"customer"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendMediaGroup")
+            .contains_case_insensitive("\"business_connection_id\":\"business-1\"")
+            .contains_case_insensitive("\"chat_id\":7001")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":77")
+            .contains_case_insensitive("\"media\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":[{"message_id":13,"date":1710000006,"chat":{"id":7001,"type":"private","first_name":"customer"}},{"message_id":14,"date":1710000006,"chat":{"id":7001,"type":"private","first_name":"customer"}}]}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+    let base_url = server.base_url().to_owned();
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 48,
+        "business_message": {
+            "message_id": 77,
+            "business_connection_id": "business-1",
+            "date": 1710000002,
+            "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+            "from": {"id": 7001, "is_bot": false, "first_name": "customer"},
+            "text": "business hello"
+        }
+    }))?;
+
+    let photo = client
+        .app()
+        .reply_photo(&update, "photo-file-id")?
+        .send()
+        .await?;
+    assert_eq!(photo.message_id.0, 11);
+
+    let sticker = client
+        .app()
+        .reply_sticker(&update, "sticker-file-id")?
+        .send()
+        .await?;
+    assert_eq!(sticker.message_id.0, 12);
+
+    let album = client
+        .app()
+        .reply_media_group(
+            &update,
+            [
+                InputMediaPhoto::new("media-photo-1"),
+                InputMediaPhoto::new("media-photo-2"),
+            ],
+        )?
+        .send()
+        .await?;
+    assert_eq!(album.len(), 2);
+    assert_eq!(album[0].message_id.0, 13);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_rejects_guest_message_updates() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 47,
+        "guest_message": {
+            "message_id": 78,
+            "guest_query_id": "guest-1",
+            "date": 1710000003,
+            "chat": {"id": 8001, "type": "private", "first_name": "guest"},
+            "from": {"id": 8001, "is_bot": false, "first_name": "guest"},
+            "text": "guest hello"
+        }
+    }))?;
+
+    assert!(matches!(
+        client.app().reply(&update, "guest reply"),
+        Err(Error::InvalidRequest { reason }) if reason.contains("answerGuestQuery")
+    ));
+
     Ok(())
 }
 
@@ -1393,9 +1584,34 @@ async fn send_photo_upload_multipart_success() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let file = UploadFile::from_bytes("image.jpg", b"binary-photo-data".to_vec())?;
-    let request = SendPhotoRequest::new(1_i64, "ignored-in-multipart");
+    let request = SendPhotoRequest::for_upload(1_i64);
     let message = client.messages().send_photo_upload(&request, &file).await?;
     assert_eq!(message.message_id.0, 100);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_chat_photo_upload_multipart_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":true}"#;
+    const CHECKS: [&str; 4] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"photo\"; filename=\"chat-photo.jpg\"",
+        "binary-chat-photo-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/setChatPhoto", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = SetChatPhotoRequest::new(1_i64);
+    let file = UploadFile::from_bytes("chat-photo.jpg", b"binary-chat-photo-data".to_vec())?;
+    let ok = client
+        .chats()
+        .set_chat_photo_upload(&request, &file)
+        .await?;
+    assert!(ok);
 
     join_server(handle)?;
     Ok(())
@@ -1418,7 +1634,7 @@ async fn app_photo_builder_send_upload_success() -> Result<(), DynError> {
     let file = UploadFile::from_bytes("builder-image.jpg", b"binary-builder-photo-data".to_vec())?;
     let message = client
         .app()
-        .photo(1_i64, "ignored-in-multipart")
+        .photo_upload(1_i64)
         .caption("builder upload")
         .send_upload(&file)
         .await?;
@@ -1445,11 +1661,93 @@ async fn app_audio_builder_send_upload_success() -> Result<(), DynError> {
     let file = UploadFile::from_bytes("builder-audio.mp3", b"binary-builder-audio-data".to_vec())?;
     let message = client
         .app()
-        .audio(1_i64, "ignored-in-multipart")
+        .audio_upload(1_i64)
         .caption("builder audio upload")
         .send_upload(&file)
         .await?;
     assert_eq!(message.message_id.0, 103);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_document_upload_with_thumbnail_multipart_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":104,"date":1710000012,"chat":{"id":1,"type":"private"},"document":{"file_id":"doc_1","file_unique_id":"doc_unique_1"}}}"#;
+    const CHECKS: [&str; 8] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"thumbnail\"",
+        "attach://thumb0",
+        "name=\"document\"; filename=\"report.pdf\"",
+        "binary-document-data",
+        "name=\"thumb0\"; filename=\"report-thumb.jpg\"",
+        "binary-thumbnail-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendDocument", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let document = UploadFile::from_bytes("report.pdf", b"binary-document-data".to_vec())?;
+    let thumbnail = UploadPart::from_bytes(
+        "thumb0",
+        "report-thumb.jpg",
+        b"binary-thumbnail-data".to_vec(),
+    )?;
+    let mut request = SendDocumentRequest::for_upload(1_i64);
+    request.thumbnail = Some(thumbnail.attach_uri());
+    let message = client
+        .messages()
+        .send_document_upload_parts(&request, &document, &[thumbnail])
+        .await?;
+    assert_eq!(message.message_id.0, 104);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn send_media_group_upload_multipart_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":[{"message_id":104,"date":1710000012,"chat":{"id":1,"type":"private"},"photo":[{"file_id":"photo_1","file_unique_id":"photo_unique_1","width":10,"height":10}]},{"message_id":105,"date":1710000013,"chat":{"id":1,"type":"private"},"video":{"file_id":"video_1","file_unique_id":"video_unique_1","width":640,"height":480,"duration":5}}]}"#;
+    const CHECKS: [&str; 8] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"media\"",
+        "attach://photo0",
+        "attach://video0",
+        "name=\"photo0\"; filename=\"album-photo.jpg\"",
+        "name=\"video0\"; filename=\"album-video.mp4\"",
+        "binary-album-video-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendMediaGroup", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let photo_part = UploadPart::from_bytes(
+        "photo0",
+        "album-photo.jpg",
+        b"binary-album-photo-data".to_vec(),
+    )?;
+    let video_part = UploadPart::from_bytes(
+        "video0",
+        "album-video.mp4",
+        b"binary-album-video-data".to_vec(),
+    )?;
+    let request = SendMediaGroupRequest::new(
+        1_i64,
+        vec![
+            InputMediaPhoto::new(photo_part.attach_uri())
+                .caption("photo item")
+                .into(),
+            InputMediaVideo::new(video_part.attach_uri()).into(),
+        ],
+    )?;
+    let messages = client
+        .messages()
+        .send_media_group_upload(&request, &[photo_part, video_part])
+        .await?;
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].message_id.0, 104);
 
     join_server(handle)?;
     Ok(())
@@ -1491,7 +1789,7 @@ async fn answer_web_app_query_typed_success() -> Result<(), DynError> {
         "input_message_content": {
             "message_text": "Mini App accepted"
         }
-    }));
+    }))?;
     let request = AdvancedAnswerWebAppQueryRequest::new("query-1", result);
     let sent = client
         .advanced()
@@ -1562,13 +1860,43 @@ async fn send_sticker_upload_multipart_success() -> Result<(), DynError> {
         spawn_server_with_checks("/bot123:abc/sendSticker", 200, response, &CHECKS)?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
-    let request = SendStickerRequest::new(1_i64, "ignored-in-multipart");
+    let request = SendStickerRequest::for_upload(1_i64);
     let file = UploadFile::from_bytes("sticker.webp", b"binary-sticker-data".to_vec())?;
     let message = client
         .stickers()
         .send_sticker_upload(&request, &file)
         .await?;
     assert_eq!(message.message_id.0, 101);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_sticker_file_upload_multipart_success() -> Result<(), DynError> {
+    let response =
+        r#"{"ok":true,"result":{"file_id":"sticker_file","file_unique_id":"sticker_unique"}}"#;
+    const CHECKS: [&str; 5] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"user_id\"",
+        "name=\"sticker_format\"",
+        "name=\"sticker\"; filename=\"upload-sticker.webp\"",
+        "binary-upload-sticker-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/uploadStickerFile", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = UploadStickerFileRequest::new(1.into(), StickerFormat::Static);
+    let file = UploadFile::from_bytes(
+        "upload-sticker.webp",
+        b"binary-upload-sticker-data".to_vec(),
+    )?;
+    let uploaded = client
+        .stickers()
+        .upload_sticker_file_upload(&request, &file)
+        .await?;
+    assert_eq!(uploaded.file_id, "sticker_file");
 
     join_server(handle)?;
     Ok(())

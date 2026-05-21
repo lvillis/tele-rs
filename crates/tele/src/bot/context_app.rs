@@ -59,7 +59,7 @@ impl ContextAppApi {
         self.client.app().text(chat_id, text)
     }
 
-    /// Starts a text-send builder using the canonical reply chat derived from an update.
+    /// Starts a text-send builder using the update reply target and quoting its source message when present.
     pub fn reply(
         &self,
         update: &Update,
@@ -77,13 +77,23 @@ impl ContextAppApi {
         self.client.app().photo(chat_id, photo)
     }
 
-    /// Starts a photo-send builder using the canonical reply chat derived from an update.
+    /// Starts a photo-upload builder for a target chat.
+    pub fn photo_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::PhotoSendBuilder {
+        self.client.app().photo_upload(chat_id)
+    }
+
+    /// Starts a photo-send builder using the update reply target and quoting its source message when present.
     pub fn reply_photo(
         &self,
         update: &Update,
         photo: impl Into<String>,
     ) -> Result<crate::client::PhotoSendBuilder> {
         self.client.app().reply_photo(update, photo)
+    }
+
+    /// Starts a photo-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_photo_upload(&self, update: &Update) -> Result<crate::client::PhotoSendBuilder> {
+        self.client.app().reply_photo_upload(update)
     }
 
     /// Starts a document-send builder for a target chat.
@@ -95,13 +105,29 @@ impl ContextAppApi {
         self.client.app().document(chat_id, document)
     }
 
-    /// Starts a document-send builder using the canonical reply chat derived from an update.
+    /// Starts a document-upload builder for a target chat.
+    pub fn document_upload(
+        &self,
+        chat_id: impl Into<ChatId>,
+    ) -> crate::client::DocumentSendBuilder {
+        self.client.app().document_upload(chat_id)
+    }
+
+    /// Starts a document-send builder using the update reply target and quoting its source message when present.
     pub fn reply_document(
         &self,
         update: &Update,
         document: impl Into<String>,
     ) -> Result<crate::client::DocumentSendBuilder> {
         self.client.app().reply_document(update, document)
+    }
+
+    /// Starts a document-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_document_upload(
+        &self,
+        update: &Update,
+    ) -> Result<crate::client::DocumentSendBuilder> {
+        self.client.app().reply_document_upload(update)
     }
 
     /// Starts a video-send builder for a target chat.
@@ -113,13 +139,23 @@ impl ContextAppApi {
         self.client.app().video(chat_id, video)
     }
 
-    /// Starts a video-send builder using the canonical reply chat derived from an update.
+    /// Starts a video-upload builder for a target chat.
+    pub fn video_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VideoSendBuilder {
+        self.client.app().video_upload(chat_id)
+    }
+
+    /// Starts a video-send builder using the update reply target and quoting its source message when present.
     pub fn reply_video(
         &self,
         update: &Update,
         video: impl Into<String>,
     ) -> Result<crate::client::VideoSendBuilder> {
         self.client.app().reply_video(update, video)
+    }
+
+    /// Starts a video-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_video_upload(&self, update: &Update) -> Result<crate::client::VideoSendBuilder> {
+        self.client.app().reply_video_upload(update)
     }
 
     /// Starts an audio-send builder for a target chat.
@@ -131,13 +167,23 @@ impl ContextAppApi {
         self.client.app().audio(chat_id, audio)
     }
 
-    /// Starts an audio-send builder using the canonical reply chat derived from an update.
+    /// Starts an audio-upload builder for a target chat.
+    pub fn audio_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::AudioSendBuilder {
+        self.client.app().audio_upload(chat_id)
+    }
+
+    /// Starts an audio-send builder using the update reply target and quoting its source message when present.
     pub fn reply_audio(
         &self,
         update: &Update,
         audio: impl Into<String>,
     ) -> Result<crate::client::AudioSendBuilder> {
         self.client.app().reply_audio(update, audio)
+    }
+
+    /// Starts an audio-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_audio_upload(&self, update: &Update) -> Result<crate::client::AudioSendBuilder> {
+        self.client.app().reply_audio_upload(update)
     }
 
     /// Starts an animation-send builder for a target chat.
@@ -149,13 +195,29 @@ impl ContextAppApi {
         self.client.app().animation(chat_id, animation)
     }
 
-    /// Starts an animation-send builder using the canonical reply chat derived from an update.
+    /// Starts an animation-upload builder for a target chat.
+    pub fn animation_upload(
+        &self,
+        chat_id: impl Into<ChatId>,
+    ) -> crate::client::AnimationSendBuilder {
+        self.client.app().animation_upload(chat_id)
+    }
+
+    /// Starts an animation-send builder using the update reply target and quoting its source message when present.
     pub fn reply_animation(
         &self,
         update: &Update,
         animation: impl Into<String>,
     ) -> Result<crate::client::AnimationSendBuilder> {
         self.client.app().reply_animation(update, animation)
+    }
+
+    /// Starts an animation-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_animation_upload(
+        &self,
+        update: &Update,
+    ) -> Result<crate::client::AnimationSendBuilder> {
+        self.client.app().reply_animation_upload(update)
     }
 
     /// Starts a voice-send builder for a target chat.
@@ -167,13 +229,23 @@ impl ContextAppApi {
         self.client.app().voice(chat_id, voice)
     }
 
-    /// Starts a voice-send builder using the canonical reply chat derived from an update.
+    /// Starts a voice-upload builder for a target chat.
+    pub fn voice_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VoiceSendBuilder {
+        self.client.app().voice_upload(chat_id)
+    }
+
+    /// Starts a voice-send builder using the update reply target and quoting its source message when present.
     pub fn reply_voice(
         &self,
         update: &Update,
         voice: impl Into<String>,
     ) -> Result<crate::client::VoiceSendBuilder> {
         self.client.app().reply_voice(update, voice)
+    }
+
+    /// Starts a voice-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_voice_upload(&self, update: &Update) -> Result<crate::client::VoiceSendBuilder> {
+        self.client.app().reply_voice_upload(update)
     }
 
     /// Starts a sticker-send builder for a target chat.
@@ -185,13 +257,26 @@ impl ContextAppApi {
         self.client.app().sticker(chat_id, sticker)
     }
 
-    /// Starts a sticker-send builder using the canonical reply chat derived from an update.
+    /// Starts a sticker-upload builder for a target chat.
+    pub fn sticker_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::StickerSendBuilder {
+        self.client.app().sticker_upload(chat_id)
+    }
+
+    /// Starts a sticker-send builder using the update reply target and quoting its source message when present.
     pub fn reply_sticker(
         &self,
         update: &Update,
         sticker: impl Into<String>,
     ) -> Result<crate::client::StickerSendBuilder> {
         self.client.app().reply_sticker(update, sticker)
+    }
+
+    /// Starts a sticker-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_sticker_upload(
+        &self,
+        update: &Update,
+    ) -> Result<crate::client::StickerSendBuilder> {
+        self.client.app().reply_sticker_upload(update)
     }
 
     /// Starts a media-group builder for a target chat.
@@ -207,7 +292,7 @@ impl ContextAppApi {
         self.client.app().media_group(chat_id, media)
     }
 
-    /// Starts a media-group builder using the canonical reply chat derived from an update.
+    /// Starts a media-group builder using the update reply target and quoting its source message when present.
     pub fn reply_media_group<I, M>(
         &self,
         update: &Update,

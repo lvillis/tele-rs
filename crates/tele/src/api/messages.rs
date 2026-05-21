@@ -8,12 +8,23 @@ use crate::types::message::{
     SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
     SendVideoRequest, SendVoiceRequest, StopMessageLiveLocationRequest, StopPollRequest,
 };
-use crate::types::upload::UploadFile;
+use crate::types::upload::{UploadFile, UploadPart};
 
 #[cfg(feature = "_blocking")]
 use crate::BlockingClient;
 #[cfg(feature = "_async")]
 use crate::Client;
+
+fn upload_parts(
+    primary_field_name: &'static str,
+    file: &UploadFile,
+    extra_files: &[UploadPart],
+) -> Result<Vec<UploadPart>> {
+    let mut files = Vec::with_capacity(extra_files.len() + 1);
+    files.push(UploadPart::new(primary_field_name, file.clone())?);
+    files.extend_from_slice(extra_files);
+    Ok(files)
+}
 
 /// Message related methods.
 #[cfg(feature = "_async")]
@@ -36,11 +47,13 @@ impl MessagesService {
 
     /// Calls `forwardMessage`.
     pub async fn forward_message(&self, request: &ForwardMessageRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("forwardMessage", request).await
     }
 
     /// Calls `copyMessage`.
     pub async fn copy_message(&self, request: &CopyMessageRequest) -> Result<MessageIdObject> {
+        request.validate()?;
         self.client.call_method("copyMessage", request).await
     }
 
@@ -60,13 +73,12 @@ impl MessagesService {
     }
 
     /// Calls `sendPhoto` using multipart upload for local bytes.
-    /// `request.photo` is ignored; file content is taken from `file`.
     pub async fn send_photo_upload(
         &self,
         request: &SendPhotoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendPhoto", request, "photo", file)
             .await
@@ -79,15 +91,28 @@ impl MessagesService {
     }
 
     /// Calls `sendAudio` using multipart upload for local bytes.
-    /// `request.audio` is ignored; file content is taken from `file`.
     pub async fn send_audio_upload(
         &self,
         request: &SendAudioRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendAudio", request, "audio", file)
+            .await
+    }
+
+    /// Calls `sendAudio` using multipart upload with additional `attach://` file parts.
+    pub async fn send_audio_upload_parts(
+        &self,
+        request: &SendAudioRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("audio", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendAudio", request, &["audio"], &files)
             .await
     }
 
@@ -98,15 +123,28 @@ impl MessagesService {
     }
 
     /// Calls `sendDocument` using multipart upload for local bytes.
-    /// `request.document` is ignored; file content is taken from `file`.
     pub async fn send_document_upload(
         &self,
         request: &SendDocumentRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendDocument", request, "document", file)
+            .await
+    }
+
+    /// Calls `sendDocument` using multipart upload with additional `attach://` file parts.
+    pub async fn send_document_upload_parts(
+        &self,
+        request: &SendDocumentRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("document", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendDocument", request, &["document"], &files)
             .await
     }
 
@@ -117,15 +155,28 @@ impl MessagesService {
     }
 
     /// Calls `sendVideo` using multipart upload for local bytes.
-    /// `request.video` is ignored; file content is taken from `file`.
     pub async fn send_video_upload(
         &self,
         request: &SendVideoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendVideo", request, "video", file)
+            .await
+    }
+
+    /// Calls `sendVideo` using multipart upload with additional `attach://` file parts.
+    pub async fn send_video_upload_parts(
+        &self,
+        request: &SendVideoRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("video", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendVideo", request, &["video"], &files)
             .await
     }
 
@@ -136,15 +187,28 @@ impl MessagesService {
     }
 
     /// Calls `sendAnimation` using multipart upload for local bytes.
-    /// `request.animation` is ignored; file content is taken from `file`.
     pub async fn send_animation_upload(
         &self,
         request: &SendAnimationRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendAnimation", request, "animation", file)
+            .await
+    }
+
+    /// Calls `sendAnimation` using multipart upload with additional `attach://` file parts.
+    pub async fn send_animation_upload_parts(
+        &self,
+        request: &SendAnimationRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("animation", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendAnimation", request, &["animation"], &files)
             .await
     }
 
@@ -155,13 +219,12 @@ impl MessagesService {
     }
 
     /// Calls `sendVoice` using multipart upload for local bytes.
-    /// `request.voice` is ignored; file content is taken from `file`.
     pub async fn send_voice_upload(
         &self,
         request: &SendVoiceRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendVoice", request, "voice", file)
             .await
@@ -174,15 +237,28 @@ impl MessagesService {
     }
 
     /// Calls `sendVideoNote` using multipart upload for local bytes.
-    /// `request.video_note` is ignored; file content is taken from `file`.
     pub async fn send_video_note_upload(
         &self,
         request: &SendVideoNoteRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendVideoNote", request, "video_note", file)
+            .await
+    }
+
+    /// Calls `sendVideoNote` using multipart upload with additional `attach://` file parts.
+    pub async fn send_video_note_upload_parts(
+        &self,
+        request: &SendVideoNoteRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("video_note", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendVideoNote", request, &["video_note"], &files)
             .await
     }
 
@@ -190,6 +266,18 @@ impl MessagesService {
     pub async fn send_media_group(&self, request: &SendMediaGroupRequest) -> Result<Vec<Message>> {
         request.validate()?;
         self.client.call_method("sendMediaGroup", request).await
+    }
+
+    /// Calls `sendMediaGroup` using multipart upload for local media files.
+    pub async fn send_media_group_upload(
+        &self,
+        request: &SendMediaGroupRequest,
+        files: &[UploadPart],
+    ) -> Result<Vec<Message>> {
+        request.validate_upload(files)?;
+        self.client
+            .call_method_multipart_files("sendMediaGroup", request, &[], files)
+            .await
     }
 
     /// Calls `sendLocation`.
@@ -218,16 +306,19 @@ impl MessagesService {
 
     /// Calls `stopPoll`.
     pub async fn stop_poll(&self, request: &StopPollRequest) -> Result<Poll> {
+        request.validate()?;
         self.client.call_method("stopPoll", request).await
     }
 
     /// Calls `sendDice`.
     pub async fn send_dice(&self, request: &SendDiceRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendDice", request).await
     }
 
     /// Calls `sendChatAction`.
     pub async fn send_chat_action(&self, request: &SendChatActionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("sendChatAction", request).await
     }
 
@@ -284,6 +375,7 @@ impl MessagesService {
 
     /// Calls `deleteMessage`.
     pub async fn delete_message(&self, request: &DeleteMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMessage", request).await
     }
 
@@ -315,11 +407,13 @@ impl BlockingMessagesService {
 
     /// Calls `forwardMessage`.
     pub fn forward_message(&self, request: &ForwardMessageRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("forwardMessage", request)
     }
 
     /// Calls `copyMessage`.
     pub fn copy_message(&self, request: &CopyMessageRequest) -> Result<MessageIdObject> {
+        request.validate()?;
         self.client.call_method("copyMessage", request)
     }
 
@@ -336,13 +430,12 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendPhoto` using multipart upload for local bytes.
-    /// `request.photo` is ignored; file content is taken from `file`.
     pub fn send_photo_upload(
         &self,
         request: &SendPhotoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendPhoto", request, "photo", file)
     }
@@ -354,15 +447,27 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendAudio` using multipart upload for local bytes.
-    /// `request.audio` is ignored; file content is taken from `file`.
     pub fn send_audio_upload(
         &self,
         request: &SendAudioRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendAudio", request, "audio", file)
+    }
+
+    /// Calls `sendAudio` using multipart upload with additional `attach://` file parts.
+    pub fn send_audio_upload_parts(
+        &self,
+        request: &SendAudioRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("audio", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendAudio", request, &["audio"], &files)
     }
 
     /// Calls `sendDocument`.
@@ -372,15 +477,27 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendDocument` using multipart upload for local bytes.
-    /// `request.document` is ignored; file content is taken from `file`.
     pub fn send_document_upload(
         &self,
         request: &SendDocumentRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendDocument", request, "document", file)
+    }
+
+    /// Calls `sendDocument` using multipart upload with additional `attach://` file parts.
+    pub fn send_document_upload_parts(
+        &self,
+        request: &SendDocumentRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("document", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendDocument", request, &["document"], &files)
     }
 
     /// Calls `sendVideo`.
@@ -390,15 +507,27 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendVideo` using multipart upload for local bytes.
-    /// `request.video` is ignored; file content is taken from `file`.
     pub fn send_video_upload(
         &self,
         request: &SendVideoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendVideo", request, "video", file)
+    }
+
+    /// Calls `sendVideo` using multipart upload with additional `attach://` file parts.
+    pub fn send_video_upload_parts(
+        &self,
+        request: &SendVideoRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("video", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendVideo", request, &["video"], &files)
     }
 
     /// Calls `sendAnimation`.
@@ -408,15 +537,27 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendAnimation` using multipart upload for local bytes.
-    /// `request.animation` is ignored; file content is taken from `file`.
     pub fn send_animation_upload(
         &self,
         request: &SendAnimationRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendAnimation", request, "animation", file)
+    }
+
+    /// Calls `sendAnimation` using multipart upload with additional `attach://` file parts.
+    pub fn send_animation_upload_parts(
+        &self,
+        request: &SendAnimationRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("animation", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendAnimation", request, &["animation"], &files)
     }
 
     /// Calls `sendVoice`.
@@ -426,13 +567,12 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendVoice` using multipart upload for local bytes.
-    /// `request.voice` is ignored; file content is taken from `file`.
     pub fn send_voice_upload(
         &self,
         request: &SendVoiceRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("sendVoice", request, "voice", file)
     }
@@ -444,21 +584,44 @@ impl BlockingMessagesService {
     }
 
     /// Calls `sendVideoNote` using multipart upload for local bytes.
-    /// `request.video_note` is ignored; file content is taken from `file`.
     pub fn send_video_note_upload(
         &self,
         request: &SendVideoNoteRequest,
         file: &UploadFile,
     ) -> Result<Message> {
-        request.validate()?;
+        request.validate_upload_parts(&[])?;
         self.client
             .call_method_multipart("sendVideoNote", request, "video_note", file)
+    }
+
+    /// Calls `sendVideoNote` using multipart upload with additional `attach://` file parts.
+    pub fn send_video_note_upload_parts(
+        &self,
+        request: &SendVideoNoteRequest,
+        file: &UploadFile,
+        extra_files: &[UploadPart],
+    ) -> Result<Message> {
+        request.validate_upload_parts(extra_files)?;
+        let files = upload_parts("video_note", file, extra_files)?;
+        self.client
+            .call_method_multipart_files("sendVideoNote", request, &["video_note"], &files)
     }
 
     /// Calls `sendMediaGroup`.
     pub fn send_media_group(&self, request: &SendMediaGroupRequest) -> Result<Vec<Message>> {
         request.validate()?;
         self.client.call_method("sendMediaGroup", request)
+    }
+
+    /// Calls `sendMediaGroup` using multipart upload for local media files.
+    pub fn send_media_group_upload(
+        &self,
+        request: &SendMediaGroupRequest,
+        files: &[UploadPart],
+    ) -> Result<Vec<Message>> {
+        request.validate_upload(files)?;
+        self.client
+            .call_method_multipart_files("sendMediaGroup", request, &[], files)
     }
 
     /// Calls `sendLocation`.
@@ -487,16 +650,19 @@ impl BlockingMessagesService {
 
     /// Calls `stopPoll`.
     pub fn stop_poll(&self, request: &StopPollRequest) -> Result<Poll> {
+        request.validate()?;
         self.client.call_method("stopPoll", request)
     }
 
     /// Calls `sendDice`.
     pub fn send_dice(&self, request: &SendDiceRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendDice", request)
     }
 
     /// Calls `sendChatAction`.
     pub fn send_chat_action(&self, request: &SendChatActionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("sendChatAction", request)
     }
 
@@ -544,6 +710,7 @@ impl BlockingMessagesService {
 
     /// Calls `deleteMessage`.
     pub fn delete_message(&self, request: &DeleteMessageRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMessage", request)
     }
 

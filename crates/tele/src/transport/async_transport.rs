@@ -4,9 +4,10 @@ use serde::de::DeserializeOwned;
 
 use crate::client::RequestDefaults;
 use crate::transport::{
-    PreparedTelegramCall, build_multipart_payload, build_transport_client, multipart_header_values,
+    PreparedTelegramCall, build_multipart_payload, build_multipart_payload_many,
+    build_transport_client, multipart_header_values,
 };
-use crate::types::upload::UploadFile;
+use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 pub(crate) struct AsyncTransport {
@@ -64,6 +65,37 @@ impl AsyncTransport {
     {
         let call = PreparedTelegramCall::new(method, token)?;
         let payload = build_multipart_payload(fields, file_field_name, file)?;
+        let (content_type, content_length) = multipart_header_values(&payload)?;
+
+        let request = self.configure_request(self.client.post(call.path()), defaults);
+        let response = request
+            .header(CONTENT_TYPE, content_type)
+            .header(CONTENT_LENGTH, content_length)
+            .body_stream(payload.into_stream())
+            .send()
+            .await
+            .map_err(|source| call.map_transport_error(source))?;
+
+        call.parse_response(response, defaults)
+    }
+
+    pub(crate) async fn execute_multipart_files<R>(
+        &self,
+        method: &str,
+        token: &str,
+        fields: &[(String, String)],
+        files: &[UploadPart],
+        defaults: &RequestDefaults,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
+        let call = PreparedTelegramCall::new(method, token)?;
+        let files = files
+            .iter()
+            .map(|part| (part.field_name(), part.file()))
+            .collect::<Vec<_>>();
+        let payload = build_multipart_payload_many(fields, &files)?;
         let (content_type, content_length) = multipart_header_values(&payload)?;
 
         let request = self.configure_request(self.client.post(call.path()), defaults);

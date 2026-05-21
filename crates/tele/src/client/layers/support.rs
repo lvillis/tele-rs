@@ -7,13 +7,6 @@ pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
-pub(crate) fn serialize_request_value<T>(value: T) -> Result<serde_json::Value>
-where
-    T: Serialize,
-{
-    serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })
-}
-
 pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
     let Some(language_code) = language_code else {
         return Ok(None);
@@ -64,6 +57,18 @@ pub(crate) fn update_chat_id(update: &Update) -> Option<i64> {
     if let Some(message) = update.edited_channel_post.as_deref() {
         return Some(message.chat.id);
     }
+    if let Some(message) = update.business_message.as_deref() {
+        return Some(message.chat.id);
+    }
+    if let Some(message) = update.edited_business_message.as_deref() {
+        return Some(message.chat.id);
+    }
+    if let Some(message) = update.guest_message.as_deref() {
+        return Some(message.chat.id);
+    }
+    if let Some(deleted) = update.deleted_business_messages.as_ref() {
+        return Some(deleted.chat.id);
+    }
     if let Some(request) = update.chat_join_request.as_ref() {
         return Some(request.chat.id);
     }
@@ -94,6 +99,15 @@ pub(crate) fn update_message(update: &Update) -> Option<&Message> {
     if let Some(message) = update.edited_channel_post.as_deref() {
         return Some(message);
     }
+    if let Some(message) = update.business_message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.edited_business_message.as_deref() {
+        return Some(message);
+    }
+    if let Some(message) = update.guest_message.as_deref() {
+        return Some(message);
+    }
 
     update
         .callback_query
@@ -102,12 +116,26 @@ pub(crate) fn update_message(update: &Update) -> Option<&Message> {
 }
 
 pub(crate) fn reply_chat_id(update: &Update) -> Result<i64> {
+    if update.guest_message.is_some() {
+        return Err(invalid_request(
+            "guest message replies require answerGuestQuery; ordinary sendMessage cannot target a guest query",
+        ));
+    }
+
     if let Some(request) = update.chat_join_request.as_ref() {
         return Ok(request.user_chat_id);
     }
 
     update_chat_id(update)
         .ok_or_else(|| invalid_request("update does not contain a chat id for reply"))
+}
+
+pub(crate) fn reply_parameters(update: &Update) -> Option<ReplyParameters> {
+    update_message(update).map(|message| ReplyParameters::new(message.message_id))
+}
+
+pub(crate) fn reply_business_connection_id(update: &Update) -> Option<String> {
+    update_message(update).and_then(|message| message.business_connection_id.clone())
 }
 
 pub(crate) fn callback_query_id(update: &Update) -> Option<String> {

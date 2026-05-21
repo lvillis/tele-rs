@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::chat::{ChatInviteLink, ChatMember};
+use crate::types::common::MessageId;
 use crate::types::message::{Chat, Location, Message, Poll};
 use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton, WebAppData};
 use crate::{Error, Result};
@@ -22,6 +23,10 @@ pub enum UpdateKind {
     EditedMessage,
     ChannelPost,
     EditedChannelPost,
+    BusinessMessage,
+    EditedBusinessMessage,
+    DeletedBusinessMessages,
+    GuestMessage,
     CallbackQuery,
     InlineQuery,
     ChosenInlineResult,
@@ -33,11 +38,15 @@ pub enum UpdateKind {
     Unknown,
 }
 
-const KNOWN_UPDATE_KINDS: [UpdateKind; 12] = [
+const KNOWN_UPDATE_KINDS: [UpdateKind; 16] = [
     UpdateKind::Message,
     UpdateKind::EditedMessage,
     UpdateKind::ChannelPost,
     UpdateKind::EditedChannelPost,
+    UpdateKind::BusinessMessage,
+    UpdateKind::EditedBusinessMessage,
+    UpdateKind::DeletedBusinessMessages,
+    UpdateKind::GuestMessage,
     UpdateKind::CallbackQuery,
     UpdateKind::InlineQuery,
     UpdateKind::ChosenInlineResult,
@@ -137,6 +146,27 @@ impl ChatJoinRequest {
     }
 }
 
+/// Telegram business-message deletion update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct BusinessMessagesDeleted {
+    pub business_connection_id: String,
+    pub chat: Chat,
+    pub message_ids: Vec<MessageId>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl BusinessMessagesDeleted {
+    pub fn chat_id(&self) -> i64 {
+        self.chat.id
+    }
+
+    pub fn message_ids(&self) -> &[MessageId] {
+        self.message_ids.as_slice()
+    }
+}
+
 /// Telegram chat member update payload.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -200,6 +230,14 @@ pub struct Update {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_channel_post: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_message: Option<Box<Message>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_business_message: Option<Box<Message>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_business_messages: Option<BusinessMessagesDeleted>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_message: Option<Box<Message>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback_query: Option<CallbackQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_query: Option<InlineQuery>,
@@ -225,6 +263,10 @@ impl Update {
             || self.edited_message.is_some()
             || self.channel_post.is_some()
             || self.edited_channel_post.is_some()
+            || self.business_message.is_some()
+            || self.edited_business_message.is_some()
+            || self.deleted_business_messages.is_some()
+            || self.guest_message.is_some()
             || self.callback_query.is_some()
             || self.inline_query.is_some()
             || self.chosen_inline_result.is_some()
@@ -273,6 +315,10 @@ impl Update {
             UpdateKind::EditedMessage => self.edited_message.is_some(),
             UpdateKind::ChannelPost => self.channel_post.is_some(),
             UpdateKind::EditedChannelPost => self.edited_channel_post.is_some(),
+            UpdateKind::BusinessMessage => self.business_message.is_some(),
+            UpdateKind::EditedBusinessMessage => self.edited_business_message.is_some(),
+            UpdateKind::DeletedBusinessMessages => self.deleted_business_messages.is_some(),
+            UpdateKind::GuestMessage => self.guest_message.is_some(),
             UpdateKind::CallbackQuery => self.callback_query.is_some(),
             UpdateKind::InlineQuery => self.inline_query.is_some(),
             UpdateKind::ChosenInlineResult => self.chosen_inline_result.is_some(),
@@ -299,6 +345,15 @@ impl Update {
         if let Some(message) = self.edited_channel_post.as_deref() {
             return message.web_app_data();
         }
+        if let Some(message) = self.business_message.as_deref() {
+            return message.web_app_data();
+        }
+        if let Some(message) = self.edited_business_message.as_deref() {
+            return message.web_app_data();
+        }
+        if let Some(message) = self.guest_message.as_deref() {
+            return message.web_app_data();
+        }
 
         self.callback_query
             .as_ref()
@@ -308,6 +363,10 @@ impl Update {
 
     pub fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
         self.chat_join_request.as_ref()
+    }
+
+    pub fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
+        self.deleted_business_messages.as_ref()
     }
 
     pub fn my_chat_member(&self) -> Option<&ChatMemberUpdated> {
@@ -456,6 +515,9 @@ impl AnswerInlineQueryRequest {
                 "answerInlineQuery accepts at most {MAX_INLINE_QUERY_RESULTS} results"
             )));
         }
+        for result in &self.results {
+            result.validate()?;
+        }
         if let Some(next_offset) = self.next_offset.as_deref() {
             if next_offset.len() > MAX_INLINE_NEXT_OFFSET_BYTES {
                 return Err(invalid_request(format!(
@@ -467,6 +529,9 @@ impl AnswerInlineQueryRequest {
                     "next_offset must not contain control characters",
                 ));
             }
+        }
+        if let Some(button) = self.button.as_ref() {
+            button.validate()?;
         }
 
         Ok(())
@@ -670,6 +735,47 @@ mod tests {
                     "text": "post"
                 }
             }),
+            UpdateKind::BusinessMessage => json!({
+                "update_id": 113,
+                "business_message": {
+                    "message_id": 20,
+                    "business_connection_id": "business-1",
+                    "date": 1700000113,
+                    "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+                    "from": {"id": 7001, "is_bot": false, "first_name": "customer"},
+                    "text": "business hello"
+                }
+            }),
+            UpdateKind::EditedBusinessMessage => json!({
+                "update_id": 114,
+                "edited_business_message": {
+                    "message_id": 21,
+                    "business_connection_id": "business-1",
+                    "date": 1700000114,
+                    "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+                    "from": {"id": 7001, "is_bot": false, "first_name": "customer"},
+                    "text": "business edited"
+                }
+            }),
+            UpdateKind::DeletedBusinessMessages => json!({
+                "update_id": 115,
+                "deleted_business_messages": {
+                    "business_connection_id": "business-1",
+                    "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+                    "message_ids": [20, 21]
+                }
+            }),
+            UpdateKind::GuestMessage => json!({
+                "update_id": 116,
+                "guest_message": {
+                    "message_id": 22,
+                    "guest_query_id": "guest-1",
+                    "date": 1700000116,
+                    "chat": {"id": 8001, "type": "private", "first_name": "guest"},
+                    "from": {"id": 8001, "is_bot": false, "first_name": "guest"},
+                    "text": "guest hello"
+                }
+            }),
             UpdateKind::CallbackQuery => json!({
                 "update_id": 104,
                 "callback_query": {
@@ -810,6 +916,52 @@ mod tests {
     }
 
     #[test]
+    fn parses_business_and_guest_updates_as_message_like_models()
+    -> std::result::Result<(), Box<dyn StdError>> {
+        let business = update_for_kind(UpdateKind::BusinessMessage)?;
+        assert_eq!(business.kind(), UpdateKind::BusinessMessage);
+        let message = business
+            .business_message
+            .as_deref()
+            .ok_or("missing business message")?;
+        assert_eq!(message.message_id, MessageId(20));
+        assert_eq!(message.chat.id, 7001);
+        assert_eq!(
+            message.business_connection_id.as_deref(),
+            Some("business-1")
+        );
+
+        let edited = update_for_kind(UpdateKind::EditedBusinessMessage)?;
+        assert_eq!(edited.kind(), UpdateKind::EditedBusinessMessage);
+        assert_eq!(
+            edited
+                .edited_business_message
+                .as_deref()
+                .and_then(|message| message.text.as_deref()),
+            Some("business edited")
+        );
+
+        let deleted = update_for_kind(UpdateKind::DeletedBusinessMessages)?;
+        let deleted = deleted
+            .deleted_business_messages()
+            .ok_or("missing deleted business messages")?;
+        assert_eq!(deleted.business_connection_id, "business-1");
+        assert_eq!(deleted.chat_id(), 7001);
+        assert_eq!(deleted.message_ids(), &[MessageId(20), MessageId(21)]);
+
+        let guest = update_for_kind(UpdateKind::GuestMessage)?;
+        assert_eq!(guest.kind(), UpdateKind::GuestMessage);
+        let guest_message = guest
+            .guest_message
+            .as_deref()
+            .ok_or("missing guest message")?;
+        assert_eq!(guest_message.text.as_deref(), Some("guest hello"));
+        assert_eq!(guest_message.guest_query_id.as_deref(), Some("guest-1"));
+
+        Ok(())
+    }
+
+    #[test]
     fn parses_chat_member_updates_as_typed_model() -> std::result::Result<(), Box<dyn StdError>> {
         let member_update = update_for_kind(UpdateKind::ChatMember)?;
         let my_member_update = update_for_kind(UpdateKind::MyChatMember)?;
@@ -861,7 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_callback_and_inline_answers() {
+    fn validates_callback_and_inline_answers() -> Result<()> {
         let valid_callback = AnswerCallbackQueryRequest {
             callback_query_id: "callback-1".to_owned(),
             text: Some("ok".to_owned()),
@@ -884,8 +1036,10 @@ mod tests {
         ));
 
         let too_many_results = (0..=MAX_INLINE_QUERY_RESULTS)
-            .map(|index| InlineQueryResult::new(json!({"type": "article", "id": index})))
-            .collect::<Vec<_>>();
+            .map(|index| {
+                InlineQueryResult::new(json!({"type": "article", "id": index.to_string()}))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let invalid_inline = AnswerInlineQueryRequest::new("inline-1", too_many_results);
         assert!(matches!(
             invalid_inline.validate(),
@@ -898,5 +1052,14 @@ mod tests {
             invalid_offset.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        let invalid_button = AnswerInlineQueryRequest::new("inline-1", Vec::new())
+            .button(InlineQueryResultsButton::new("Open"));
+        assert!(matches!(
+            invalid_button.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
     }
 }

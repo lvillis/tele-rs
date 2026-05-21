@@ -54,6 +54,7 @@ impl GetUserProfilePhotosRequest {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
         if self
             .limit
             .is_some_and(|limit| limit == 0 || limit > MAX_USER_PROFILE_PHOTOS_LIMIT)
@@ -80,6 +81,12 @@ mod tests {
         assert!(request.validate().is_ok());
 
         request.limit = Some(0);
+        assert!(matches!(
+            request.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let request = GetUserProfilePhotosRequest::new(UserId(0));
         assert!(matches!(
             request.validate(),
             Err(Error::InvalidRequest { .. })

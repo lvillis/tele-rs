@@ -16,14 +16,208 @@ fn validate_required_string(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_required_vec(field: &str, len: usize) -> Result<()> {
-    if len == 0 {
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_non_negative_i64(field: &str, value: i64) -> Result<()> {
+    if value < 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be negative"),
+        });
+    }
+
+    Ok(())
+}
+
+trait GeneratedValidate {
+    fn validate_generated(&self) -> Result<()>;
+}
+
+impl GeneratedValidate for crate::types::common::ChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::NumericChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::UserId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::MessageId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::InputSticker {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::MaskPosition {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputChecklist {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputStoryContent {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::KeyboardButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::MenuButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::PassportElementError {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReactionType {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::StoryArea {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {
+    for value in values {
+        value.validate_generated()?;
+    }
+
+    Ok(())
+}
+
+fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> Result<()> {
+    if values.is_empty() {
         return Err(Error::InvalidRequest {
             reason: format!("{field} cannot be empty"),
         });
     }
 
+    validate_items(values)
+}
+
+fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {
+    for value in values {
+        value.validate()?;
+    }
+
     Ok(())
+}
+
+fn validate_required_message_ids(
+    field: &str,
+    values: &[crate::types::common::MessageId],
+) -> Result<()> {
+    if values.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    validate_message_ids(values)
 }
 
 /// Auto-generated request for `getMe`.
@@ -80,7 +274,15 @@ impl AdvancedRequest for AdvancedForwardMessagesRequest {
     const METHOD: &'static str = "forwardMessages";
 
     fn validate(&self) -> Result<()> {
-        validate_required_vec("message_ids", self.message_ids.len())?;
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        self.from_chat_id.validate()?;
+        validate_required_message_ids("message_ids", &self.message_ids)?;
         Ok(())
     }
 }
@@ -148,7 +350,35 @@ impl AdvancedRequest for AdvancedSendVideoNoteRequest {
     const METHOD: &'static str = "sendVideoNote";
 
     fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
         validate_required_string("video_note", &self.video_note)?;
+        if let Some(value) = self.duration {
+            validate_positive_i64("duration", value)?;
+        }
+        if let Some(value) = self.length {
+            validate_positive_i64("length", value)?;
+        }
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -170,7 +400,7 @@ pub struct AdvancedSendPaidMediaRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parse_mode: Option<String>,
+    pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_entities: Option<Vec<crate::types::message::MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,7 +452,27 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
     const METHOD: &'static str = "sendPaidMedia";
 
     fn validate(&self) -> Result<()> {
-        validate_required_vec("media", self.media.len())?;
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        validate_positive_i64("star_count", self.star_count)?;
+        validate_required_items::<crate::types::telegram::InputPaidMedia>("media", &self.media)?;
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -231,7 +481,7 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSendChecklistRequest {
     pub business_connection_id: String,
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     pub checklist: crate::types::telegram::InputChecklist,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -248,12 +498,12 @@ pub struct AdvancedSendChecklistRequest {
 impl AdvancedSendChecklistRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        chat_id: i64,
+        chat_id: impl Into<crate::types::common::NumericChatId>,
         checklist: crate::types::telegram::InputChecklist,
     ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
-            chat_id,
+            chat_id: chat_id.into(),
             checklist,
             disable_notification: None,
             protect_content: None,
@@ -269,7 +519,18 @@ impl AdvancedRequest for AdvancedSendChecklistRequest {
     const METHOD: &'static str = "sendChecklist";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.chat_id.validate()?;
+        self.checklist.validate()?;
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -277,21 +538,25 @@ impl AdvancedRequest for AdvancedSendChecklistRequest {
 /// Auto-generated request for `sendMessageDraft`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSendMessageDraftRequest {
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     pub draft_id: i64,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parse_mode: Option<String>,
+    pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<crate::types::message::MessageEntity>>,
 }
 
 impl AdvancedSendMessageDraftRequest {
-    pub fn new(chat_id: i64, draft_id: i64, text: impl Into<String>) -> Self {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::NumericChatId>,
+        draft_id: i64,
+        text: impl Into<String>,
+    ) -> Self {
         Self {
-            chat_id,
+            chat_id: chat_id.into(),
             message_thread_id: None,
             draft_id,
             text: text.into(),
@@ -306,6 +571,11 @@ impl AdvancedRequest for AdvancedSendMessageDraftRequest {
     const METHOD: &'static str = "sendMessageDraft";
 
     fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        validate_positive_i64("draft_id", self.draft_id)?;
         validate_required_string("text", &self.text)?;
         Ok(())
     }
@@ -339,6 +609,15 @@ impl AdvancedSetMessageReactionRequest {
 impl AdvancedRequest for AdvancedSetMessageReactionRequest {
     type Response = bool;
     const METHOD: &'static str = "setMessageReaction";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
+        if let Some(values) = self.reaction.as_deref() {
+            validate_items(values)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getUserProfileAudios`.
@@ -364,6 +643,17 @@ impl AdvancedGetUserProfileAudiosRequest {
 impl AdvancedRequest for AdvancedGetUserProfileAudiosRequest {
     type Response = Value;
     const METHOD: &'static str = "getUserProfileAudios";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        if let Some(value) = self.offset {
+            validate_non_negative_i64("offset", value)?;
+        }
+        if let Some(value) = self.limit {
+            validate_positive_i64("limit", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setChatMemberTag`.
@@ -391,6 +681,12 @@ impl AdvancedSetChatMemberTagRequest {
 impl AdvancedRequest for AdvancedSetChatMemberTagRequest {
     type Response = bool;
     const METHOD: &'static str = "setChatMemberTag";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `createChatSubscriptionInviteLink`.
@@ -421,6 +717,13 @@ impl AdvancedCreateChatSubscriptionInviteLinkRequest {
 impl AdvancedRequest for AdvancedCreateChatSubscriptionInviteLinkRequest {
     type Response = crate::types::chat::ChatInviteLink;
     const METHOD: &'static str = "createChatSubscriptionInviteLink";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        validate_positive_i64("subscription_period", self.subscription_period)?;
+        validate_positive_i64("subscription_price", self.subscription_price)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editChatSubscriptionInviteLink`.
@@ -450,6 +753,7 @@ impl AdvancedRequest for AdvancedEditChatSubscriptionInviteLinkRequest {
     const METHOD: &'static str = "editChatSubscriptionInviteLink";
 
     fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
         validate_required_string("invite_link", &self.invite_link)?;
         Ok(())
     }
@@ -477,6 +781,12 @@ impl AdvancedApproveChatJoinRequest {
 impl AdvancedRequest for AdvancedApproveChatJoinRequest {
     type Response = bool;
     const METHOD: &'static str = "approveChatJoinRequest";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `declineChatJoinRequest`.
@@ -501,27 +811,12 @@ impl AdvancedDeclineChatJoinRequest {
 impl AdvancedRequest for AdvancedDeclineChatJoinRequest {
     type Response = bool;
     const METHOD: &'static str = "declineChatJoinRequest";
-}
 
-/// Auto-generated request for `setChatPhoto`.
-#[derive(Clone, Debug, Serialize)]
-pub struct AdvancedSetChatPhotoRequest {
-    pub chat_id: crate::types::common::ChatId,
-    pub photo: Value,
-}
-
-impl AdvancedSetChatPhotoRequest {
-    pub fn new(chat_id: impl Into<crate::types::common::ChatId>, photo: Value) -> Self {
-        Self {
-            chat_id: chat_id.into(),
-            photo,
-        }
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        Ok(())
     }
-}
-
-impl AdvancedRequest for AdvancedSetChatPhotoRequest {
-    type Response = bool;
-    const METHOD: &'static str = "setChatPhoto";
 }
 
 /// Auto-generated request for `getUserChatBoosts`.
@@ -546,6 +841,12 @@ impl AdvancedGetUserChatBoostsRequest {
 impl AdvancedRequest for AdvancedGetUserChatBoostsRequest {
     type Response = Value;
     const METHOD: &'static str = "getUserChatBoosts";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getManagedBotToken`.
@@ -563,6 +864,11 @@ impl AdvancedGetManagedBotTokenRequest {
 impl AdvancedRequest for AdvancedGetManagedBotTokenRequest {
     type Response = String;
     const METHOD: &'static str = "getManagedBotToken";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `replaceManagedBotToken`.
@@ -580,16 +886,21 @@ impl AdvancedReplaceManagedBotTokenRequest {
 impl AdvancedRequest for AdvancedReplaceManagedBotTokenRequest {
     type Response = String;
     const METHOD: &'static str = "replaceManagedBotToken";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setMyProfilePhoto`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSetMyProfilePhotoRequest {
-    pub photo: Value,
+    pub photo: crate::types::telegram::InputProfilePhoto,
 }
 
 impl AdvancedSetMyProfilePhotoRequest {
-    pub fn new(photo: Value) -> Self {
+    pub fn new(photo: crate::types::telegram::InputProfilePhoto) -> Self {
         Self { photo }
     }
 }
@@ -597,6 +908,11 @@ impl AdvancedSetMyProfilePhotoRequest {
 impl AdvancedRequest for AdvancedSetMyProfilePhotoRequest {
     type Response = bool;
     const METHOD: &'static str = "setMyProfilePhoto";
+
+    fn validate(&self) -> Result<()> {
+        self.photo.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `removeMyProfilePhoto`.
@@ -618,7 +934,7 @@ impl AdvancedRequest for AdvancedRemoveMyProfilePhotoRequest {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AdvancedSetChatMenuButtonRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<crate::types::common::NumericChatId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_button: Option<crate::types::telegram::MenuButton>,
 }
@@ -632,13 +948,23 @@ impl AdvancedSetChatMenuButtonRequest {
 impl AdvancedRequest for AdvancedSetChatMenuButtonRequest {
     type Response = bool;
     const METHOD: &'static str = "setChatMenuButton";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.menu_button.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getChatMenuButton`.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AdvancedGetChatMenuButtonRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<crate::types::common::NumericChatId>,
 }
 
 impl AdvancedGetChatMenuButtonRequest {
@@ -650,6 +976,13 @@ impl AdvancedGetChatMenuButtonRequest {
 impl AdvancedRequest for AdvancedGetChatMenuButtonRequest {
     type Response = crate::types::telegram::MenuButton;
     const METHOD: &'static str = "getChatMenuButton";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setMyDefaultAdministratorRights`.
@@ -710,6 +1043,11 @@ impl AdvancedVerifyUserRequest {
 impl AdvancedRequest for AdvancedVerifyUserRequest {
     type Response = bool;
     const METHOD: &'static str = "verifyUser";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `verifyChat`.
@@ -732,6 +1070,11 @@ impl AdvancedVerifyChatRequest {
 impl AdvancedRequest for AdvancedVerifyChatRequest {
     type Response = bool;
     const METHOD: &'static str = "verifyChat";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `removeUserVerification`.
@@ -749,6 +1092,11 @@ impl AdvancedRemoveUserVerificationRequest {
 impl AdvancedRequest for AdvancedRemoveUserVerificationRequest {
     type Response = bool;
     const METHOD: &'static str = "removeUserVerification";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `removeChatVerification`.
@@ -768,6 +1116,11 @@ impl AdvancedRemoveChatVerificationRequest {
 impl AdvancedRequest for AdvancedRemoveChatVerificationRequest {
     type Response = bool;
     const METHOD: &'static str = "removeChatVerification";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `answerWebAppQuery`.
@@ -794,7 +1147,8 @@ impl AdvancedRequest for AdvancedAnswerWebAppQueryRequest {
     const METHOD: &'static str = "answerWebAppQuery";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("web_app_query_id", &self.web_app_query_id)?;
+        validate_string_id("web_app_query_id", &self.web_app_query_id)?;
+        self.result.validate()?;
         Ok(())
     }
 }
@@ -833,17 +1187,26 @@ impl AdvancedSavePreparedInlineMessageRequest {
 impl AdvancedRequest for AdvancedSavePreparedInlineMessageRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "savePreparedInlineMessage";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        self.result.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `savePreparedKeyboardButton`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSavePreparedKeyboardButtonRequest {
     pub user_id: crate::types::common::UserId,
-    pub button: Value,
+    pub button: crate::types::telegram::KeyboardButton,
 }
 
 impl AdvancedSavePreparedKeyboardButtonRequest {
-    pub fn new(user_id: crate::types::common::UserId, button: Value) -> Self {
+    pub fn new(
+        user_id: crate::types::common::UserId,
+        button: crate::types::telegram::KeyboardButton,
+    ) -> Self {
         Self { user_id, button }
     }
 }
@@ -851,6 +1214,12 @@ impl AdvancedSavePreparedKeyboardButtonRequest {
 impl AdvancedRequest for AdvancedSavePreparedKeyboardButtonRequest {
     type Response = Value;
     const METHOD: &'static str = "savePreparedKeyboardButton";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        self.button.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editMessageMedia`.
@@ -885,13 +1254,32 @@ impl AdvancedEditMessageMediaRequest {
 impl AdvancedRequest for AdvancedEditMessageMediaRequest {
     type Response = crate::types::message::EditMessageResult;
     const METHOD: &'static str = "editMessageMedia";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.message_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.inline_message_id.as_deref() {
+            validate_string_id("inline_message_id", value)?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editMessageChecklist`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedEditMessageChecklistRequest {
     pub business_connection_id: String,
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     pub message_id: crate::types::common::MessageId,
     pub checklist: crate::types::telegram::InputChecklist,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -901,13 +1289,13 @@ pub struct AdvancedEditMessageChecklistRequest {
 impl AdvancedEditMessageChecklistRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        chat_id: i64,
+        chat_id: impl Into<crate::types::common::NumericChatId>,
         message_id: crate::types::common::MessageId,
         checklist: crate::types::telegram::InputChecklist,
     ) -> Self {
         Self {
             business_connection_id: business_connection_id.into(),
-            chat_id,
+            chat_id: chat_id.into(),
             message_id,
             checklist,
             reply_markup: None,
@@ -920,7 +1308,13 @@ impl AdvancedRequest for AdvancedEditMessageChecklistRequest {
     const METHOD: &'static str = "editMessageChecklist";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_string_id("business_connection_id", &self.business_connection_id)?;
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
+        self.checklist.validate()?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -928,16 +1322,19 @@ impl AdvancedRequest for AdvancedEditMessageChecklistRequest {
 /// Auto-generated request for `approveSuggestedPost`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedApproveSuggestedPostRequest {
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     pub message_id: crate::types::common::MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_date: Option<i64>,
 }
 
 impl AdvancedApproveSuggestedPostRequest {
-    pub fn new(chat_id: i64, message_id: crate::types::common::MessageId) -> Self {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::NumericChatId>,
+        message_id: crate::types::common::MessageId,
+    ) -> Self {
         Self {
-            chat_id,
+            chat_id: chat_id.into(),
             message_id,
             send_date: None,
         }
@@ -947,21 +1344,33 @@ impl AdvancedApproveSuggestedPostRequest {
 impl AdvancedRequest for AdvancedApproveSuggestedPostRequest {
     type Response = bool;
     const METHOD: &'static str = "approveSuggestedPost";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
+        if let Some(value) = self.send_date {
+            validate_positive_i64("send_date", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `declineSuggestedPost`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedDeclineSuggestedPostRequest {
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     pub message_id: crate::types::common::MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
 
 impl AdvancedDeclineSuggestedPostRequest {
-    pub fn new(chat_id: i64, message_id: crate::types::common::MessageId) -> Self {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::NumericChatId>,
+        message_id: crate::types::common::MessageId,
+    ) -> Self {
         Self {
-            chat_id,
+            chat_id: chat_id.into(),
             message_id,
             comment: None,
         }
@@ -971,6 +1380,12 @@ impl AdvancedDeclineSuggestedPostRequest {
 impl AdvancedRequest for AdvancedDeclineSuggestedPostRequest {
     type Response = bool;
     const METHOD: &'static str = "declineSuggestedPost";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `sendGame`.
@@ -978,7 +1393,7 @@ impl AdvancedRequest for AdvancedDeclineSuggestedPostRequest {
 pub struct AdvancedSendGameRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_connection_id: Option<String>,
-    pub chat_id: i64,
+    pub chat_id: crate::types::common::NumericChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     pub game_short_name: String,
@@ -997,10 +1412,13 @@ pub struct AdvancedSendGameRequest {
 }
 
 impl AdvancedSendGameRequest {
-    pub fn new(chat_id: i64, game_short_name: impl Into<String>) -> Self {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::NumericChatId>,
+        game_short_name: impl Into<String>,
+    ) -> Self {
         Self {
             business_connection_id: None,
-            chat_id,
+            chat_id: chat_id.into(),
             message_thread_id: None,
             game_short_name: game_short_name.into(),
             disable_notification: None,
@@ -1018,7 +1436,23 @@ impl AdvancedRequest for AdvancedSendGameRequest {
     const METHOD: &'static str = "sendGame";
 
     fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
         validate_required_string("game_short_name", &self.game_short_name)?;
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -1033,7 +1467,7 @@ pub struct AdvancedSetGameScoreRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_edit_message: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<crate::types::common::NumericChatId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_id: Option<crate::types::common::MessageId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1057,6 +1491,21 @@ impl AdvancedSetGameScoreRequest {
 impl AdvancedRequest for AdvancedSetGameScoreRequest {
     type Response = Value;
     const METHOD: &'static str = "setGameScore";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        validate_non_negative_i64("score", self.score)?;
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.message_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.inline_message_id.as_deref() {
+            validate_string_id("inline_message_id", value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getGameHighScores`.
@@ -1064,7 +1513,7 @@ impl AdvancedRequest for AdvancedSetGameScoreRequest {
 pub struct AdvancedGetGameHighScoresRequest {
     pub user_id: crate::types::common::UserId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<crate::types::common::NumericChatId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_id: Option<crate::types::common::MessageId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1085,4 +1534,18 @@ impl AdvancedGetGameHighScoresRequest {
 impl AdvancedRequest for AdvancedGetGameHighScoresRequest {
     type Response = Value;
     const METHOD: &'static str = "getGameHighScores";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.message_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.inline_message_id.as_deref() {
+            validate_string_id("inline_message_id", value)?;
+        }
+        Ok(())
+    }
 }

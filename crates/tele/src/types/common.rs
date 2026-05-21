@@ -10,6 +10,16 @@ pub struct UserId(pub i64);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct MessageId(pub i64);
 
+/// Numeric Telegram chat id wrapper.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct NumericChatId(pub i64);
+
+impl From<i64> for NumericChatId {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
 impl From<i64> for UserId {
     fn from(value: i64) -> Self {
         Self(value)
@@ -19,6 +29,39 @@ impl From<i64> for UserId {
 impl From<i64> for MessageId {
     fn from(value: i64) -> Self {
         Self(value)
+    }
+}
+
+impl UserId {
+    /// Validates that this is a concrete Telegram user id.
+    pub fn validate(&self) -> Result<()> {
+        if self.0 <= 0 {
+            return Err(invalid_request("user_id must be greater than 0"));
+        }
+
+        Ok(())
+    }
+}
+
+impl MessageId {
+    /// Validates that this is a concrete Telegram message id.
+    pub fn validate(&self) -> Result<()> {
+        if self.0 <= 0 {
+            return Err(invalid_request("message_id must be greater than 0"));
+        }
+
+        Ok(())
+    }
+}
+
+impl NumericChatId {
+    /// Validates that this is a concrete numeric Telegram chat id.
+    pub fn validate(&self) -> Result<()> {
+        if self.0 == 0 {
+            return Err(invalid_request("chat_id cannot be 0"));
+        }
+
+        Ok(())
     }
 }
 
@@ -133,5 +176,32 @@ mod tests {
                 Err(Error::InvalidRequest { .. })
             ));
         }
+    }
+
+    #[test]
+    fn validates_user_and_message_ids() {
+        assert!(UserId::from(1_i64).validate().is_ok());
+        assert!(MessageId::from(1_i64).validate().is_ok());
+        assert!(NumericChatId::from(1_i64).validate().is_ok());
+        assert!(NumericChatId::from(-100_i64).validate().is_ok());
+
+        for user_id in [UserId::from(0_i64), UserId::from(-1_i64)] {
+            assert!(matches!(
+                user_id.validate(),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+
+        for message_id in [MessageId::from(0_i64), MessageId::from(-1_i64)] {
+            assert!(matches!(
+                message_id.validate(),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+
+        assert!(matches!(
+            NumericChatId::from(0_i64).validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
     }
 }

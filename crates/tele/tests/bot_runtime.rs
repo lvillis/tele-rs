@@ -462,6 +462,26 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     );
     assert_eq!(parse_command_text("/echo@ hello world"), None);
     assert_eq!(parse_command_text("/echo@Bad@Name hello world"), None);
+    assert_eq!(
+        parse_command_text_for_bot("/echo@@ThisBot hi", Some("ThisBot")),
+        None
+    );
+    assert_eq!(
+        parse_command_text_for_bot("/echo@nope hi", Some("Nope")),
+        None
+    );
+    assert_eq!(
+        parse_command_text_for_bot("/echo@RegularUser hi", Some("RegularUser")),
+        None
+    );
+    assert_eq!(
+        parse_command_text_for_bot("/echo@ThisBot hi", Some("@thisbot")),
+        Some(CommandData {
+            name: "echo".to_owned(),
+            mention: Some("ThisBot".to_owned()),
+            args: "hi".to_owned()
+        })
+    );
     assert_eq!(parse_command_text("/Echo hello world"), None);
 
     assert!(extract_message(&update).is_some());
@@ -764,6 +784,51 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     };
     assert_eq!(poll_answer.update_kind(), UpdateKind::PollAnswer);
     assert_eq!(poll_answer.user_id(), Some(90));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn business_update_extractors_work() -> Result<(), DynError> {
+    let Some(message_update) = parse_update(json!({
+        "update_id": 212,
+        "business_message": {
+            "message_id": 77,
+            "business_connection_id": "business-1",
+            "date": 1700000212,
+            "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+            "from": {"id": 7001, "is_bot": false, "first_name": "customer"},
+            "text": "/start"
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert_eq!(message_update.update_kind(), UpdateKind::BusinessMessage);
+    assert_eq!(message_update.text(), Some("/start"));
+    assert_eq!(message_update.command(), Some("start"));
+    assert_eq!(message_update.chat_id(), Some(7001));
+
+    let Some(deleted_update) = parse_update(json!({
+        "update_id": 213,
+        "deleted_business_messages": {
+            "business_connection_id": "business-1",
+            "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+            "message_ids": [77, 78]
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert_eq!(
+        deleted_update.update_kind(),
+        UpdateKind::DeletedBusinessMessages
+    );
+    assert_eq!(deleted_update.chat_id(), Some(7001));
+    let Some(deleted) = deleted_update.deleted_business_messages() else {
+        return Ok(());
+    };
+    assert_eq!(deleted.message_ids.len(), 2);
 
     Ok(())
 }
@@ -2300,7 +2365,12 @@ async fn webhook_runner_reports_continued_handler_error_as_failed() -> Result<()
 #[tokio::test]
 async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":99,"date":1710000009,"chat":{"id":10,"type":"private"},"text":"invalid input"}}"#;
-    let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, response)?;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"text\":\"invalid input\""],
+    )?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
 
@@ -2320,6 +2390,34 @@ async fn fallible_route_maps_user_error_to_reply() -> Result<(), DynError> {
     let handled = router.dispatch(BotContext::new(client), update).await?;
     assert!(handled);
 
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn fallible_route_normalizes_empty_user_error_to_reply() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":100,"date":1710000010,"chat":{"id":10,"type":"private"},"text":"request rejected"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"text\":\"request rejected\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::user(" \n\t "))
+        });
+
+    let Some(update) = parse_update(message_update(904, 10, "bad request")) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
     join_server(handle).await?;
     Ok(())
 }
@@ -2871,14 +2969,19 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
 
 #[tokio::test]
 async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
-    let response = r#"{"ok":true,"result":{"message_id":120,"date":1710000009,"chat":{"id":10,"type":"private"},"text":"temporary failure"}}"#;
-    let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, response)?;
+    let response = r#"{"ok":true,"result":{"message_id":120,"date":1710000009,"chat":{"id":10,"type":"private"},"text":"request failed, please try again later"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"text\":\"request failed, please try again later\""],
+    )?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
     router.command_route("start").handle_with_policy(
         ErrorPolicy::ReplyUser {
-            fallback_message: "temporary failure".to_owned(),
+            fallback_message: " \n\t ".to_owned(),
         },
         |_context: BotContext, _update: Update| async move {
             Err(HandlerError::internal(Error::Transport {

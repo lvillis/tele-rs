@@ -17,6 +17,7 @@ pub enum ErrorClass {
     Authentication,
     RateLimited,
     Transport,
+    Storage,
     Api,
     Decode,
     Protocol,
@@ -98,6 +99,13 @@ pub enum Error {
         message: Box<str>,
     },
 
+    #[error("storage error during `{operation}`: {message}")]
+    Storage {
+        operation: Box<str>,
+        message: Box<str>,
+        retryable: bool,
+    },
+
     #[error("telegram api error while calling `{method}`: {description}")]
     Api {
         method: String,
@@ -135,6 +143,7 @@ impl Error {
             | Self::ReadLocalFile { .. } => ErrorClass::Validation,
             Self::DeserializeResponse { .. } => ErrorClass::Decode,
             Self::MissingResult { .. } => ErrorClass::Protocol,
+            Self::Storage { .. } => ErrorClass::Storage,
             Self::Transport {
                 status,
                 retry_after,
@@ -226,6 +235,13 @@ impl Error {
         }
 
         matches!(self, Self::Transport { .. })
+            || matches!(
+                self,
+                Self::Storage {
+                    retryable: true,
+                    ..
+                }
+            )
     }
 
     /// Whether this error indicates API throttling.

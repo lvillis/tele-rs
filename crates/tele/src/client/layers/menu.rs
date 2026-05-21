@@ -3,7 +3,7 @@ use super::*;
 /// High-level chat menu button configuration used by app setup and Web App APIs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MenuButtonConfig {
-    pub chat_id: Option<i64>,
+    pub chat_id: Option<NumericChatId>,
     pub menu_button: MenuButton,
 }
 
@@ -15,12 +15,12 @@ impl MenuButtonConfig {
         }
     }
 
-    pub fn for_chat(chat_id: i64, menu_button: impl Into<MenuButton>) -> Self {
+    pub fn for_chat(chat_id: impl Into<NumericChatId>, menu_button: impl Into<MenuButton>) -> Self {
         Self::new(menu_button).chat_id(chat_id)
     }
 
-    pub fn chat_id(mut self, chat_id: i64) -> Self {
-        self.chat_id = Some(chat_id);
+    pub fn chat_id(mut self, chat_id: impl Into<NumericChatId>) -> Self {
+        self.chat_id = Some(chat_id.into());
         self
     }
 
@@ -44,16 +44,16 @@ impl MenuButtonConfig {
         Self::new(MenuButton::web_app(text, web_app))
     }
 
-    pub fn for_chat_default(chat_id: i64) -> Self {
+    pub fn for_chat_default(chat_id: impl Into<NumericChatId>) -> Self {
         Self::default_button().chat_id(chat_id)
     }
 
-    pub fn for_chat_commands(chat_id: i64) -> Self {
+    pub fn for_chat_commands(chat_id: impl Into<NumericChatId>) -> Self {
         Self::commands().chat_id(chat_id)
     }
 
     pub fn for_chat_web_app(
-        chat_id: i64,
+        chat_id: impl Into<NumericChatId>,
         text: impl Into<String>,
         web_app: impl Into<crate::types::telegram::WebAppInfo>,
     ) -> Self {

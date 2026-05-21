@@ -685,10 +685,21 @@ pub(crate) fn build_multipart_payload(
     file_field_name: &str,
     file: &UploadFile,
 ) -> Result<MultipartPayload, Error> {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |duration| duration.as_nanos());
-    let boundary = format!("tele-sdk-boundary-{timestamp}");
+    build_multipart_payload_many(fields, &[(file_field_name, file)])
+}
+
+pub(crate) fn build_multipart_payload_many(
+    fields: &[(String, String)],
+    files: &[(&str, &UploadFile)],
+) -> Result<MultipartPayload, Error> {
+    if files.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "multipart request requires at least one file part".to_owned(),
+        });
+    }
+    validate_multipart_file_fields(files)?;
+
+    let boundary = next_multipart_boundary(fields, files)?;
 
     let mut chunks = Vec::new();
     let mut content_length = 0;
@@ -722,44 +733,47 @@ pub(crate) fn build_multipart_payload(
         );
     }
 
-    push_chunk(
-        &mut chunks,
-        &mut content_length,
-        MultipartChunk::Owned(format!("--{boundary}\r\n").into_bytes()),
-    );
-    push_chunk(
-        &mut chunks,
-        &mut content_length,
-        MultipartChunk::Owned(
-            format!(
-                "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                escape_quoted_header_value("multipart file field name", file_field_name)?,
-                escape_quoted_header_value("multipart file name", file.file_name())?
-            )
-            .into_bytes(),
-        ),
-    );
-    push_chunk(
-        &mut chunks,
-        &mut content_length,
-        MultipartChunk::Owned(
-            format!(
-                "Content-Type: {}\r\n\r\n",
-                file.content_type().unwrap_or("application/octet-stream")
-            )
-            .into_bytes(),
-        ),
-    );
-    push_chunk(
-        &mut chunks,
-        &mut content_length,
-        MultipartChunk::Shared(file.data_arc()),
-    );
-    push_chunk(
-        &mut chunks,
-        &mut content_length,
-        MultipartChunk::Owned(b"\r\n".to_vec()),
-    );
+    for (file_field_name, file) in files {
+        push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Owned(format!("--{boundary}\r\n").into_bytes()),
+        );
+        push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Owned(
+                format!(
+                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                    escape_quoted_header_value("multipart file field name", file_field_name)?,
+                    escape_quoted_header_value("multipart file name", file.file_name())?
+                )
+                .into_bytes(),
+            ),
+        );
+        push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Owned(
+                format!(
+                    "Content-Type: {}\r\n\r\n",
+                    file.content_type().unwrap_or("application/octet-stream")
+                )
+                .into_bytes(),
+            ),
+        );
+        push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Shared(file.data_arc()),
+        );
+        push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Owned(b"\r\n".to_vec()),
+        );
+    }
+
     push_chunk(
         &mut chunks,
         &mut content_length,
@@ -771,6 +785,72 @@ pub(crate) fn build_multipart_payload(
         content_type: format!("multipart/form-data; boundary={boundary}"),
         content_length,
     })
+}
+
+fn next_multipart_boundary(
+    fields: &[(String, String)],
+    files: &[(&str, &UploadFile)],
+) -> Result<String, Error> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    let sequence = LOCAL_REQUEST_ID_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    for attempt in 0..64_u8 {
+        let boundary = format!("tele-sdk-boundary-{timestamp:x}-{sequence:x}-{attempt:x}");
+        if !multipart_boundary_conflicts(&boundary, fields, files) {
+            return Ok(boundary);
+        }
+    }
+
+    Err(Error::InvalidRequest {
+        reason: "failed to allocate a multipart boundary that is absent from the payload"
+            .to_owned(),
+    })
+}
+
+fn multipart_boundary_conflicts(
+    boundary: &str,
+    fields: &[(String, String)],
+    files: &[(&str, &UploadFile)],
+) -> bool {
+    let needle = boundary.as_bytes();
+
+    fields.iter().any(|(name, value)| {
+        contains_bytes(name.as_bytes(), needle) || contains_bytes(value.as_bytes(), needle)
+    }) || files.iter().any(|(name, file)| {
+        contains_bytes(name.as_bytes(), needle)
+            || contains_bytes(file.file_name().as_bytes(), needle)
+            || file
+                .content_type()
+                .is_some_and(|content_type| contains_bytes(content_type.as_bytes(), needle))
+            || contains_bytes(file.data_arc().as_ref(), needle)
+    })
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+fn validate_multipart_file_fields(files: &[(&str, &UploadFile)]) -> Result<(), Error> {
+    let mut names = BTreeSet::new();
+    for (name, _) in files {
+        if name.is_empty() {
+            return Err(Error::InvalidRequest {
+                reason: "multipart file field name cannot be empty".to_owned(),
+            });
+        }
+        if !names.insert(*name) {
+            return Err(Error::InvalidRequest {
+                reason: format!("duplicate multipart file field `{name}`"),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn escape_quoted_header_value(label: &str, value: &str) -> Result<String, Error> {
@@ -786,7 +866,10 @@ fn escape_quoted_header_value(label: &str, value: &str) -> Result<String, Error>
 mod tests {
     use std::io::Read;
 
-    use super::{build_multipart_payload, serialize_multipart_fields};
+    use super::{
+        build_multipart_payload, build_multipart_payload_many, multipart_boundary_conflicts,
+        serialize_multipart_fields,
+    };
     use crate::types::upload::UploadFile;
 
     #[derive(serde::Serialize)]
@@ -852,6 +935,35 @@ mod tests {
     }
 
     #[test]
+    fn builds_multipart_body_with_multiple_files() -> Result<(), Box<dyn std::error::Error>> {
+        let photo = UploadFile::from_bytes("photo.jpg", b"photo-data".to_vec())?;
+        let video = UploadFile::from_bytes("video.mp4", b"video-data".to_vec())?;
+        let payload = build_multipart_payload_many(
+            &[(
+                "media".to_owned(),
+                r#"[{"type":"photo","media":"attach://photo0"},{"type":"video","media":"attach://video0"}]"#
+                    .to_owned(),
+            )],
+            &[("photo0", &photo), ("video0", &video)],
+        )?;
+        let content_length = payload.content_length();
+
+        let mut reader = payload.into_reader();
+        let mut body = Vec::new();
+        reader.read_to_end(&mut body)?;
+
+        let text = String::from_utf8_lossy(&body);
+        assert_eq!(content_length, body.len());
+        assert!(text.contains("name=\"media\""));
+        assert!(text.contains("attach://photo0"));
+        assert!(text.contains("name=\"photo0\"; filename=\"photo.jpg\""));
+        assert!(text.contains("photo-data"));
+        assert!(text.contains("name=\"video0\"; filename=\"video.mp4\""));
+        assert!(text.contains("video-data"));
+        Ok(())
+    }
+
+    #[test]
     fn rejects_multipart_control_chars_in_header_values() {
         let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
         assert!(file_result.is_ok());
@@ -876,5 +988,53 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn rejects_ambiguous_multipart_file_field_names() {
+        let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
+        assert!(file_result.is_ok());
+        let file = match file_result {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+
+        assert!(
+            build_multipart_payload_many(
+                &[("chat_id".to_owned(), "1".to_owned())],
+                &[("document", &file), ("document", &file)]
+            )
+            .is_err()
+        );
+        assert!(
+            build_multipart_payload_many(&[("chat_id".to_owned(), "1".to_owned())], &[("", &file)])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn detects_multipart_boundary_collisions_with_payload() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let safe_file = UploadFile::from_bytes("hello.txt", b"abc123".to_vec())?;
+        assert!(!multipart_boundary_conflicts(
+            "needle",
+            &[("caption".to_owned(), "safe".to_owned())],
+            &[("document", &safe_file)]
+        ));
+        assert!(multipart_boundary_conflicts(
+            "needle",
+            &[("caption".to_owned(), "contains needle".to_owned())],
+            &[("document", &safe_file)]
+        ));
+
+        let colliding_file =
+            UploadFile::from_bytes("hello.txt", b"file contains needle bytes".to_vec())?;
+        assert!(multipart_boundary_conflicts(
+            "needle",
+            &[("caption".to_owned(), "safe".to_owned())],
+            &[("document", &colliding_file)]
+        ));
+
+        Ok(())
     }
 }

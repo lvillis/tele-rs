@@ -16,6 +16,21 @@ fn validate_required_string(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_string_id(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
 fn validate_required_vec(field: &str, len: usize) -> Result<()> {
     if len == 0 {
         return Err(Error::InvalidRequest {
@@ -24,6 +39,164 @@ fn validate_required_vec(field: &str, len: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
+    if value <= 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be greater than 0"),
+        });
+    }
+
+    Ok(())
+}
+
+trait GeneratedValidate {
+    fn validate_generated(&self) -> Result<()>;
+}
+
+impl GeneratedValidate for crate::types::common::ChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::NumericChatId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::UserId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::common::MessageId {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::InputSticker {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::sticker::MaskPosition {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputChecklist {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::InputStoryContent {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::KeyboardButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::MenuButton {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::PassportElementError {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReactionType {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::ReplyParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::StoryArea {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
+    fn validate_generated(&self) -> Result<()> {
+        self.validate()
+    }
+}
+
+fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {
+    for value in values {
+        value.validate_generated()?;
+    }
+
+    Ok(())
+}
+
+fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> Result<()> {
+    if values.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    validate_items(values)
 }
 
 /// Auto-generated request for `sendInvoice`.
@@ -137,11 +310,42 @@ impl AdvancedRequest for AdvancedSendInvoiceRequest {
     const METHOD: &'static str = "sendInvoice";
 
     fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
         validate_required_string("title", &self.title)?;
         validate_required_string("description", &self.description)?;
         validate_required_string("payload", &self.payload)?;
         validate_required_string("currency", &self.currency)?;
         validate_required_vec("prices", self.prices.len())?;
+        if let Some(value) = self.max_tip_amount {
+            validate_positive_i64("max_tip_amount", value)?;
+        }
+        if let Some(value) = self.photo_size {
+            validate_positive_i64("photo_size", value)?;
+        }
+        if let Some(value) = self.photo_width {
+            validate_positive_i64("photo_width", value)?;
+        }
+        if let Some(value) = self.photo_height {
+            validate_positive_i64("photo_height", value)?;
+        }
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
         Ok(())
     }
 }
@@ -230,11 +434,29 @@ impl AdvancedRequest for AdvancedCreateInvoiceLinkRequest {
     const METHOD: &'static str = "createInvoiceLink";
 
     fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
         validate_required_string("title", &self.title)?;
         validate_required_string("description", &self.description)?;
         validate_required_string("payload", &self.payload)?;
         validate_required_string("currency", &self.currency)?;
         validate_required_vec("prices", self.prices.len())?;
+        if let Some(value) = self.subscription_period {
+            validate_positive_i64("subscription_period", value)?;
+        }
+        if let Some(value) = self.max_tip_amount {
+            validate_positive_i64("max_tip_amount", value)?;
+        }
+        if let Some(value) = self.photo_size {
+            validate_positive_i64("photo_size", value)?;
+        }
+        if let Some(value) = self.photo_width {
+            validate_positive_i64("photo_width", value)?;
+        }
+        if let Some(value) = self.photo_height {
+            validate_positive_i64("photo_height", value)?;
+        }
         Ok(())
     }
 }
@@ -266,7 +488,7 @@ impl AdvancedRequest for AdvancedAnswerShippingQueryRequest {
     const METHOD: &'static str = "answerShippingQuery";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("shipping_query_id", &self.shipping_query_id)?;
+        validate_string_id("shipping_query_id", &self.shipping_query_id)?;
         Ok(())
     }
 }
@@ -295,7 +517,7 @@ impl AdvancedRequest for AdvancedAnswerPreCheckoutQueryRequest {
     const METHOD: &'static str = "answerPreCheckoutQuery";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string("pre_checkout_query_id", &self.pre_checkout_query_id)?;
+        validate_string_id("pre_checkout_query_id", &self.pre_checkout_query_id)?;
         Ok(())
     }
 }
@@ -321,7 +543,11 @@ impl AdvancedRequest for AdvancedSetPassportDataErrorsRequest {
     const METHOD: &'static str = "setPassportDataErrors";
 
     fn validate(&self) -> Result<()> {
-        validate_required_vec("errors", self.errors.len())?;
+        self.user_id.validate()?;
+        validate_required_items::<crate::types::telegram::PassportElementError>(
+            "errors",
+            &self.errors,
+        )?;
         Ok(())
     }
 }

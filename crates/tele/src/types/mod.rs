@@ -24,7 +24,7 @@ pub use chat::{
     GetChatAdministratorsRequest, GetChatMemberCountRequest, GetChatMemberRequest, GetChatRequest,
     LeaveChatRequest, PinChatMessageRequest, PromoteChatMemberRequest, RestrictChatMemberRequest,
     RevokeChatInviteLinkRequest, SetChatAdministratorCustomTitleRequest, SetChatDescriptionRequest,
-    SetChatPermissionsRequest, SetChatStickerSetRequest, SetChatTitleRequest,
+    SetChatPermissionsRequest, SetChatPhotoRequest, SetChatStickerSetRequest, SetChatTitleRequest,
     UnbanChatMemberRequest, UnbanChatSenderChatRequest, UnpinAllChatMessagesRequest,
     UnpinChatMessageRequest,
 };
@@ -34,7 +34,7 @@ pub use command::{
     GetMyShortDescriptionRequest, SetMyCommandsRequest, SetMyDescriptionRequest, SetMyNameRequest,
     SetMyShortDescriptionRequest,
 };
-pub use common::{ChatId, MessageId, ParseMode, ResponseParameters, UserId};
+pub use common::{ChatId, MessageId, NumericChatId, ParseMode, ResponseParameters, UserId};
 pub use file::{File, GetFileRequest};
 pub use message::{
     Animation, Audio, Chat, ChatAction, ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft,
@@ -68,26 +68,26 @@ pub use payment::{
 pub use sticker::{
     AddStickerToSetRequest, CreateNewStickerSetRequest, DeleteStickerFromSetRequest,
     DeleteStickerSetRequest, GetCustomEmojiStickersRequest, GetStickerSetRequest, InputSticker,
-    MaskPosition, ReplaceStickerInSetRequest, SendStickerRequest,
+    MaskPosition, MaskPositionPoint, ReplaceStickerInSetRequest, SendStickerRequest,
     SetCustomEmojiStickerSetThumbnailRequest, SetStickerEmojiListRequest,
     SetStickerKeywordsRequest, SetStickerMaskPositionRequest, SetStickerPositionInSetRequest,
-    SetStickerSetThumbnailRequest, SetStickerSetTitleRequest, Sticker, StickerFormat, StickerSet,
-    StickerType, UploadStickerFileRequest,
+    SetStickerSetThumbnailRequest, SetStickerSetTitleRequest, Sticker, StickerFormat, StickerKind,
+    StickerSet, StickerType, UploadStickerFileRequest,
 };
 pub use telegram::{
     AcceptedGiftTypes, CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
     CompactCallbackDecoder, CompactCallbackEncoder, CompactCallbackPayload, ForceReply,
     InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultArticle,
-    InlineQueryResultsButton, InputChecklist, InputPaidMedia, InputStoryContent,
-    InputTextMessageContent, JsonCallbackCodec, KeyboardButton, LinkPreviewOptions, MenuButton,
-    MenuButtonKind, MenuButtonWebApp, PassportElementError, ReactionType, ReplyKeyboardMarkup,
-    ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea, SuggestedPostParameters,
-    WebAppData, WebAppInfo,
+    InlineQueryResultArticleKind, InlineQueryResultsButton, InputChecklist, InputPaidMedia,
+    InputProfilePhoto, InputStoryContent, InputTextMessageContent, JsonCallbackCodec,
+    KeyboardButton, LinkPreviewOptions, MenuButton, MenuButtonKind, MenuButtonWebApp,
+    PassportElementError, ReactionType, ReplyKeyboardMarkup, ReplyKeyboardRemove, ReplyMarkup,
+    ReplyParameters, StoryArea, SuggestedPostParameters, WebAppData, WebAppInfo,
 };
 pub use update::{
-    AnswerCallbackQueryRequest, AnswerInlineQueryRequest, CallbackQuery, ChatJoinRequest,
-    ChatMemberUpdated, ChosenInlineResult, GetUpdatesRequest, InlineQuery, PollAnswer, Update,
-    UpdateKind,
+    AnswerCallbackQueryRequest, AnswerInlineQueryRequest, BusinessMessagesDeleted, CallbackQuery,
+    ChatJoinRequest, ChatMemberUpdated, ChosenInlineResult, GetUpdatesRequest, InlineQuery,
+    PollAnswer, Update, UpdateKind,
 };
-pub use upload::UploadFile;
+pub use upload::{UploadFile, UploadPart};
 pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo, WebhookSecretToken};

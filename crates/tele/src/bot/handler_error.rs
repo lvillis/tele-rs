@@ -1,5 +1,7 @@
 use super::*;
 
+const DEFAULT_REJECTION_MESSAGE: &str = "request rejected";
+
 /// Structured route-level rejection reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -20,7 +22,7 @@ pub enum RouteRejection {
 impl RouteRejection {
     pub fn message(&self) -> String {
         match self {
-            Self::Message(message) => message.clone(),
+            Self::Message(message) => normalized_rejection_message(message),
             Self::GroupOnly => "this route is only available in group chats".to_owned(),
             Self::SupergroupOnly => "this route is only available in supergroups".to_owned(),
             Self::AdminOnly => "chat administrators only".to_owned(),
@@ -49,7 +51,17 @@ impl RouteRejection {
     }
 
     pub fn custom(message: impl Into<String>) -> Self {
-        Self::Message(message.into())
+        let message = message.into();
+        Self::Message(normalized_rejection_message(&message))
+    }
+}
+
+fn normalized_rejection_message(message: &str) -> String {
+    let message = message.trim();
+    if message.is_empty() {
+        DEFAULT_REJECTION_MESSAGE.to_owned()
+    } else {
+        message.to_owned()
     }
 }
 

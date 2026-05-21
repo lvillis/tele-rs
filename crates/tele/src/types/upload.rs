@@ -75,6 +75,54 @@ impl UploadFile {
     }
 }
 
+/// Named multipart file part for methods that upload multiple files.
+#[derive(Clone, Debug)]
+pub struct UploadPart {
+    field_name: String,
+    file: UploadFile,
+}
+
+impl UploadPart {
+    /// Build a named multipart file part.
+    ///
+    /// The `field_name` is the name referenced by Telegram `attach://field_name` values.
+    pub fn new(field_name: impl Into<String>, file: UploadFile) -> Result<Self> {
+        let field_name = field_name.into();
+        validate_upload_part_name("upload part field_name", &field_name)?;
+
+        Ok(Self { field_name, file })
+    }
+
+    /// Build a named multipart file part from in-memory bytes.
+    pub fn from_bytes(
+        field_name: impl Into<String>,
+        file_name: impl Into<String>,
+        data: Vec<u8>,
+    ) -> Result<Self> {
+        Self::new(field_name, UploadFile::from_bytes(file_name, data)?)
+    }
+
+    /// Build a named multipart file part from a local file path.
+    pub fn from_path(field_name: impl Into<String>, path: impl AsRef<Path>) -> Result<Self> {
+        Self::new(field_name, UploadFile::from_path(path)?)
+    }
+
+    /// Returns the multipart field name.
+    pub fn field_name(&self) -> &str {
+        &self.field_name
+    }
+
+    /// Returns the file payload.
+    pub fn file(&self) -> &UploadFile {
+        &self.file
+    }
+
+    /// Returns the Telegram attach URI for this part.
+    pub fn attach_uri(&self) -> String {
+        format!("attach://{}", self.field_name)
+    }
+}
+
 fn validate_multipart_header_fragment(label: &str, value: &str) -> Result<()> {
     if value.chars().any(char::is_control) {
         return Err(Error::InvalidRequest {
@@ -84,9 +132,27 @@ fn validate_multipart_header_fragment(label: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn validate_upload_part_name(label: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} cannot be empty"),
+        });
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} must contain only ASCII letters, digits, `_`, `-`, or `.`"),
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::UploadFile;
+    use super::{UploadFile, UploadPart};
 
     #[test]
     fn rejects_header_injection_metadata() {
@@ -98,5 +164,18 @@ mod tests {
             Err(_) => return,
         };
         assert!(file.with_content_type("text/plain\r\nx: y").is_err());
+    }
+
+    #[test]
+    fn validates_upload_part_names() -> crate::Result<()> {
+        let file = UploadFile::from_bytes("a.txt", Vec::new())?;
+        let part = UploadPart::new("photo_0", file.clone())?;
+        assert_eq!(part.field_name(), "photo_0");
+        assert_eq!(part.attach_uri(), "attach://photo_0");
+
+        assert!(UploadPart::new("", file.clone()).is_err());
+        assert!(UploadPart::new("bad/name", file.clone()).is_err());
+        assert!(UploadPart::new("bad\r\nname", file).is_err());
+        Ok(())
     }
 }

@@ -2,7 +2,6 @@ use std::env;
 
 use serde::Deserialize;
 use tele::Client;
-use tele::Error;
 use tele::MenuButtonConfig;
 use tele::bot::{BotApp, BotContext, Router, WebAppInput};
 use tele::types::telegram::InlineQueryResult;
@@ -26,7 +25,7 @@ fn inline_article_result(
     id: String,
     title: String,
     message_text: String,
-) -> Result<InlineQueryResult, serde_json::Error> {
+) -> tele::Result<InlineQueryResult> {
     InlineQueryResult::article(id, title, message_text)
 }
 
@@ -80,10 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("mini-app-{}", update.update_id),
                     result_title,
                     format!("Mini App query accepted: {query_id}"),
-                )
-                .map_err(|source| Error::InvalidRequest {
-                    reason: format!("failed to serialize Mini App inline result: {source}"),
-                })?;
+                )?;
                 let _ = context
                     .app()
                     .web_app()

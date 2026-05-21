@@ -177,20 +177,30 @@ where
         return Ok(HashMap::new());
     }
 
-    let raw = fs::read(path).map_err(|source| Error::ReadLocalFile {
-        path: path.display().to_string(),
-        source,
+    let raw = fs::read(path).map_err(|source| {
+        storage_error(
+            "json session read",
+            format!(
+                "failed to read session store `{}`: {source}",
+                path.display()
+            ),
+            true,
+        )
     })?;
 
     if raw.is_empty() {
         return Ok(HashMap::new());
     }
 
-    serde_json::from_slice(&raw).map_err(|source| Error::InvalidRequest {
-        reason: format!(
-            "failed to deserialize session store `{}`: {source}",
-            path.display()
-        ),
+    serde_json::from_slice(&raw).map_err(|source| {
+        storage_error(
+            "json session load",
+            format!(
+                "failed to deserialize session store `{}`: {source}",
+                path.display()
+            ),
+            false,
+        )
     })
 }
 
@@ -271,7 +281,7 @@ where
         self.client
             .get_multiplexed_async_connection()
             .await
-            .map_err(|source| invalid_request(format!("failed to connect redis: {source}")))
+            .map_err(|source| storage_error("redis connect", source.to_string(), true))
     }
 }
 
@@ -304,16 +314,20 @@ where
                 .arg(&key)
                 .query_async(&mut connection)
                 .await
-                .map_err(|source| invalid_request(format!("redis GET `{key}` failed: {source}")))?;
+                .map_err(|source| {
+                    storage_error("redis GET", format!("key `{key}` failed: {source}"), true)
+                })?;
 
             let Some(payload) = payload else {
                 return Ok(None);
             };
 
             let state = serde_json::from_str::<S>(&payload).map_err(|source| {
-                invalid_request(format!(
-                    "redis state decode failed for key `{key}`: {source}"
-                ))
+                storage_error(
+                    "redis decode",
+                    format!("redis state decode failed for key `{key}`: {source}"),
+                    false,
+                )
             })?;
             Ok(Some(state))
         })
@@ -330,7 +344,9 @@ where
                 .arg(&payload)
                 .query_async(&mut connection)
                 .await
-                .map_err(|source| invalid_request(format!("redis SET `{key}` failed: {source}")))?;
+                .map_err(|source| {
+                    storage_error("redis SET", format!("key `{key}` failed: {source}"), true)
+                })?;
             Ok(())
         })
     }
@@ -343,7 +359,9 @@ where
                 .arg(&key)
                 .query_async(&mut connection)
                 .await
-                .map_err(|source| invalid_request(format!("redis DEL `{key}` failed: {source}")))?;
+                .map_err(|source| {
+                    storage_error("redis DEL", format!("key `{key}` failed: {source}"), true)
+                })?;
             Ok(())
         })
     }
@@ -387,10 +405,14 @@ where
             .connect(database_url)
             .await
             .map_err(|source| {
-                invalid_request(format!(
-                    "failed to connect postgres `{}`: {source}",
-                    crate::util::redact_url_credentials(database_url)
-                ))
+                storage_error(
+                    "postgres connect",
+                    format!(
+                        "failed to connect postgres `{}`: {source}",
+                        crate::util::redact_url_credentials(database_url)
+                    ),
+                    true,
+                )
             })?;
 
         Self::with_pool(pool, table).await
@@ -408,9 +430,11 @@ where
             .execute(&pool)
             .await
             .map_err(|source| {
-                invalid_request(format!(
-                    "failed to create postgres session table `{table}`: {source}"
-                ))
+                storage_error(
+                    "postgres migrate",
+                    format!("failed to create postgres session table `{table}`: {source}"),
+                    false,
+                )
             })?;
 
         Ok(Self {
@@ -445,9 +469,11 @@ where
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| {
-                    invalid_request(format!(
-                        "postgres load failed for chat_id `{chat_id}`: {source}"
-                    ))
+                    storage_error(
+                        "postgres load",
+                        format!("postgres load failed for chat_id `{chat_id}`: {source}"),
+                        true,
+                    )
                 })?;
 
             let Some(row) = row else {
@@ -455,9 +481,13 @@ where
             };
 
             let sqlx::types::Json(state) = row.try_get(0).map_err(|source| {
-                invalid_request(format!(
-                    "postgres session payload decode failed for chat_id `{chat_id}`: {source}"
-                ))
+                storage_error(
+                    "postgres decode",
+                    format!(
+                        "postgres session payload decode failed for chat_id `{chat_id}`: {source}"
+                    ),
+                    false,
+                )
             })?;
 
             Ok(Some(state))
@@ -477,9 +507,11 @@ where
                 .execute(&self.pool)
                 .await
                 .map_err(|source| {
-                    invalid_request(format!(
-                        "postgres save failed for chat_id `{chat_id}`: {source}"
-                    ))
+                    storage_error(
+                        "postgres save",
+                        format!("postgres save failed for chat_id `{chat_id}`: {source}"),
+                        true,
+                    )
                 })?;
             Ok(())
         })
@@ -494,9 +526,11 @@ where
                 .execute(&self.pool)
                 .await
                 .map_err(|source| {
-                    invalid_request(format!(
-                        "postgres clear failed for chat_id `{chat_id}`: {source}"
-                    ))
+                    storage_error(
+                        "postgres clear",
+                        format!("postgres clear failed for chat_id `{chat_id}`: {source}"),
+                        true,
+                    )
                 })?;
             Ok(())
         })
@@ -671,7 +705,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "redis-session", feature = "postgres-session")))]
 mod tests {
     use super::*;
 

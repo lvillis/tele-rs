@@ -452,9 +452,15 @@ fn load_persisted_polling_offset(path: &Path) -> Result<Option<i64>> {
         return Ok(None);
     }
 
-    let raw = fs::read(path).map_err(|source| Error::ReadLocalFile {
-        path: path.display().to_string(),
-        source,
+    let raw = fs::read(path).map_err(|source| {
+        storage_error(
+            "polling offset read",
+            format!(
+                "failed to read polling offset snapshot `{}`: {source}",
+                path.display()
+            ),
+            true,
+        )
     })?;
     if raw.is_empty() {
         return Ok(None);
@@ -466,7 +472,24 @@ fn load_persisted_polling_offset(path: &Path) -> Result<Option<i64>> {
             path.display()
         ))
     })?;
+    validate_polling_offset_snapshot(&snapshot)?;
     Ok(snapshot.next_offset)
+}
+
+fn validate_polling_offset_snapshot(snapshot: &PollingOffsetSnapshot) -> Result<()> {
+    if snapshot.version != default_polling_offset_snapshot_version() {
+        return Err(invalid_request(format!(
+            "unsupported polling offset snapshot version `{}`",
+            snapshot.version
+        )));
+    }
+    if snapshot.next_offset.is_some_and(|offset| offset < 0) {
+        return Err(invalid_request(
+            "polling offset snapshot next_offset must not be negative",
+        ));
+    }
+
+    Ok(())
 }
 
 fn persist_polling_offset(path: &Path, next_offset: Option<i64>) -> Result<()> {
@@ -474,6 +497,7 @@ fn persist_polling_offset(path: &Path, next_offset: Option<i64>) -> Result<()> {
         version: default_polling_offset_snapshot_version(),
         next_offset,
     };
+    validate_polling_offset_snapshot(&snapshot)?;
     let encoded =
         serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
     write_file_atomic(path, encoded.as_slice(), "polling offset snapshot")?;
@@ -565,4 +589,31 @@ pub fn channel_source(buffer: usize) -> Result<(UpdateSink, ChannelUpdateSource)
     }
     let (sender, receiver) = mpsc::channel(buffer);
     Ok((UpdateSink::new(sender), ChannelUpdateSource::new(receiver)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_polling_offset_snapshot_metadata() {
+        let mut snapshot = PollingOffsetSnapshot {
+            version: default_polling_offset_snapshot_version(),
+            next_offset: Some(1),
+        };
+        assert!(validate_polling_offset_snapshot(&snapshot).is_ok());
+
+        snapshot.version = snapshot.version.saturating_add(1);
+        assert!(matches!(
+            validate_polling_offset_snapshot(&snapshot),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        snapshot.version = default_polling_offset_snapshot_version();
+        snapshot.next_offset = Some(-1);
+        assert!(matches!(
+            validate_polling_offset_snapshot(&snapshot),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
 }

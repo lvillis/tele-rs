@@ -42,7 +42,13 @@ pub struct Message {
     pub chat: Chat,
     pub date: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_query_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_business_bot: Option<User>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_tag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,6 +71,10 @@ pub struct Message {
     pub reply_to_checklist_task_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via_bot: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_bot_caller_user: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_bot_caller_chat: Option<Chat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit_date: Option<i64>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -280,7 +290,10 @@ impl<'de> Deserialize<'de> for Message {
             sender_chat: take_optional_field(&mut object, "sender_chat")?,
             chat: take_required_field(&mut object, "chat")?,
             date: take_required_field(&mut object, "date")?,
+            guest_query_id: take_optional_field(&mut object, "guest_query_id")?,
+            business_connection_id: take_optional_field(&mut object, "business_connection_id")?,
             author_signature: take_optional_field(&mut object, "author_signature")?,
+            sender_business_bot: take_optional_field(&mut object, "sender_business_bot")?,
             sender_tag: take_optional_field(&mut object, "sender_tag")?,
             message_thread_id: take_optional_field(&mut object, "message_thread_id")?,
             is_topic_message: take_bool_field(&mut object, "is_topic_message")?,
@@ -295,6 +308,8 @@ impl<'de> Deserialize<'de> for Message {
                 "reply_to_checklist_task_id",
             )?,
             via_bot: take_optional_field(&mut object, "via_bot")?,
+            guest_bot_caller_user: take_optional_field(&mut object, "guest_bot_caller_user")?,
+            guest_bot_caller_chat: take_optional_field(&mut object, "guest_bot_caller_chat")?,
             edit_date: take_optional_field(&mut object, "edit_date")?,
             has_protected_content: take_bool_field(&mut object, "has_protected_content")?,
             is_from_offline: take_bool_field(&mut object, "is_from_offline")?,
