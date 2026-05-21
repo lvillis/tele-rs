@@ -398,17 +398,18 @@ fn validate_command_name(name: &str, span: &impl ToTokens) -> syn::Result<()> {
 }
 
 fn validate_command_description(description: &str, span: &impl ToTokens) -> syn::Result<()> {
-    if description.is_empty() {
+    let length = description.chars().count();
+    if !(3..=256).contains(&length) {
         return Err(syn::Error::new_spanned(
             span,
-            "command description cannot be empty",
+            format!("command description must be 3-256 characters: `{description}`"),
         ));
     }
 
-    if description.len() > 256 {
+    if description.chars().any(char::is_control) {
         return Err(syn::Error::new_spanned(
             span,
-            format!("command description exceeds Telegram max length of 256: `{description}`"),
+            "command description must not contain control characters",
         ));
     }
 

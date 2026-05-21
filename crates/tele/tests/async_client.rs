@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tele::testing::{FakeTelegramServer, RequestExpectation};
-use tele::types::advanced::{AdvancedAnswerWebAppQueryRequest, AdvancedGetAvailableGiftsRequest};
+use tele::types::advanced::{
+    AdvancedAnswerWebAppQueryRequest, AdvancedForwardMessagesRequest,
+    AdvancedGetAvailableGiftsRequest,
+};
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
     GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -13,7 +16,8 @@ use tele::types::{
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
-    Client, ClientMetric, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions, UploadFile,
+    Client, ClientMetric, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions, RetryConfig,
+    UploadFile,
 };
 
 #[cfg(feature = "bot")]
@@ -138,6 +142,81 @@ async fn typed_layer_advanced_request_success() -> Result<(), DynError> {
     assert!(value.is_object());
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn typed_layer_validates_advanced_request_before_transport() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:1")?
+        .bot_token("123:abc")?
+        .build()?;
+    let request = AdvancedForwardMessagesRequest::new(1_i64, 2_i64, Vec::new());
+
+    let error = match client.typed().call(&request).await {
+        Ok(_) => return Err("empty required vector must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_service_validates_generated_request_before_transport() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:1")?
+        .bot_token("123:abc")?
+        .build()?;
+    let request = AdvancedForwardMessagesRequest::new(1_i64, 2_i64, Vec::new());
+
+    let error = match client
+        .advanced()
+        .forward_messages::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("empty required vector must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_retry_rejects_invalid_policy_before_request() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut retry = RetryConfig::default();
+    retry.base_backoff = Duration::ZERO;
+
+    let error = match client
+        .raw()
+        .call_no_params_with_retry::<tele::types::User>("getMe", retry)
+        .await
+    {
+        Ok(_) => return Err("invalid retry policy unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::Configuration { .. }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_retry_rejects_invalid_policy_before_work() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let policy = BootstrapRetryPolicy {
+        max_attempts: 0,
+        ..BootstrapRetryPolicy::default()
+    };
+
+    let outcome = client
+        .control()
+        .setup()
+        .bootstrap_with_retry(&BootstrapPlan::default(), policy)
+        .await;
+    assert!(matches!(outcome.error(), Some(Error::Configuration { .. })));
+
     Ok(())
 }
 

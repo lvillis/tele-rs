@@ -4,7 +4,8 @@ patch:
     cargo release patch --no-publish --execute
 
 publish:
-    cargo publish --workspace
+    cargo publish -p tele-macros --locked
+    cargo publish -p tele --locked
 
 check-generated:
     cargo run -p tele-codegen -- check-advanced

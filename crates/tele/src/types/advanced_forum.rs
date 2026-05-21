@@ -2,7 +2,19 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `getForumTopicIconStickers`.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -44,6 +56,11 @@ impl AdvancedCreateForumTopicRequest {
 impl AdvancedRequest for AdvancedCreateForumTopicRequest {
     type Response = Value;
     const METHOD: &'static str = "createForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editForumTopic`.
@@ -176,6 +193,11 @@ impl AdvancedEditGeneralForumTopicRequest {
 impl AdvancedRequest for AdvancedEditGeneralForumTopicRequest {
     type Response = bool;
     const METHOD: &'static str = "editGeneralForumTopic";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `closeGeneralForumTopic`.

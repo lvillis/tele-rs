@@ -63,7 +63,7 @@ impl AsyncTransport {
         R: DeserializeOwned,
     {
         let call = PreparedTelegramCall::new(method, token)?;
-        let payload = build_multipart_payload(fields, file_field_name, file);
+        let payload = build_multipart_payload(fields, file_field_name, file)?;
         let (content_type, content_length) = multipart_header_values(&payload)?;
 
         let request = self.configure_request(self.client.post(call.path()), defaults);

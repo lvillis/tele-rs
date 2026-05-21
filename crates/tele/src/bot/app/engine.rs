@@ -49,6 +49,12 @@ where
         self
     }
 
+    pub fn with_config_checked(mut self, config: EngineConfig) -> Result<Self> {
+        config.validate()?;
+        self.config = config;
+        Ok(self)
+    }
+
     pub fn config_mut(&mut self) -> &mut EngineConfig {
         &mut self.config
     }
@@ -149,6 +155,8 @@ where
 
     /// Runs one poll/prepare/dispatch cycle.
     pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
+        self.config.validate()?;
+
         let poll_started_at = Instant::now();
         self.notify_event(EngineEvent::PollStarted).await;
 
@@ -203,7 +211,9 @@ where
         })
         .await;
 
-        self.dispatch_updates(updates).await
+        let outcomes = self.dispatch_updates(updates).await?;
+        self.source.commit(&outcomes).await?;
+        Ok(outcomes)
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -307,7 +317,7 @@ where
                     if !self.config.continue_on_handler_error {
                         return Err(error);
                     }
-                    let outcome = DispatchOutcome::Ignored { update_id };
+                    let outcome = DispatchOutcome::Failed { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
                     outcomes.push(outcome);
@@ -322,7 +332,7 @@ where
         &mut self,
         updates: Vec<Update>,
     ) -> Result<Vec<DispatchOutcome>> {
-        let max_concurrency = self.config.max_handler_concurrency.max(1);
+        let max_concurrency = self.config.max_handler_concurrency;
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
 
@@ -400,7 +410,7 @@ where
                         first_error = Some(error);
                         break;
                     }
-                    let outcome = DispatchOutcome::Ignored { update_id };
+                    let outcome = DispatchOutcome::Failed { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
                     outcomes.push(outcome);
@@ -413,10 +423,8 @@ where
                         classification: error.classification(),
                     })
                     .await;
-                    if !self.config.continue_on_handler_error {
-                        first_error = Some(error);
-                        break;
-                    }
+                    first_error = Some(error);
+                    break;
                 }
             }
         }
@@ -579,10 +587,14 @@ impl BotEngine<LongPollingSource> {
 
 impl BotEngine<ChannelUpdateSource> {
     /// Builds engine backed by channel source and returns paired sink.
-    pub fn with_channel(client: Client, router: Router, buffer: usize) -> (UpdateSink, Self) {
-        let (sink, source) = channel_source(buffer);
+    pub fn with_channel(
+        client: Client,
+        router: Router,
+        buffer: usize,
+    ) -> Result<(UpdateSink, Self)> {
+        let (sink, source) = channel_source(buffer)?;
         let engine = Self::new(client, source, router);
-        (sink, engine)
+        Ok((sink, engine))
     }
 }
 
@@ -621,6 +633,11 @@ where
     pub fn with_engine_config(mut self, config: EngineConfig) -> Self {
         self.engine = self.engine.with_config(config);
         self
+    }
+
+    pub fn with_engine_config_checked(mut self, config: EngineConfig) -> Result<Self> {
+        self.engine = self.engine.with_config_checked(config)?;
+        Ok(self)
     }
 
     /// Prepares router runtime state ahead of serving updates.

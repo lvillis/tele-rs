@@ -59,6 +59,14 @@ fn build_synced_spec(
         .iter()
         .map(|method| method.method.clone())
         .collect::<Vec<_>>();
+    if all_methods.len() < existing_spec.all_methods.len() {
+        return Err(format!(
+            "refusing to sync Bot API spec because parsed method count shrank from {} to {}",
+            existing_spec.all_methods.len(),
+            all_methods.len()
+        )
+        .into());
+    }
 
     let existing_advanced = existing_spec
         .advanced_methods
@@ -409,6 +417,30 @@ mod tests {
                 .map(|method| method.method.as_str())
                 .collect::<Vec<_>>(),
             vec!["sendMessage", "sendPaidMedia"]
+        );
+    }
+
+    #[test]
+    fn sync_rejects_method_count_shrink() {
+        let existing_spec = BotApiSpec {
+            version: "Bot API 9.4".to_owned(),
+            generated_from: "https://core.telegram.org/bots/api".to_owned(),
+            all_methods: vec!["getMe".to_owned(), "sendMessage".to_owned()],
+            advanced_methods: vec![MethodSpec {
+                fn_name: "send_message".to_owned(),
+                method: "sendMessage".to_owned(),
+                return_desc: "a Message object".to_owned(),
+                params: vec![],
+            }],
+        };
+        let html = r##"
+            <p>Bot API 9.5</p>
+            <h4><a class="anchor" name="getme" href="#getme"><i class="anchor-icon"></i></a>getMe</h4>
+            <p>Use this method to get basic information about the bot. Returns a User object.</p>
+        "##;
+
+        assert!(
+            build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec).is_err()
         );
     }
 }

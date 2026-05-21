@@ -7,6 +7,12 @@ use crate::types::bot::User;
 use crate::types::chat::{ChatInviteLink, ChatMember};
 use crate::types::message::{Chat, Location, Message, Poll};
 use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton, WebAppData};
+use crate::{Error, Result};
+
+const MAX_GET_UPDATES_LIMIT: u8 = 100;
+const MAX_CALLBACK_ANSWER_TEXT_CHARS: usize = 200;
+const MAX_INLINE_QUERY_RESULTS: usize = 50;
+const MAX_INLINE_NEXT_OFFSET_BYTES: usize = 64;
 
 /// Classified update payload kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -337,6 +343,23 @@ impl GetUpdatesRequest {
             ..Self::default()
         }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .limit
+            .is_some_and(|limit| limit == 0 || limit > MAX_GET_UPDATES_LIMIT)
+        {
+            return Err(invalid_request(format!(
+                "getUpdates limit must be 1-{MAX_GET_UPDATES_LIMIT}"
+            )));
+        }
+
+        if let Some(allowed_updates) = self.allowed_updates.as_ref() {
+            validate_allowed_updates(allowed_updates)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// `answerCallbackQuery` request.
@@ -351,6 +374,24 @@ pub struct AnswerCallbackQueryRequest {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_time: Option<u32>,
+}
+
+impl AnswerCallbackQueryRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_non_empty_id("callback_query_id", &self.callback_query_id)?;
+        if let Some(text) = self.text.as_deref() {
+            validate_optional_text_limit(
+                "callback answer text",
+                text,
+                MAX_CALLBACK_ANSWER_TEXT_CHARS,
+            )?;
+        }
+        if let Some(url) = self.url.as_deref() {
+            validate_http_url("callback answer url", url)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// `answerInlineQuery` request.
@@ -407,6 +448,97 @@ impl AnswerInlineQueryRequest {
         self.button = Some(button);
         self
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_non_empty_id("inline_query_id", &self.inline_query_id)?;
+        if self.results.len() > MAX_INLINE_QUERY_RESULTS {
+            return Err(invalid_request(format!(
+                "answerInlineQuery accepts at most {MAX_INLINE_QUERY_RESULTS} results"
+            )));
+        }
+        if let Some(next_offset) = self.next_offset.as_deref() {
+            if next_offset.len() > MAX_INLINE_NEXT_OFFSET_BYTES {
+                return Err(invalid_request(format!(
+                    "next_offset exceeds {MAX_INLINE_NEXT_OFFSET_BYTES} bytes"
+                )));
+            }
+            if next_offset.chars().any(char::is_control) {
+                return Err(invalid_request(
+                    "next_offset must not contain control characters",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn invalid_request(reason: impl Into<String>) -> Error {
+    Error::InvalidRequest {
+        reason: reason.into(),
+    }
+}
+
+fn validate_non_empty_id(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(invalid_request(format!(
+            "{field} must not contain control characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_optional_text_limit(field: &str, value: &str, max_chars: usize) -> Result<()> {
+    if value.chars().count() > max_chars {
+        return Err(invalid_request(format!(
+            "{field} must be at most {max_chars} characters"
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(invalid_request(format!(
+            "{field} must not contain control characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_http_url(field: &str, value: &str) -> Result<()> {
+    let parsed = url::Url::parse(value)
+        .map_err(|source| invalid_request(format!("invalid {field}: {source}")))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(invalid_request(format!(
+            "{field} must use http or https scheme, got `{scheme}`"
+        ))),
+    }
+}
+
+pub(crate) fn validate_allowed_updates(allowed_updates: &[String]) -> Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for update in allowed_updates {
+        if update.trim().is_empty() {
+            return Err(invalid_request(
+                "allowed_updates must not contain empty values",
+            ));
+        }
+        if update.chars().any(char::is_control) {
+            return Err(invalid_request(
+                "allowed_updates must not contain control characters",
+            ));
+        }
+        if !seen.insert(update.as_str()) {
+            return Err(invalid_request(format!(
+                "allowed_updates contains duplicate value `{update}`"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -698,5 +830,73 @@ mod tests {
         assert!(my_chat_member.member().is_admin());
 
         Ok(())
+    }
+
+    #[test]
+    fn validates_get_updates_request_bounds() {
+        let valid = GetUpdatesRequest {
+            limit: Some(100),
+            allowed_updates: Some(vec!["message".to_owned(), "callback_query".to_owned()]),
+            ..GetUpdatesRequest::default()
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid_limit = GetUpdatesRequest {
+            limit: Some(0),
+            ..GetUpdatesRequest::default()
+        };
+        assert!(matches!(
+            invalid_limit.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let duplicate_update = GetUpdatesRequest {
+            allowed_updates: Some(vec!["message".to_owned(), "message".to_owned()]),
+            ..GetUpdatesRequest::default()
+        };
+        assert!(matches!(
+            duplicate_update.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_callback_and_inline_answers() {
+        let valid_callback = AnswerCallbackQueryRequest {
+            callback_query_id: "callback-1".to_owned(),
+            text: Some("ok".to_owned()),
+            show_alert: None,
+            url: Some("https://example.com".to_owned()),
+            cache_time: None,
+        };
+        assert!(valid_callback.validate().is_ok());
+
+        let invalid_callback = AnswerCallbackQueryRequest {
+            callback_query_id: String::new(),
+            text: None,
+            show_alert: None,
+            url: None,
+            cache_time: None,
+        };
+        assert!(matches!(
+            invalid_callback.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let too_many_results = (0..=MAX_INLINE_QUERY_RESULTS)
+            .map(|index| InlineQueryResult::new(json!({"type": "article", "id": index})))
+            .collect::<Vec<_>>();
+        let invalid_inline = AnswerInlineQueryRequest::new("inline-1", too_many_results);
+        assert!(matches!(
+            invalid_inline.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_offset = AnswerInlineQueryRequest::new("inline-1", Vec::new())
+            .next_offset("x".repeat(MAX_INLINE_NEXT_OFFSET_BYTES + 1));
+        assert!(matches!(
+            invalid_offset.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
     }
 }

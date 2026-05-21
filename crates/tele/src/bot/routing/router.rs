@@ -69,12 +69,7 @@ enum RouteResolution {
 
 fn command_mention_from_text(text: &str) -> Option<String> {
     let token = text.split_whitespace().next()?;
-    let command = token.strip_prefix('/')?;
-    let (name, mention) = command.split_once('@')?;
-    if name.is_empty() {
-        return None;
-    }
-    normalize_bot_username(mention)
+    parse_command_token(token)?.1
 }
 
 fn update_mentions_command(update: &Update) -> bool {

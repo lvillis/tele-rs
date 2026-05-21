@@ -65,7 +65,7 @@ async fn dispatch_webhook_runs_router_handler() -> Result<(), DynError> {
             });
     }
 
-    let runner = WebhookRunner::new(client, router).expected_secret_token("secret");
+    let runner = WebhookRunner::new(client, router).expected_secret_token("secret")?;
     let payload = update_payload("/start hello")?;
     let headers = secret_headers("secret")?;
 
@@ -79,7 +79,7 @@ async fn dispatch_webhook_runs_router_handler() -> Result<(), DynError> {
 #[tokio::test]
 async fn dispatch_webhook_status_maps_secret_and_json_errors() -> Result<(), DynError> {
     let client = build_client()?;
-    let runner = WebhookRunner::new(client, Router::new()).expected_secret_token("secret");
+    let runner = WebhookRunner::new(client, Router::new()).expected_secret_token("secret")?;
 
     let wrong_headers = secret_headers("wrong")?;
     let payload = update_payload("hello")?;

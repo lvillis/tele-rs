@@ -44,6 +44,7 @@ impl BotService {
         &self,
         request: &GetUserProfilePhotosRequest,
     ) -> Result<UserProfilePhotos> {
+        request.validate()?;
         self.client
             .call_method("getUserProfilePhotos", request)
             .await
@@ -51,31 +52,37 @@ impl BotService {
 
     /// Calls `setMyCommands`.
     pub async fn set_my_commands(&self, request: &SetMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyCommands", request).await
     }
 
     /// Calls `getMyCommands`.
     pub async fn get_my_commands(&self, request: &GetMyCommandsRequest) -> Result<Vec<BotCommand>> {
+        request.validate()?;
         self.client.call_method("getMyCommands", request).await
     }
 
     /// Calls `deleteMyCommands`.
     pub async fn delete_my_commands(&self, request: &DeleteMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMyCommands", request).await
     }
 
     /// Calls `setMyName`.
     pub async fn set_my_name(&self, request: &SetMyNameRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyName", request).await
     }
 
     /// Calls `getMyName`.
     pub async fn get_my_name(&self, request: &GetMyNameRequest) -> Result<BotName> {
+        request.validate()?;
         self.client.call_method("getMyName", request).await
     }
 
     /// Calls `setMyDescription`.
     pub async fn set_my_description(&self, request: &SetMyDescriptionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyDescription", request).await
     }
 
@@ -84,6 +91,7 @@ impl BotService {
         &self,
         request: &GetMyDescriptionRequest,
     ) -> Result<BotDescription> {
+        request.validate()?;
         self.client.call_method("getMyDescription", request).await
     }
 
@@ -92,6 +100,7 @@ impl BotService {
         &self,
         request: &SetMyShortDescriptionRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("setMyShortDescription", request)
             .await
@@ -102,6 +111,7 @@ impl BotService {
         &self,
         request: &GetMyShortDescriptionRequest,
     ) -> Result<BotShortDescription> {
+        request.validate()?;
         self.client
             .call_method("getMyShortDescription", request)
             .await
@@ -141,46 +151,55 @@ impl BlockingBotService {
         &self,
         request: &GetUserProfilePhotosRequest,
     ) -> Result<UserProfilePhotos> {
+        request.validate()?;
         self.client.call_method("getUserProfilePhotos", request)
     }
 
     /// Calls `setMyCommands`.
     pub fn set_my_commands(&self, request: &SetMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyCommands", request)
     }
 
     /// Calls `getMyCommands`.
     pub fn get_my_commands(&self, request: &GetMyCommandsRequest) -> Result<Vec<BotCommand>> {
+        request.validate()?;
         self.client.call_method("getMyCommands", request)
     }
 
     /// Calls `deleteMyCommands`.
     pub fn delete_my_commands(&self, request: &DeleteMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMyCommands", request)
     }
 
     /// Calls `setMyName`.
     pub fn set_my_name(&self, request: &SetMyNameRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyName", request)
     }
 
     /// Calls `getMyName`.
     pub fn get_my_name(&self, request: &GetMyNameRequest) -> Result<BotName> {
+        request.validate()?;
         self.client.call_method("getMyName", request)
     }
 
     /// Calls `setMyDescription`.
     pub fn set_my_description(&self, request: &SetMyDescriptionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyDescription", request)
     }
 
     /// Calls `getMyDescription`.
     pub fn get_my_description(&self, request: &GetMyDescriptionRequest) -> Result<BotDescription> {
+        request.validate()?;
         self.client.call_method("getMyDescription", request)
     }
 
     /// Calls `setMyShortDescription`.
     pub fn set_my_short_description(&self, request: &SetMyShortDescriptionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setMyShortDescription", request)
     }
 
@@ -189,6 +208,7 @@ impl BlockingBotService {
         &self,
         request: &GetMyShortDescriptionRequest,
     ) -> Result<BotShortDescription> {
+        request.validate()?;
         self.client.call_method("getMyShortDescription", request)
     }
 }

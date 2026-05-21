@@ -2,7 +2,19 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `getAvailableGifts`.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -54,6 +66,11 @@ impl AdvancedSendGiftRequest {
 impl AdvancedRequest for AdvancedSendGiftRequest {
     type Response = bool;
     const METHOD: &'static str = "sendGift";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("gift_id", &self.gift_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `giftPremiumSubscription`.
@@ -202,6 +219,12 @@ impl AdvancedConvertGiftToStarsRequest {
 impl AdvancedRequest for AdvancedConvertGiftToStarsRequest {
     type Response = bool;
     const METHOD: &'static str = "convertGiftToStars";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `upgradeGift`.
@@ -232,6 +255,12 @@ impl AdvancedUpgradeGiftRequest {
 impl AdvancedRequest for AdvancedUpgradeGiftRequest {
     type Response = bool;
     const METHOD: &'static str = "upgradeGift";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `transferGift`.
@@ -262,6 +291,12 @@ impl AdvancedTransferGiftRequest {
 impl AdvancedRequest for AdvancedTransferGiftRequest {
     type Response = bool;
     const METHOD: &'static str = "transferGift";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_required_string("owned_gift_id", &self.owned_gift_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getMyStarBalance`.
@@ -321,6 +356,14 @@ impl AdvancedRefundStarPaymentRequest {
 impl AdvancedRequest for AdvancedRefundStarPaymentRequest {
     type Response = bool;
     const METHOD: &'static str = "refundStarPayment";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string(
+            "telegram_payment_charge_id",
+            &self.telegram_payment_charge_id,
+        )?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editUserStarSubscription`.
@@ -348,4 +391,12 @@ impl AdvancedEditUserStarSubscriptionRequest {
 impl AdvancedRequest for AdvancedEditUserStarSubscriptionRequest {
     type Response = bool;
     const METHOD: &'static str = "editUserStarSubscription";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string(
+            "telegram_payment_charge_id",
+            &self.telegram_payment_charge_id,
+        )?;
+        Ok(())
+    }
 }

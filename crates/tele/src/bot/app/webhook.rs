@@ -2,8 +2,35 @@ use super::*;
 
 #[derive(Clone, Debug, Default)]
 pub struct WebhookConfig {
-    pub expected_secret_token: Option<String>,
+    expected_secret_token: Option<WebhookSecretToken>,
     pub continue_on_handler_error: bool,
+}
+
+impl WebhookConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn expected_secret_token(&self) -> Option<&str> {
+        self.expected_secret_token
+            .as_ref()
+            .map(WebhookSecretToken::expose)
+    }
+
+    pub fn with_expected_secret_token(mut self, secret_token: impl Into<String>) -> Result<Self> {
+        self.expected_secret_token = Some(WebhookSecretToken::new(secret_token)?);
+        Ok(self)
+    }
+
+    pub fn without_expected_secret_token(mut self) -> Self {
+        self.expected_secret_token = None;
+        self
+    }
+
+    pub fn continue_on_handler_error(mut self, enabled: bool) -> Self {
+        self.continue_on_handler_error = enabled;
+        self
+    }
 }
 
 /// Webhook dispatcher that can be embedded into any HTTP framework.
@@ -29,9 +56,9 @@ impl WebhookRunner {
         self
     }
 
-    pub fn expected_secret_token(mut self, secret_token: impl Into<String>) -> Self {
-        self.config.expected_secret_token = Some(secret_token.into());
-        self
+    pub fn expected_secret_token(mut self, secret_token: impl Into<String>) -> Result<Self> {
+        self.config.expected_secret_token = Some(WebhookSecretToken::new(secret_token)?);
+        Ok(self)
     }
 
     pub fn continue_on_handler_error(mut self, enabled: bool) -> Self {
@@ -62,11 +89,10 @@ impl WebhookRunner {
     }
 
     pub fn verify_secret_token(&self, incoming_secret: Option<&str>) -> bool {
-        match self.config.expected_secret_token.as_deref() {
+        match self.config.expected_secret_token.as_ref() {
             None => true,
-            Some(expected) => {
-                incoming_secret.is_some_and(|incoming| constant_time_eq_str(incoming, expected))
-            }
+            Some(expected) => incoming_secret
+                .is_some_and(|incoming| constant_time_eq_str(incoming, expected.expose())),
         }
     }
 
@@ -102,7 +128,7 @@ impl WebhookRunner {
             Err(error) => {
                 self.notify_handler_error(update_id, &error);
                 if self.config.continue_on_handler_error {
-                    return Ok(DispatchOutcome::Ignored { update_id });
+                    return Ok(DispatchOutcome::Failed { update_id });
                 }
                 Err(error)
             }

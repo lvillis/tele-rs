@@ -5,6 +5,9 @@ use serde_json::Value;
 
 use crate::types::common::UserId;
 use crate::types::message::PhotoSize;
+use crate::{Error, Result};
+
+const MAX_USER_PROFILE_PHOTOS_LIMIT: u8 = 100;
 
 /// Telegram user object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -48,5 +51,38 @@ impl GetUserProfilePhotosRequest {
             offset: None,
             limit: None,
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .limit
+            .is_some_and(|limit| limit == 0 || limit > MAX_USER_PROFILE_PHOTOS_LIMIT)
+        {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "getUserProfilePhotos limit must be 1-{MAX_USER_PROFILE_PHOTOS_LIMIT}"
+                ),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_profile_photo_limit() {
+        let mut request = GetUserProfilePhotosRequest::new(UserId(1));
+        request.limit = Some(100);
+        assert!(request.validate().is_ok());
+
+        request.limit = Some(0);
+        assert!(matches!(
+            request.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
     }
 }

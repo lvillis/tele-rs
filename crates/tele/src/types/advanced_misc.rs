@@ -2,7 +2,29 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_required_vec(field: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `getMe`.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -56,6 +78,11 @@ impl AdvancedForwardMessagesRequest {
 impl AdvancedRequest for AdvancedForwardMessagesRequest {
     type Response = Vec<crate::types::message::MessageIdObject>;
     const METHOD: &'static str = "forwardMessages";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_vec("message_ids", self.message_ids.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `sendVideoNote`.
@@ -119,6 +146,11 @@ impl AdvancedSendVideoNoteRequest {
 impl AdvancedRequest for AdvancedSendVideoNoteRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "sendVideoNote";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("video_note", &self.video_note)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `sendPaidMedia`.
@@ -188,6 +220,11 @@ impl AdvancedSendPaidMediaRequest {
 impl AdvancedRequest for AdvancedSendPaidMediaRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "sendPaidMedia";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_vec("media", self.media.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `sendChecklist`.
@@ -230,6 +267,11 @@ impl AdvancedSendChecklistRequest {
 impl AdvancedRequest for AdvancedSendChecklistRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "sendChecklist";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `sendMessageDraft`.
@@ -262,6 +304,11 @@ impl AdvancedSendMessageDraftRequest {
 impl AdvancedRequest for AdvancedSendMessageDraftRequest {
     type Response = bool;
     const METHOD: &'static str = "sendMessageDraft";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("text", &self.text)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setMessageReaction`.
@@ -401,6 +448,11 @@ impl AdvancedEditChatSubscriptionInviteLinkRequest {
 impl AdvancedRequest for AdvancedEditChatSubscriptionInviteLinkRequest {
     type Response = crate::types::chat::ChatInviteLink;
     const METHOD: &'static str = "editChatSubscriptionInviteLink";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("invite_link", &self.invite_link)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `approveChatJoinRequest`.
@@ -740,6 +792,11 @@ impl AdvancedAnswerWebAppQueryRequest {
 impl AdvancedRequest for AdvancedAnswerWebAppQueryRequest {
     type Response = crate::types::message::SentWebAppMessage;
     const METHOD: &'static str = "answerWebAppQuery";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("web_app_query_id", &self.web_app_query_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `savePreparedInlineMessage`.
@@ -861,6 +918,11 @@ impl AdvancedEditMessageChecklistRequest {
 impl AdvancedRequest for AdvancedEditMessageChecklistRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "editMessageChecklist";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `approveSuggestedPost`.
@@ -954,6 +1016,11 @@ impl AdvancedSendGameRequest {
 impl AdvancedRequest for AdvancedSendGameRequest {
     type Response = Value;
     const METHOD: &'static str = "sendGame";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("game_short_name", &self.game_short_name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setGameScore`.

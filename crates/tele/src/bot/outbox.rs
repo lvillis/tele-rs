@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+
 /// Reliable send-side outbox configuration.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -32,6 +34,50 @@ impl Default for OutboxConfig {
 }
 
 impl OutboxConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.queue_capacity == 0 {
+            return Err(invalid_request(
+                "outbox queue_capacity must be greater than 0",
+            ));
+        }
+        if self.max_attempts == 0 {
+            return Err(invalid_request(
+                "outbox max_attempts must be greater than 0",
+            ));
+        }
+        if self.base_backoff.is_zero() {
+            return Err(invalid_request(
+                "outbox base_backoff must be greater than 0",
+            ));
+        }
+        if self.max_backoff.is_zero() {
+            return Err(invalid_request("outbox max_backoff must be greater than 0"));
+        }
+        if self.base_backoff > self.max_backoff {
+            return Err(invalid_request(
+                "outbox base_backoff must not exceed max_backoff",
+            ));
+        }
+        if self.dedupe_ttl.is_zero() {
+            return Err(invalid_request("outbox dedupe_ttl must be greater than 0"));
+        }
+        if self.max_dead_letters == 0 {
+            return Err(invalid_request(
+                "outbox max_dead_letters must be greater than 0",
+            ));
+        }
+        if self
+            .max_message_age
+            .is_some_and(|max_message_age| max_message_age.is_zero())
+        {
+            return Err(invalid_request(
+                "outbox max_message_age must be greater than 0 when set",
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn with_persistence_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.persistence_path = Some(path.into());
         self
@@ -122,10 +168,13 @@ pub struct BotOutbox {
 }
 
 impl BotOutbox {
-    pub fn spawn(client: Client, config: OutboxConfig) -> Self {
-        let (sender, receiver) = mpsc::channel(config.queue_capacity.max(1));
-        tokio::spawn(run_outbox_worker(client, config, receiver));
-        Self { sender }
+    pub fn spawn(client: Client, config: OutboxConfig) -> Result<Self> {
+        config.validate()?;
+        validate_dead_letter_path(config.dead_letter_path.as_deref())?;
+        let persisted_queue = load_outbox_queue(&config)?;
+        let (sender, receiver) = mpsc::channel(config.queue_capacity);
+        tokio::spawn(run_outbox_worker(client, config, persisted_queue, receiver));
+        Ok(Self { sender })
     }
 
     pub async fn send_text(
@@ -142,10 +191,12 @@ impl BotOutbox {
         text: impl Into<String>,
         idempotency_key: Option<String>,
     ) -> Result<Message> {
+        validate_idempotency_key(idempotency_key.as_deref())?;
+        let request = SendMessageRequest::new(chat_id, text)?;
         let (responder, receiver) = oneshot::channel();
         let command = OutboxCommand {
-            chat_id: chat_id.into(),
-            text: text.into(),
+            chat_id: request.chat_id,
+            text: request.text,
             idempotency_key,
             responder,
         };
@@ -161,16 +212,30 @@ impl BotOutbox {
     }
 }
 
+fn validate_idempotency_key(key: Option<&str>) -> Result<()> {
+    let Some(key) = key else {
+        return Ok(());
+    };
+
+    if key.trim().is_empty() {
+        return Err(invalid_request("outbox idempotency key cannot be empty"));
+    }
+    if key.len() > MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES {
+        return Err(invalid_request(format!(
+            "outbox idempotency key exceeds {MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES} bytes"
+        )));
+    }
+
+    Ok(())
+}
+
 async fn run_outbox_worker(
     client: Client,
     config: OutboxConfig,
+    persisted_queue: Vec<PersistedOutboxCommand>,
     mut receiver: mpsc::Receiver<OutboxCommand>,
 ) {
     let mut dedupe: HashMap<String, (Message, Instant)> = HashMap::new();
-    let persisted_queue = match load_outbox_queue_async(config.persistence_path.clone()).await {
-        Ok(queue) => queue,
-        Err(_error) => return,
-    };
     let mut queue = persisted_queue
         .into_iter()
         .map(|payload| QueuedOutboxCommand {
@@ -293,7 +358,7 @@ async fn run_outbox_worker(
                 }
             }
             Err(error) => {
-                let max_attempts = config.max_attempts.max(1);
+                let max_attempts = config.max_attempts;
                 let error_message = error.to_string();
                 let attempt = if let Some(front) = queue.front_mut() {
                     front.payload.attempt = front.payload.attempt.saturating_add(1);
@@ -403,6 +468,96 @@ fn to_dead_letter(payload: &PersistedOutboxCommand, reason: String) -> DeadLette
     }
 }
 
+fn validate_outbox_snapshot(snapshot: &OutboxSnapshot, config: &OutboxConfig) -> Result<()> {
+    if snapshot.version != default_outbox_snapshot_version() {
+        return Err(invalid_request(format!(
+            "unsupported outbox snapshot version `{}`",
+            snapshot.version
+        )));
+    }
+
+    for (index, command) in snapshot.queue.iter().enumerate() {
+        validate_persisted_outbox_command(command, config).map_err(|error| {
+            invalid_request(format!(
+                "invalid outbox snapshot queue entry {index}: {error}"
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_persisted_outbox_command(
+    command: &PersistedOutboxCommand,
+    config: &OutboxConfig,
+) -> Result<()> {
+    let _ = SendMessageRequest::new(command.chat_id.clone(), command.text.clone())?;
+    validate_idempotency_key(command.idempotency_key.as_deref())?;
+    if command.enqueued_at_unix_ms < 0 {
+        return Err(invalid_request(
+            "outbox enqueued_at_unix_ms must not be negative",
+        ));
+    }
+    if command.attempt >= config.max_attempts {
+        return Err(invalid_request(format!(
+            "outbox attempt {} has no remaining retry budget for max_attempts {}",
+            command.attempt, config.max_attempts
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_dead_letter_snapshot(snapshot: &DeadLetterSnapshot) -> Result<()> {
+    if snapshot.version != default_dead_letter_snapshot_version() {
+        return Err(invalid_request(format!(
+            "unsupported dead-letter snapshot version `{}`",
+            snapshot.version
+        )));
+    }
+
+    for (index, entry) in snapshot.entries.iter().enumerate() {
+        validate_dead_letter_entry(entry).map_err(|error| {
+            invalid_request(format!(
+                "invalid dead-letter snapshot entry {index}: {error}"
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_dead_letter_entry(entry: &DeadLetterEntry) -> Result<()> {
+    let _ = SendMessageRequest::new(entry.chat_id.clone(), entry.text.clone())?;
+    validate_idempotency_key(entry.idempotency_key.as_deref())?;
+    if entry.reason.trim().is_empty() {
+        return Err(invalid_request("dead-letter reason cannot be empty"));
+    }
+    if entry.enqueued_at_unix_ms < 0 {
+        return Err(invalid_request(
+            "dead-letter enqueued_at_unix_ms must not be negative",
+        ));
+    }
+    if entry.failed_at_unix_ms < 0 {
+        return Err(invalid_request(
+            "dead-letter failed_at_unix_ms must not be negative",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_dead_letter_path(path: Option<&Path>) -> Result<()> {
+    if let Some(path) = path
+        && path.exists()
+    {
+        let snapshot = load_dead_letter_snapshot(path)?;
+        validate_dead_letter_snapshot(&snapshot)?;
+    }
+
+    Ok(())
+}
+
 fn append_dead_letter(
     path: Option<&Path>,
     max_dead_letters: usize,
@@ -413,8 +568,8 @@ fn append_dead_letter(
     };
 
     let mut snapshot = load_dead_letter_snapshot(path)?;
+    validate_dead_letter_snapshot(&snapshot)?;
     snapshot.entries.push(entry);
-    let max_dead_letters = max_dead_letters.max(1);
     if snapshot.entries.len() > max_dead_letters {
         let overflow = snapshot.entries.len().saturating_sub(max_dead_letters);
         snapshot.entries.drain(0..overflow);
@@ -453,16 +608,18 @@ fn load_dead_letter_snapshot(path: &Path) -> Result<DeadLetterSnapshot> {
         });
     }
 
-    serde_json::from_slice(&raw).map_err(|source| {
+    let snapshot: DeadLetterSnapshot = serde_json::from_slice(&raw).map_err(|source| {
         invalid_request(format!(
             "failed to deserialize dead-letter snapshot `{}`: {source}",
             path.display()
         ))
-    })
+    })?;
+    validate_dead_letter_snapshot(&snapshot)?;
+    Ok(snapshot)
 }
 
-fn load_outbox_queue(path: Option<&Path>) -> Result<Vec<PersistedOutboxCommand>> {
-    let Some(path) = path else {
+fn load_outbox_queue(config: &OutboxConfig) -> Result<Vec<PersistedOutboxCommand>> {
+    let Some(path) = config.persistence_path.as_deref() else {
         return Ok(Vec::new());
     };
 
@@ -484,6 +641,7 @@ fn load_outbox_queue(path: Option<&Path>) -> Result<Vec<PersistedOutboxCommand>>
             path.display()
         ))
     })?;
+    validate_outbox_snapshot(&snapshot, config)?;
     Ok(snapshot.queue)
 }
 
@@ -500,10 +658,6 @@ fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -
         serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
     write_file_atomic(path, encoded.as_slice(), "outbox snapshot")?;
     Ok(())
-}
-
-async fn load_outbox_queue_async(path: Option<PathBuf>) -> Result<Vec<PersistedOutboxCommand>> {
-    run_blocking_io(move || load_outbox_queue(path.as_deref())).await
 }
 
 async fn persist_outbox_queue_async(

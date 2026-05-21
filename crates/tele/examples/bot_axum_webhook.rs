@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runner = WebhookRunner::new(client.clone(), router);
     if let Some(secret) = webhook_secret {
-        runner = runner.expected_secret_token(secret);
+        runner = runner.expected_secret_token(secret)?;
     }
     let runner = Arc::new(runner);
 

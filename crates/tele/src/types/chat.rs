@@ -5,6 +5,14 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::common::{ChatId, MessageId, UserId};
+use crate::{Error, Result};
+
+const MAX_CHAT_TITLE_CHARS: usize = 128;
+const MAX_CHAT_DESCRIPTION_CHARS: usize = 255;
+const MAX_CUSTOM_TITLE_CHARS: usize = 16;
+const MAX_INVITE_LINK_NAME_CHARS: usize = 32;
+const MAX_INVITE_LINK_MEMBER_LIMIT: u32 = 99_999;
+const MAX_STICKER_SET_NAME_CHARS: usize = 64;
 
 /// Telegram chat permissions object.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -634,6 +642,18 @@ pub struct SetChatAdministratorCustomTitleRequest {
     pub custom_title: String,
 }
 
+impl SetChatAdministratorCustomTitleRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_text_limit(
+            "custom_title",
+            &self.custom_title,
+            TextPresence::AllowEmpty,
+            TextLayout::SingleLine,
+            MAX_CUSTOM_TITLE_CHARS,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct BanChatSenderChatRequest {
     pub chat_id: ChatId,
@@ -690,6 +710,16 @@ pub struct CreateChatInviteLinkRequest {
     pub creates_join_request: Option<bool>,
 }
 
+impl CreateChatInviteLinkRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_invite_link_options(
+            self.name.as_deref(),
+            self.member_limit,
+            self.creates_join_request,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct EditChatInviteLinkRequest {
     pub chat_id: ChatId,
@@ -704,10 +734,27 @@ pub struct EditChatInviteLinkRequest {
     pub creates_join_request: Option<bool>,
 }
 
+impl EditChatInviteLinkRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_required_text("invite_link", &self.invite_link)?;
+        validate_invite_link_options(
+            self.name.as_deref(),
+            self.member_limit,
+            self.creates_join_request,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RevokeChatInviteLinkRequest {
     pub chat_id: ChatId,
     pub invite_link: String,
+}
+
+impl RevokeChatInviteLinkRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_required_text("invite_link", &self.invite_link)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -716,11 +763,39 @@ pub struct SetChatTitleRequest {
     pub title: String,
 }
 
+impl SetChatTitleRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_text_limit(
+            "title",
+            &self.title,
+            TextPresence::Required,
+            TextLayout::SingleLine,
+            MAX_CHAT_TITLE_CHARS,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SetChatDescriptionRequest {
     pub chat_id: ChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+impl SetChatDescriptionRequest {
+    pub fn validate(&self) -> Result<()> {
+        let Some(description) = self.description.as_deref() else {
+            return Ok(());
+        };
+
+        validate_text_limit(
+            "description",
+            description,
+            TextPresence::AllowEmpty,
+            TextLayout::MultiLine,
+            MAX_CHAT_DESCRIPTION_CHARS,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -754,9 +829,118 @@ pub struct SetChatStickerSetRequest {
     pub sticker_set_name: String,
 }
 
+impl SetChatStickerSetRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_text_limit(
+            "sticker_set_name",
+            &self.sticker_set_name,
+            TextPresence::Required,
+            TextLayout::SingleLine,
+            MAX_STICKER_SET_NAME_CHARS,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DeleteChatStickerSetRequest {
     pub chat_id: ChatId,
+}
+
+#[derive(Clone, Copy)]
+enum TextPresence {
+    Required,
+    AllowEmpty,
+}
+
+#[derive(Clone, Copy)]
+enum TextLayout {
+    SingleLine,
+    MultiLine,
+}
+
+fn validate_invite_link_options(
+    name: Option<&str>,
+    member_limit: Option<u32>,
+    creates_join_request: Option<bool>,
+) -> Result<()> {
+    if let Some(name) = name {
+        validate_text_limit(
+            "name",
+            name,
+            TextPresence::AllowEmpty,
+            TextLayout::SingleLine,
+            MAX_INVITE_LINK_NAME_CHARS,
+        )?;
+    }
+
+    if let Some(member_limit) = member_limit
+        && !(1..=MAX_INVITE_LINK_MEMBER_LIMIT).contains(&member_limit)
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("member_limit must be 1-{MAX_INVITE_LINK_MEMBER_LIMIT} users"),
+        });
+    }
+
+    if creates_join_request == Some(true) && member_limit.is_some() {
+        return Err(Error::InvalidRequest {
+            reason: "creates_join_request cannot be combined with member_limit".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_required_text(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_text_limit(
+    field: &str,
+    value: &str,
+    presence: TextPresence,
+    layout: TextLayout,
+    max_chars: usize,
+) -> Result<()> {
+    if matches!(presence, TextPresence::Required) && value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not be empty"),
+        });
+    }
+
+    if value.chars().count() > max_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be at most {max_chars} characters"),
+        });
+    }
+
+    if value
+        .chars()
+        .any(|character| is_disallowed_control(character, layout))
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn is_disallowed_control(character: char, layout: TextLayout) -> bool {
+    match layout {
+        TextLayout::SingleLine => character.is_control(),
+        TextLayout::MultiLine => character.is_control() && !matches!(character, '\n' | '\r' | '\t'),
+    }
 }
 
 #[cfg(test)]
@@ -780,6 +964,114 @@ mod tests {
         assert_eq!(custom.can_send_messages, Some(true));
         assert_eq!(custom.can_add_web_page_previews, Some(true));
         assert_eq!(custom.can_send_photos, Some(false));
+    }
+
+    #[test]
+    fn validates_chat_profile_requests() {
+        let title = SetChatTitleRequest {
+            chat_id: ChatId::from(1),
+            title: "group".to_owned(),
+        };
+        assert!(title.validate().is_ok());
+
+        let empty_title = SetChatTitleRequest {
+            chat_id: ChatId::from(1),
+            title: "   ".to_owned(),
+        };
+        assert!(matches!(
+            empty_title.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let long_description = SetChatDescriptionRequest {
+            chat_id: ChatId::from(1),
+            description: Some("a".repeat(MAX_CHAT_DESCRIPTION_CHARS + 1)),
+        };
+        assert!(matches!(
+            long_description.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let multiline_description = SetChatDescriptionRequest {
+            chat_id: ChatId::from(1),
+            description: Some("hello\nworld".to_owned()),
+        };
+        assert!(multiline_description.validate().is_ok());
+
+        let multiline_title = SetChatTitleRequest {
+            chat_id: ChatId::from(1),
+            title: "hello\nworld".to_owned(),
+        };
+        assert!(matches!(
+            multiline_title.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let custom_title = SetChatAdministratorCustomTitleRequest {
+            chat_id: ChatId::from(1),
+            user_id: UserId::from(2),
+            custom_title: "a".repeat(MAX_CUSTOM_TITLE_CHARS + 1),
+        };
+        assert!(matches!(
+            custom_title.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let sticker_set = SetChatStickerSetRequest {
+            chat_id: ChatId::from(1),
+            sticker_set_name: "bad\nname".to_owned(),
+        };
+        assert!(matches!(
+            sticker_set.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_chat_invite_link_requests() {
+        let valid = CreateChatInviteLinkRequest {
+            chat_id: ChatId::from(1),
+            name: Some("mods".to_owned()),
+            expire_date: None,
+            member_limit: Some(10),
+            creates_join_request: None,
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid_limit = CreateChatInviteLinkRequest {
+            member_limit: Some(0),
+            ..valid.clone()
+        };
+        assert!(matches!(
+            invalid_limit.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let join_request_with_limit = CreateChatInviteLinkRequest {
+            member_limit: Some(10),
+            creates_join_request: Some(true),
+            ..valid
+        };
+        assert!(matches!(
+            join_request_with_limit.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let edit = EditChatInviteLinkRequest {
+            chat_id: ChatId::from(1),
+            invite_link: "".to_owned(),
+            name: Some("a".repeat(MAX_INVITE_LINK_NAME_CHARS + 1)),
+            expire_date: None,
+            member_limit: None,
+            creates_join_request: None,
+        };
+        assert!(matches!(edit.validate(), Err(Error::InvalidRequest { .. })));
+
+        let revoke = RevokeChatInviteLinkRequest {
+            chat_id: ChatId::from(1),
+            invite_link: "https://t.me/+abc".to_owned(),
+        };
+        assert!(revoke.validate().is_ok());
     }
 
     #[test]

@@ -2,7 +2,29 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_required_vec(field: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `getBusinessConnection`.
 #[derive(Clone, Debug, Serialize)]
@@ -21,6 +43,11 @@ impl AdvancedGetBusinessConnectionRequest {
 impl AdvancedRequest for AdvancedGetBusinessConnectionRequest {
     type Response = Value;
     const METHOD: &'static str = "getBusinessConnection";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `readBusinessMessage`.
@@ -48,6 +75,11 @@ impl AdvancedReadBusinessMessageRequest {
 impl AdvancedRequest for AdvancedReadBusinessMessageRequest {
     type Response = bool;
     const METHOD: &'static str = "readBusinessMessage";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `deleteBusinessMessages`.
@@ -72,6 +104,12 @@ impl AdvancedDeleteBusinessMessagesRequest {
 impl AdvancedRequest for AdvancedDeleteBusinessMessagesRequest {
     type Response = bool;
     const METHOD: &'static str = "deleteBusinessMessages";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_required_vec("message_ids", self.message_ids.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setBusinessAccountName`.
@@ -96,6 +134,12 @@ impl AdvancedSetBusinessAccountNameRequest {
 impl AdvancedRequest for AdvancedSetBusinessAccountNameRequest {
     type Response = bool;
     const METHOD: &'static str = "setBusinessAccountName";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        validate_required_string("first_name", &self.first_name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setBusinessAccountUsername`.
@@ -118,6 +162,11 @@ impl AdvancedSetBusinessAccountUsernameRequest {
 impl AdvancedRequest for AdvancedSetBusinessAccountUsernameRequest {
     type Response = bool;
     const METHOD: &'static str = "setBusinessAccountUsername";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setBusinessAccountBio`.
@@ -140,6 +189,11 @@ impl AdvancedSetBusinessAccountBioRequest {
 impl AdvancedRequest for AdvancedSetBusinessAccountBioRequest {
     type Response = bool;
     const METHOD: &'static str = "setBusinessAccountBio";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setBusinessAccountProfilePhoto`.
@@ -164,6 +218,11 @@ impl AdvancedSetBusinessAccountProfilePhotoRequest {
 impl AdvancedRequest for AdvancedSetBusinessAccountProfilePhotoRequest {
     type Response = bool;
     const METHOD: &'static str = "setBusinessAccountProfilePhoto";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `removeBusinessAccountProfilePhoto`.
@@ -186,6 +245,11 @@ impl AdvancedRemoveBusinessAccountProfilePhotoRequest {
 impl AdvancedRequest for AdvancedRemoveBusinessAccountProfilePhotoRequest {
     type Response = bool;
     const METHOD: &'static str = "removeBusinessAccountProfilePhoto";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setBusinessAccountGiftSettings`.
@@ -213,6 +277,11 @@ impl AdvancedSetBusinessAccountGiftSettingsRequest {
 impl AdvancedRequest for AdvancedSetBusinessAccountGiftSettingsRequest {
     type Response = bool;
     const METHOD: &'static str = "setBusinessAccountGiftSettings";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getBusinessAccountStarBalance`.
@@ -232,6 +301,11 @@ impl AdvancedGetBusinessAccountStarBalanceRequest {
 impl AdvancedRequest for AdvancedGetBusinessAccountStarBalanceRequest {
     type Response = Value;
     const METHOD: &'static str = "getBusinessAccountStarBalance";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `transferBusinessAccountStars`.
@@ -253,6 +327,11 @@ impl AdvancedTransferBusinessAccountStarsRequest {
 impl AdvancedRequest for AdvancedTransferBusinessAccountStarsRequest {
     type Response = bool;
     const METHOD: &'static str = "transferBusinessAccountStars";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getBusinessAccountGifts`.
@@ -302,4 +381,9 @@ impl AdvancedGetBusinessAccountGiftsRequest {
 impl AdvancedRequest for AdvancedGetBusinessAccountGiftsRequest {
     type Response = Value;
     const METHOD: &'static str = "getBusinessAccountGifts";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }

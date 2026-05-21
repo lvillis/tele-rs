@@ -36,7 +36,7 @@ pub use crate::types::{
     BotCommand, CallbackCodec, CallbackPayload, ChatAdministratorCapability, ChatId,
     ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload,
     Message, MessageEntityKind, MessageId, MessageKind, MessageOrigin, ParseMode, PollKind,
-    ReplyMarkup, ReplyParameters, Update, UpdateKind,
+    ReplyMarkup, ReplyParameters, Update, UpdateKind, WebhookSecretToken,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]

@@ -23,6 +23,7 @@ impl TypedApi {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         self.client.call_method(Q::METHOD, request).await
     }
 
@@ -31,6 +32,7 @@ impl TypedApi {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         retry_with_config_async(&retry, || async {
             self.client.call_method(Q::METHOD, request).await
         })
@@ -56,6 +58,7 @@ impl BlockingTypedApi {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         self.client.call_method(Q::METHOD, request)
     }
 
@@ -64,6 +67,7 @@ impl BlockingTypedApi {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         retry_with_config_blocking(&retry, || self.client.call_method(Q::METHOD, request))
     }
 }

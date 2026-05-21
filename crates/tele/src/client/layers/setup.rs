@@ -237,6 +237,9 @@ impl SetupApi {
         policy: BootstrapRetryPolicy,
     ) -> BootstrapOutcome {
         let mut report = BootstrapReport::default();
+        if let Err(error) = policy.validate() {
+            return BootstrapOutcome::failure(report, error);
+        }
 
         if !matches!(plan.get_me, BootstrapGetMePolicy::Skip) {
             match retry_step_async(policy, || async { self.client.bot().get_me().await }).await {
@@ -593,6 +596,9 @@ impl BlockingSetupApi {
         policy: BootstrapRetryPolicy,
     ) -> BootstrapOutcome {
         let mut report = BootstrapReport::default();
+        if let Err(error) = policy.validate() {
+            return BootstrapOutcome::failure(report, error);
+        }
 
         if !matches!(plan.get_me, BootstrapGetMePolicy::Skip) {
             match retry_step_blocking(policy, || self.client.bot().get_me()) {

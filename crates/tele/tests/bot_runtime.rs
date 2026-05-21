@@ -20,9 +20,9 @@ use tele::bot::{
     DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy,
     HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
     MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey, Router,
-    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
-    WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
-    extract_callback_data, extract_callback_json, extract_chat_join_request,
+    SourceErrorBackoffConfig, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput,
+    WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition, channel_source,
+    clear_chat_state, extract_callback_data, extract_callback_json, extract_chat_join_request,
     extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
     extract_compact_callback, extract_message, extract_my_chat_member_update, extract_text,
     extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
@@ -460,6 +460,9 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
             args: "hello world".to_owned()
         })
     );
+    assert_eq!(parse_command_text("/echo@ hello world"), None);
+    assert_eq!(parse_command_text("/echo@Bad@Name hello world"), None);
+    assert_eq!(parse_command_text("/Echo hello world"), None);
 
     assert!(extract_message(&update).is_some());
     assert_eq!(update.update_kind(), UpdateKind::Message);
@@ -479,6 +482,11 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert_eq!(update.command_args(), Some("hello world"));
     assert_eq!(update.text(), Some("/echo hello world"));
     assert_eq!(update.chat_id(), Some(1));
+    let Some(invalid_mention_update) = parse_update(message_update(201, 1, "/echo@ hello")) else {
+        return Ok(());
+    };
+    assert_eq!(extract_command(&invalid_mention_update), None);
+    assert_eq!(extract_command_args(&invalid_mention_update), None);
     assert_eq!(
         tokenize_command_args(r#"hello "quoted world" again"#),
         Some(vec![
@@ -1329,6 +1337,109 @@ async fn long_polling_config_checked_fails_early() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn long_polling_config_checked_rejects_invalid_request_options() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let invalid_limit = LongPollingSource::new(client.clone()).with_config_checked(PollingConfig {
+        limit: Some(0),
+        ..PollingConfig::default()
+    });
+    assert!(matches!(invalid_limit, Err(Error::Configuration { .. })));
+
+    let duplicate_allowed_update =
+        LongPollingSource::new(client).with_config_checked(PollingConfig {
+            allowed_updates: Some(vec!["message".to_owned(), "message".to_owned()]),
+            ..PollingConfig::default()
+        });
+    assert!(matches!(
+        duplicate_allowed_update,
+        Err(Error::Configuration { .. })
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn engine_config_rejects_invalid_runtime_values() -> Result<(), DynError> {
+    let zero_concurrency = EngineConfig {
+        max_handler_concurrency: 0,
+        ..EngineConfig::default()
+    };
+    assert!(matches!(
+        zero_concurrency.validate(),
+        Err(Error::Configuration { .. })
+    ));
+
+    let zero_error_delay = EngineConfig {
+        continue_on_source_error: true,
+        error_delay: Duration::ZERO,
+        source_error_backoff: None,
+        ..EngineConfig::default()
+    };
+    assert!(matches!(
+        zero_error_delay.validate(),
+        Err(Error::Configuration { .. })
+    ));
+
+    let invalid_backoff = EngineConfig {
+        source_error_backoff: Some(SourceErrorBackoffConfig {
+            base_delay: Duration::from_secs(2),
+            max_delay: Duration::from_secs(1),
+            jitter_ratio: f32::NAN,
+        }),
+        ..EngineConfig::default()
+    };
+    assert!(matches!(
+        invalid_backoff.validate(),
+        Err(Error::Configuration { .. })
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_rejects_invalid_config_before_polling_source() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let (_sink, source) = channel_source(1)?;
+    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
+        max_handler_concurrency: 0,
+        ..EngineConfig::default()
+    });
+
+    let error = match engine.poll_once().await {
+        Ok(outcomes) => {
+            return Err(
+                format!("invalid config unexpectedly produced outcomes: {outcomes:?}").into(),
+            );
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::Configuration { .. }));
+
+    Ok(())
+}
+
+#[test]
+fn channel_source_rejects_zero_capacity_values() -> Result<(), DynError> {
+    assert!(matches!(
+        channel_source(0),
+        Err(Error::Configuration { .. })
+    ));
+
+    let (_sink, source) = channel_source(1)?;
+    assert!(matches!(
+        source.with_max_batch(0),
+        Err(Error::Configuration { .. })
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -1822,6 +1933,88 @@ async fn long_polling_source_persists_offset_after_poll() -> Result<(), DynError
 }
 
 #[tokio::test]
+async fn long_polling_source_does_not_ack_failed_dispatch() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let offset_path = std::env::temp_dir().join(format!("tele-offset-failed-{timestamp}.json"));
+
+    let response = r#"{"ok":true,"result":[{"update_id":801,"message":{"message_id":1,"date":1710000112,"chat":{"id":1,"type":"private"},"text":"/fail"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router
+        .command_route("fail")
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::internal(Error::InvalidRequest {
+                reason: "handler failed".to_owned(),
+            }))
+        });
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        persist_offset_path: Some(offset_path.clone()),
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: false,
+        ..EngineConfig::default()
+    });
+
+    let error = match engine.poll_once().await {
+        Ok(_) => return Err("expected handler failure".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert_eq!(engine.source_mut().next_offset(), None);
+    assert!(!offset_path.exists());
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn long_polling_source_does_not_ack_continued_handler_error() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let offset_path =
+        std::env::temp_dir().join(format!("tele-offset-continued-failed-{timestamp}.json"));
+
+    let response = r#"{"ok":true,"result":[{"update_id":811,"message":{"message_id":1,"date":1710000113,"chat":{"id":1,"type":"private"},"text":"/fail"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router
+        .command_route("fail")
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::internal(Error::InvalidRequest {
+                reason: "handler failed".to_owned(),
+            }))
+        });
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        persist_offset_path: Some(offset_path.clone()),
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: true,
+        ..EngineConfig::default()
+    });
+
+    let outcomes = engine.poll_once().await?;
+    assert_eq!(outcomes, vec![DispatchOutcome::Failed { update_id: 811 }]);
+    assert_eq!(engine.source_mut().next_offset(), None);
+    assert!(!offset_path.exists());
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":[{"update_id":888,"message":{"message_id":10,"date":1710000000,"chat":{"id":1,"type":"private"},"text":"/start"}}]}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
@@ -1883,7 +2076,7 @@ async fn bot_engine_channel_source_dispatches_updates() -> Result<(), DynError> 
             });
     }
 
-    let (sink, source) = channel_source(8);
+    let (sink, source) = channel_source(8)?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
@@ -1960,7 +2153,7 @@ async fn bot_engine_run_until_can_be_spawned_on_tokio() -> Result<(), DynError> 
         .build()?;
 
     let handle = tokio::spawn(async move {
-        let (_sink, source) = channel_source(1);
+        let (_sink, source) = channel_source(1)?;
         let mut engine = BotEngine::new(client, source, Router::new());
         engine.run_until(async {}).await
     });
@@ -1977,7 +2170,7 @@ async fn bot_app_run_until_can_be_spawned_on_tokio() -> Result<(), DynError> {
         .build()?;
 
     let handle = tokio::spawn(async move {
-        let (_sink, source) = channel_source(1);
+        let (_sink, source) = channel_source(1)?;
         let engine = BotEngine::new(client, source, Router::new());
         let mut app = BotApp::from_engine(engine);
         app.run_until(async {}).await
@@ -2000,7 +2193,7 @@ async fn bot_engine_metric_hook_emits_poll_and_dispatch_latency() -> Result<(), 
         .command_route("start")
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
-    let (sink, source) = channel_source(1);
+    let (sink, source) = channel_source(1)?;
     let Some(update) = parse_update(message_update(7001, 10, "/start")) else {
         return Err("failed to build /start update fixture".into());
     };
@@ -2059,7 +2252,7 @@ async fn webhook_runner_validates_secret_and_dispatches_json() -> Result<(), Dyn
             });
     }
 
-    let runner = WebhookRunner::new(client, router).expected_secret_token("secret-token");
+    let runner = WebhookRunner::new(client, router).expected_secret_token("secret-token")?;
     let payload = serde_json::to_vec(&message_update(901, 10, "/start ping"))?;
 
     let outcome = runner
@@ -2076,6 +2269,30 @@ async fn webhook_runner_validates_secret_and_dispatches_json() -> Result<(), Dyn
         wrong_secret_error,
         Some(Error::InvalidRequest { reason }) if reason.contains("secret")
     ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn webhook_runner_reports_continued_handler_error_as_failed() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::internal(Error::InvalidRequest {
+                reason: "handler failed".to_owned(),
+            }))
+        });
+
+    let runner = WebhookRunner::new(client, router).continue_on_handler_error(true);
+    let payload = serde_json::to_vec(&message_update(903, 10, "boom"))?;
+
+    let outcome = runner.dispatch_json_outcome(&payload, None).await?;
+    assert_eq!(outcome, DispatchOutcome::Failed { update_id: 903 });
 
     Ok(())
 }
@@ -2287,6 +2504,51 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
     assert_eq!(engine.source_mut().next_offset(), Some(304));
     assert_eq!(handled.load(Ordering::SeqCst), 3);
     assert!(max_in_flight.load(Ordering::SeqCst) >= 2);
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let offset_path =
+        std::env::temp_dir().join(format!("tele-offset-concurrent-panic-{timestamp}.json"));
+    let response = r#"{"ok":true,"result":[{"update_id":304,"message":{"message_id":1,"date":1710000004,"chat":{"id":77,"type":"private"},"text":"/panic"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router
+        .command_route("panic")
+        .handle(|_context: BotContext, _update: Update| async move {
+            std::panic::resume_unwind(Box::new("intentional handler panic"));
+        });
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        persist_offset_path: Some(offset_path.clone()),
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: true,
+        max_handler_concurrency: 2,
+        ..EngineConfig::default()
+    });
+
+    let error = match engine.poll_once().await {
+        Ok(outcomes) => {
+            return Err(
+                format!("handler panic unexpectedly produced outcomes: {outcomes:?}").into(),
+            );
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert_eq!(engine.source_mut().next_offset(), None);
+    assert!(!offset_path.exists());
 
     join_server(handle).await?;
     Ok(())
@@ -2697,7 +2959,7 @@ async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
     let mut config = OutboxConfig::default();
     config.max_attempts = 3;
     config.dedupe_ttl = Duration::from_secs(60);
-    let outbox = BotOutbox::spawn(client, config);
+    let outbox = BotOutbox::spawn(client, config)?;
 
     let first = outbox
         .send_text_with_key(12_i64, "hello", Some("msg-1".to_owned()))
@@ -2712,7 +2974,51 @@ async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn outbox_fails_closed_when_persisted_queue_is_invalid() -> Result<(), DynError> {
+async fn outbox_rejects_invalid_message_before_enqueue() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let outbox = BotOutbox::spawn(client, OutboxConfig::default())?;
+
+    assert!(matches!(
+        outbox.send_text(12_i64, "").await,
+        Err(Error::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        outbox
+            .send_text_with_key(12_i64, "hello", Some(String::new()))
+            .await,
+        Err(Error::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        outbox
+            .send_text_with_key(12_i64, "hello", Some("x".repeat(257)))
+            .await,
+        Err(Error::InvalidRequest { .. })
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_invalid_config_on_spawn() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut config = OutboxConfig::default();
+    config.queue_capacity = 0;
+
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected invalid outbox config to be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("queue_capacity"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_invalid_persisted_queue_on_spawn() -> Result<(), DynError> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let queue_path = std::env::temp_dir().join(format!("tele-outbox-invalid-{timestamp}.json"));
     fs::write(&queue_path, b"{invalid-json")?;
@@ -2721,21 +3027,116 @@ async fn outbox_fails_closed_when_persisted_queue_is_invalid() -> Result<(), Dyn
         .bot_token("123:abc")?
         .build()?;
     let config = OutboxConfig::default().with_persistence_path(queue_path.clone());
-    let outbox = BotOutbox::spawn(client, config);
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let error = match outbox.send_text(12_i64, "hello").await {
-        Ok(_) => return Err("expected outbox to fail closed".into()),
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected outbox spawn to reject invalid persistence".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
-    assert!(error.to_string().contains("outbox worker"));
+    assert!(error.to_string().contains("outbox snapshot"));
 
     let raw = fs::read_to_string(&queue_path)?;
     assert_eq!(raw, "{invalid-json");
 
     let _ = fs::remove_file(queue_path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_invalid_persisted_queue_entry_on_spawn() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let queue_path =
+        std::env::temp_dir().join(format!("tele-outbox-invalid-entry-{timestamp}.json"));
+    let snapshot = serde_json::json!({
+        "version": 1,
+        "queue": [{
+            "chat_id": 0,
+            "text": "hello",
+            "idempotency_key": "persisted-1",
+            "enqueued_at_unix_ms": 1,
+            "attempt": 0
+        }]
+    });
+    fs::write(&queue_path, serde_json::to_vec(&snapshot)?)?;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let config = OutboxConfig::default().with_persistence_path(queue_path.clone());
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected invalid outbox queue entry to be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("queue entry 0"));
+
+    let _ = fs::remove_file(queue_path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_exhausted_persisted_queue_entry_on_spawn() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let queue_path =
+        std::env::temp_dir().join(format!("tele-outbox-exhausted-entry-{timestamp}.json"));
+    let snapshot = serde_json::json!({
+        "version": 1,
+        "queue": [{
+            "chat_id": 12,
+            "text": "hello",
+            "idempotency_key": "persisted-1",
+            "enqueued_at_unix_ms": 1,
+            "attempt": 1
+        }]
+    });
+    fs::write(&queue_path, serde_json::to_vec(&snapshot)?)?;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut config = OutboxConfig::default().with_persistence_path(queue_path.clone());
+    config.max_attempts = 1;
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected exhausted outbox queue entry to be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("no remaining retry budget"));
+
+    let _ = fs::remove_file(queue_path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_invalid_dead_letter_snapshot_on_spawn() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let dead_letter_path =
+        std::env::temp_dir().join(format!("tele-dead-letter-invalid-{timestamp}.json"));
+    let snapshot = serde_json::json!({
+        "version": 1,
+        "entries": [{
+            "chat_id": 12,
+            "text": "hello",
+            "idempotency_key": "dead-letter-1",
+            "attempts": 1,
+            "reason": "",
+            "enqueued_at_unix_ms": 1,
+            "failed_at_unix_ms": 2
+        }]
+    });
+    fs::write(&dead_letter_path, serde_json::to_vec(&snapshot)?)?;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let config = OutboxConfig::default().with_dead_letter_path(dead_letter_path.clone());
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected invalid dead-letter snapshot to be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("dead-letter"));
+
+    let _ = fs::remove_file(dead_letter_path);
     Ok(())
 }
 
@@ -2759,7 +3160,7 @@ async fn outbox_replays_persisted_messages_on_start() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let config = OutboxConfig::default().with_persistence_path(path.clone());
-    let _outbox = BotOutbox::spawn(client, config);
+    let _outbox = BotOutbox::spawn(client, config)?;
 
     join_server(handle).await?;
 
@@ -2788,7 +3189,7 @@ async fn outbox_writes_dead_letter_on_exhausted_failures() -> Result<(), DynErro
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut config = OutboxConfig::default().with_dead_letter_path(dead_letter_path.clone());
     config.max_attempts = 1;
-    let outbox = BotOutbox::spawn(client, config);
+    let outbox = BotOutbox::spawn(client, config)?;
 
     let result = outbox
         .send_text_with_key(12_i64, "will fail", Some("dead-letter-1".to_owned()))
@@ -2842,7 +3243,7 @@ async fn outbox_expires_persisted_message_and_moves_to_dead_letter() -> Result<(
         .with_persistence_path(queue_path.clone())
         .with_dead_letter_path(dead_letter_path.clone())
         .with_max_message_age(Some(Duration::from_millis(1)));
-    let _outbox = BotOutbox::spawn(client, config);
+    let _outbox = BotOutbox::spawn(client, config)?;
 
     wait_for_condition(Duration::from_secs(2), Duration::from_millis(20), || {
         if !queue_path.exists() || !dead_letter_path.exists() {
@@ -2900,6 +3301,32 @@ async fn json_file_session_store_persists_across_instances() -> Result<(), DynEr
 }
 
 #[tokio::test]
+async fn json_file_session_store_keeps_memory_unchanged_when_persist_fails() -> Result<(), DynError>
+{
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let path = std::env::temp_dir().join(format!("tele-session-fail-{timestamp}.json"));
+
+    let Some(update) = parse_update(message_update(4202, 77, "state")) else {
+        return Ok(());
+    };
+
+    let store = JsonFileSessionStore::<String>::open(&path)?;
+    save_chat_state(&store, &update, "step-1".to_owned()).await?;
+
+    fs::remove_file(&path)?;
+    fs::create_dir(&path)?;
+
+    let result = save_chat_state(&store, &update, "step-2".to_owned()).await;
+    assert!(result.is_err());
+
+    let loaded = load_chat_state(&store, &update).await?;
+    assert_eq!(loaded.as_deref(), Some("step-1"));
+
+    let _ = fs::remove_dir_all(path);
+    Ok(())
+}
+
+#[tokio::test]
 async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -2916,7 +3343,7 @@ async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), 
     assert_eq!(outcome, DispatchOutcome::Handled { update_id: 4301 });
 
     let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
-    let (sink, source) = channel_source(4);
+    let (sink, source) = channel_source(4)?;
     let mut engine = BotEngine::new(client, source, router)
         .with_config(EngineConfig {
             continue_on_source_error: false,
@@ -3004,7 +3431,7 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
-    let (sink, source) = channel_source(2);
+    let (sink, source) = channel_source(2)?;
     let mut engine = BotEngine::new(client, source, router).on_event({
         let events = Arc::clone(&events);
         move |event| {

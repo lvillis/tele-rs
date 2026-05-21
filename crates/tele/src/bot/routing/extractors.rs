@@ -343,21 +343,7 @@ pub fn parse_command_text(text: &str) -> Option<CommandData> {
 /// is provided and matches case-insensitively.
 pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Option<CommandData> {
     let token = text.split_whitespace().next()?;
-    let command = token.strip_prefix('/')?;
-
-    let (name, mention) = match command.split_once('@') {
-        Some((name, mention)) => (name, Some(mention)),
-        None => (command, None),
-    };
-
-    if name.is_empty() {
-        return None;
-    }
-
-    let mention = match mention {
-        Some(value) => Some(normalize_bot_username(value)?),
-        None => None,
-    };
+    let (name, mention) = parse_command_token(token)?;
 
     let args = text[token.len()..].trim().to_owned();
     let command = CommandData {
@@ -374,11 +360,43 @@ pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Opt
 
 pub(crate) fn normalize_bot_username(value: &str) -> Option<String> {
     let normalized = value.trim().trim_start_matches('@').trim();
-    if normalized.is_empty() {
+    if normalized.is_empty() || !is_valid_bot_username(normalized) {
         None
     } else {
         Some(normalized.to_owned())
     }
+}
+
+pub(crate) fn parse_command_token(token: &str) -> Option<(&str, Option<String>)> {
+    let command = token.strip_prefix('/')?;
+    let (name, mention) = match command.split_once('@') {
+        Some((name, mention)) => (name, Some(normalize_bot_username(mention)?)),
+        None => (command, None),
+    };
+
+    if is_valid_command_name(name) {
+        Some((name, mention))
+    } else {
+        None
+    }
+}
+
+fn is_valid_command_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && name.len() <= 32
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn is_valid_bot_username(username: &str) -> bool {
+    username
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -663,16 +681,7 @@ pub fn extract_command_for_bot<'a>(
 ) -> Option<&'a str> {
     let text = extract_text(update)?;
     let token = text.split_whitespace().next()?;
-    let command = token.strip_prefix('/')?;
-    let (name, mention) = match command.split_once('@') {
-        Some((name, mention)) => (name, Some(mention)),
-        None => (command, None),
-    };
-    if name.is_empty() {
-        return None;
-    }
-
-    let mention = mention.and_then(normalize_bot_username);
+    let (name, mention) = parse_command_token(token)?;
     let command = CommandData {
         name: name.to_owned(),
         mention,
@@ -697,15 +706,7 @@ pub fn extract_command_args_for_bot<'a>(
 ) -> Option<&'a str> {
     let text = extract_text(update)?;
     let token = text.split_whitespace().next()?;
-    let command = token.strip_prefix('/')?;
-    let mention = command
-        .split_once('@')
-        .and_then(|(_, mention)| normalize_bot_username(mention));
-    let name = command.split_once('@').map_or(command, |(name, _)| name);
-    if name.is_empty() {
-        return None;
-    }
-
+    let (name, mention) = parse_command_token(token)?;
     let command_data = CommandData {
         name: name.to_owned(),
         mention,

@@ -141,12 +141,14 @@ where
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
         Box::pin(async move {
             let _persist_guard = self.persist_lock.lock().await;
-            let snapshot = {
-                let mut guard = self.inner.write().await;
-                guard.insert(chat_id, state);
+            let mut snapshot = {
+                let guard = self.inner.read().await;
                 guard.clone()
             };
-            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
+            snapshot.insert(chat_id, state);
+            persist_session_snapshot_async(self.path.clone(), snapshot.clone()).await?;
+            let mut guard = self.inner.write().await;
+            *guard = snapshot;
             Ok(())
         })
     }
@@ -154,12 +156,14 @@ where
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
         Box::pin(async move {
             let _persist_guard = self.persist_lock.lock().await;
-            let snapshot = {
-                let mut guard = self.inner.write().await;
-                guard.remove(&chat_id);
+            let mut snapshot = {
+                let guard = self.inner.read().await;
                 guard.clone()
             };
-            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
+            snapshot.remove(&chat_id);
+            persist_session_snapshot_async(self.path.clone(), snapshot.clone()).await?;
+            let mut guard = self.inner.write().await;
+            *guard = snapshot;
             Ok(())
         })
     }
@@ -239,13 +243,12 @@ where
 {
     pub fn new(redis_url: &str, namespace: impl Into<String>) -> Result<Self> {
         let namespace = namespace.into();
-        if namespace.trim().is_empty() {
-            return Err(invalid_request("redis session namespace cannot be empty"));
-        }
+        validate_redis_namespace(&namespace)?;
 
         let client = redis::Client::open(redis_url).map_err(|source| {
             invalid_request(format!(
-                "failed to create redis client `{redis_url}`: {source}"
+                "failed to create redis client `{}`: {source}",
+                crate::util::redact_url_credentials(redis_url)
             ))
         })?;
 
@@ -270,6 +273,22 @@ where
             .await
             .map_err(|source| invalid_request(format!("failed to connect redis: {source}")))
     }
+}
+
+#[cfg(feature = "redis-session")]
+fn validate_redis_namespace(namespace: &str) -> Result<()> {
+    if namespace.is_empty() || namespace.chars().any(char::is_whitespace) {
+        return Err(invalid_request(
+            "redis session namespace must be non-empty and contain no whitespace",
+        ));
+    }
+    if namespace.chars().any(char::is_control) {
+        return Err(invalid_request(
+            "redis session namespace must not contain control characters",
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "redis-session")]
@@ -369,7 +388,8 @@ where
             .await
             .map_err(|source| {
                 invalid_request(format!(
-                    "failed to connect postgres `{database_url}`: {source}"
+                    "failed to connect postgres `{}`: {source}",
+                    crate::util::redact_url_credentials(database_url)
                 ))
             })?;
 
@@ -380,8 +400,9 @@ where
         let table = table.into();
         validate_sql_identifier(&table)?;
 
+        let table_sql = quote_sql_identifier(&table);
         let create = format!(
-            "CREATE TABLE IF NOT EXISTS {table} (chat_id BIGINT PRIMARY KEY, state JSONB NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS {table_sql} (chat_id BIGINT PRIMARY KEY, state JSONB NOT NULL)"
         );
         sqlx::query(&create)
             .execute(&pool)
@@ -417,7 +438,8 @@ where
         Box::pin(async move {
             use sqlx::Row as _;
 
-            let query = format!("SELECT state FROM {} WHERE chat_id = $1", self.table);
+            let table = quote_sql_identifier(&self.table);
+            let query = format!("SELECT state FROM {table} WHERE chat_id = $1");
             let row = sqlx::query(&query)
                 .bind(chat_id)
                 .fetch_optional(&self.pool)
@@ -444,10 +466,10 @@ where
 
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
         Box::pin(async move {
+            let table = quote_sql_identifier(&self.table);
             let query = format!(
-                "INSERT INTO {} (chat_id, state) VALUES ($1, $2) \
+                "INSERT INTO {table} (chat_id, state) VALUES ($1, $2) \
                  ON CONFLICT (chat_id) DO UPDATE SET state = EXCLUDED.state",
-                self.table
             );
             sqlx::query(&query)
                 .bind(chat_id)
@@ -465,7 +487,8 @@ where
 
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
         Box::pin(async move {
-            let query = format!("DELETE FROM {} WHERE chat_id = $1", self.table);
+            let table = quote_sql_identifier(&self.table);
+            let query = format!("DELETE FROM {table} WHERE chat_id = $1");
             sqlx::query(&query)
                 .bind(chat_id)
                 .execute(&self.pool)
@@ -500,6 +523,11 @@ fn validate_sql_identifier(identifier: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "postgres-session")]
+fn quote_sql_identifier(identifier: &str) -> String {
+    format!("\"{identifier}\"")
 }
 
 /// Loads chat-scoped state from a store.
@@ -640,5 +668,31 @@ where
         let (output, transition) = f(current).await;
         self.apply(update, transition).await?;
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "redis-session")]
+    #[test]
+    fn validates_redis_namespace() {
+        assert!(validate_redis_namespace("tele:sessions").is_ok());
+
+        for namespace in ["", " ", "tele sessions", "tele\nsessions"] {
+            assert!(matches!(
+                validate_redis_namespace(namespace),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+    }
+
+    #[cfg(feature = "postgres-session")]
+    #[test]
+    fn quotes_valid_postgres_identifier() -> Result<()> {
+        validate_sql_identifier("SessionState")?;
+        assert_eq!(quote_sql_identifier("SessionState"), "\"SessionState\"");
+        Ok(())
     }
 }

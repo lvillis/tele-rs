@@ -24,6 +24,39 @@ impl Default for BootstrapRetryPolicy {
     }
 }
 
+impl BootstrapRetryPolicy {
+    pub fn validate(&self) -> Result<()> {
+        if self.max_attempts == 0 {
+            return Err(Error::Configuration {
+                reason: "bootstrap retry max_attempts must be at least 1".to_owned(),
+            });
+        }
+        if self.base_backoff.is_zero() {
+            return Err(Error::Configuration {
+                reason: "bootstrap retry base_backoff must be greater than zero".to_owned(),
+            });
+        }
+        if self.max_backoff.is_zero() {
+            return Err(Error::Configuration {
+                reason: "bootstrap retry max_backoff must be greater than zero".to_owned(),
+            });
+        }
+        if self.base_backoff > self.max_backoff {
+            return Err(Error::Configuration {
+                reason: "bootstrap retry base_backoff must not exceed max_backoff".to_owned(),
+            });
+        }
+        if !self.jitter_ratio.is_finite() || !(0.0..=1.0).contains(&self.jitter_ratio) {
+            return Err(Error::Configuration {
+                reason: "bootstrap retry jitter_ratio must be finite and between 0.0 and 1.0"
+                    .to_owned(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 /// Step policy for bootstrap `getMe` execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -334,7 +367,14 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let max_attempts = policy.max_attempts.max(1);
+    if let Err(error) = policy.validate() {
+        return BootstrapRetryOutcome::Failed {
+            error,
+            attempt_count: 0,
+        };
+    }
+
+    let max_attempts = policy.max_attempts;
     let mut attempt = 0;
 
     loop {
@@ -374,7 +414,8 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let max_attempts = retry.max_attempts.max(1);
+    retry.validate()?;
+    let max_attempts = retry.max_attempts;
     let mut attempt = 0;
 
     loop {
@@ -408,7 +449,14 @@ pub(crate) fn retry_step_blocking<T, F>(
 where
     F: FnMut() -> Result<T>,
 {
-    let max_attempts = policy.max_attempts.max(1);
+    if let Err(error) = policy.validate() {
+        return BootstrapRetryOutcome::Failed {
+            error,
+            attempt_count: 0,
+        };
+    }
+
+    let max_attempts = policy.max_attempts;
     let mut attempt = 0;
 
     loop {
@@ -447,7 +495,8 @@ pub(crate) fn retry_with_config_blocking<T, F>(retry: &RetryConfig, mut op: F) -
 where
     F: FnMut() -> Result<T>,
 {
-    let max_attempts = retry.max_attempts.max(1);
+    retry.validate()?;
+    let max_attempts = retry.max_attempts;
     let mut attempt = 0;
 
     loop {
@@ -479,6 +528,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<bool>>,
 {
+    policy.validate()?;
     match retry_step_async(policy, op).await {
         BootstrapRetryOutcome::Success { value, .. } => Ok(value),
         BootstrapRetryOutcome::Failed { error, .. } => {
@@ -496,6 +546,7 @@ pub(crate) fn retry_blocking<F>(policy: BootstrapRetryPolicy, op: F) -> Result<b
 where
     F: FnMut() -> Result<bool>,
 {
+    policy.validate()?;
     match retry_step_blocking(policy, op) {
         BootstrapRetryOutcome::Success { value, .. } => Ok(value),
         BootstrapRetryOutcome::Failed { error, .. } => {

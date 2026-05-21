@@ -2,7 +2,19 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `postStory`.
 #[derive(Clone, Debug, Serialize)]
@@ -47,6 +59,11 @@ impl AdvancedPostStoryRequest {
 impl AdvancedRequest for AdvancedPostStoryRequest {
     type Response = Value;
     const METHOD: &'static str = "postStory";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `repostStory`.
@@ -83,6 +100,11 @@ impl AdvancedRepostStoryRequest {
 impl AdvancedRequest for AdvancedRepostStoryRequest {
     type Response = Value;
     const METHOD: &'static str = "repostStory";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editStory`.
@@ -122,6 +144,11 @@ impl AdvancedEditStoryRequest {
 impl AdvancedRequest for AdvancedEditStoryRequest {
     type Response = Value;
     const METHOD: &'static str = "editStory";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `deleteStory`.
@@ -143,4 +170,9 @@ impl AdvancedDeleteStoryRequest {
 impl AdvancedRequest for AdvancedDeleteStoryRequest {
     type Response = bool;
     const METHOD: &'static str = "deleteStory";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("business_connection_id", &self.business_connection_id)?;
+        Ok(())
+    }
 }

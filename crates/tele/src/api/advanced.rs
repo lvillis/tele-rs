@@ -16,6 +16,7 @@ macro_rules! define_async_methods {
             where
                 R: DeserializeOwned,
             {
+                request.validate()?;
                 self.client.call_method($method, request).await
             }
 
@@ -37,6 +38,7 @@ macro_rules! define_blocking_methods {
             where
                 R: DeserializeOwned,
             {
+                request.validate()?;
                 self.client.call_method($method, request)
             }
 
@@ -70,6 +72,7 @@ impl AdvancedService {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         self.client.call_method(Q::METHOD, request).await
     }
 
@@ -94,6 +97,7 @@ impl BlockingAdvancedService {
     where
         Q: AdvancedRequest,
     {
+        request.validate()?;
         self.client.call_method(Q::METHOD, request)
     }
 

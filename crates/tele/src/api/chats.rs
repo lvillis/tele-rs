@@ -75,6 +75,7 @@ impl ChatsService {
         &self,
         request: &SetChatAdministratorCustomTitleRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("setChatAdministratorCustomTitle", request)
             .await
@@ -110,6 +111,7 @@ impl ChatsService {
         &self,
         request: &CreateChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client
             .call_method("createChatInviteLink", request)
             .await
@@ -119,6 +121,7 @@ impl ChatsService {
         &self,
         request: &EditChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client.call_method("editChatInviteLink", request).await
     }
 
@@ -126,16 +129,19 @@ impl ChatsService {
         &self,
         request: &RevokeChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client
             .call_method("revokeChatInviteLink", request)
             .await
     }
 
     pub async fn set_chat_title(&self, request: &SetChatTitleRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatTitle", request).await
     }
 
     pub async fn set_chat_description(&self, request: &SetChatDescriptionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatDescription", request).await
     }
 
@@ -161,6 +167,7 @@ impl ChatsService {
     }
 
     pub async fn set_chat_sticker_set(&self, request: &SetChatStickerSetRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatStickerSet", request).await
     }
 
@@ -230,6 +237,7 @@ impl BlockingChatsService {
         &self,
         request: &SetChatAdministratorCustomTitleRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("setChatAdministratorCustomTitle", request)
     }
@@ -254,6 +262,7 @@ impl BlockingChatsService {
         &self,
         request: &CreateChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client.call_method("createChatInviteLink", request)
     }
 
@@ -261,6 +270,7 @@ impl BlockingChatsService {
         &self,
         request: &EditChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client.call_method("editChatInviteLink", request)
     }
 
@@ -268,14 +278,17 @@ impl BlockingChatsService {
         &self,
         request: &RevokeChatInviteLinkRequest,
     ) -> Result<ChatInviteLink> {
+        request.validate()?;
         self.client.call_method("revokeChatInviteLink", request)
     }
 
     pub fn set_chat_title(&self, request: &SetChatTitleRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatTitle", request)
     }
 
     pub fn set_chat_description(&self, request: &SetChatDescriptionRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatDescription", request)
     }
 
@@ -296,6 +309,7 @@ impl BlockingChatsService {
     }
 
     pub fn set_chat_sticker_set(&self, request: &SetChatStickerSetRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setChatStickerSet", request)
     }
 

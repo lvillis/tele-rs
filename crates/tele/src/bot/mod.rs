@@ -31,13 +31,14 @@ use crate::types::telegram::{
     CompactCallbackPayload, WebAppData,
 };
 use crate::types::update::{GetUpdatesRequest, Update, UpdateKind};
-use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest};
+use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookSecretToken};
 use crate::{Client, Error, ErrorClass, Result};
 
 type HandlerFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 type GuardFuture<'a> = Pin<Box<dyn Future<Output = HandlerResult> + Send + 'a>>;
 type SessionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 type SourceFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<Update>>> + Send + 'a>>;
+type SourceCommitFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
 /// Shared async update handler function.
 pub type HandlerFn = Arc<dyn Fn(BotContext, Update) -> HandlerFuture + Send + Sync + 'static>;
@@ -245,6 +246,7 @@ fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> 
                         path.display()
                     ))
                 })?;
+                sync_parent_directory(parent, subject)?;
                 return Ok(());
             }
             Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -261,6 +263,23 @@ fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> 
         "failed to allocate unique temp file for {subject} `{}`",
         path.display()
     )))
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path, subject: &str) -> Result<()> {
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| {
+            invalid_request(format!(
+                "failed to sync directory for {subject} `{}`: {source}",
+                parent.display()
+            ))
+        })
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path, _subject: &str) -> Result<()> {
+    Ok(())
 }
 
 fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duration {

@@ -27,7 +27,7 @@ impl ControlApi {
     }
 
     #[cfg(feature = "bot")]
-    pub fn spawn_outbox(&self, config: crate::bot::OutboxConfig) -> crate::bot::BotOutbox {
+    pub fn spawn_outbox(&self, config: crate::bot::OutboxConfig) -> Result<crate::bot::BotOutbox> {
         crate::bot::BotOutbox::spawn(self.client.clone(), config)
     }
 

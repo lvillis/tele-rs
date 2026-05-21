@@ -684,7 +684,7 @@ pub(crate) fn build_multipart_payload(
     fields: &[(String, String)],
     file_field_name: &str,
     file: &UploadFile,
-) -> MultipartPayload {
+) -> Result<MultipartPayload, Error> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0_u128, |duration| duration.as_nanos());
@@ -705,7 +705,7 @@ pub(crate) fn build_multipart_payload(
             MultipartChunk::Owned(
                 format!(
                     "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
-                    escape_quoted(name)
+                    escape_quoted_header_value("multipart field name", name)?
                 )
                 .into_bytes(),
             ),
@@ -733,8 +733,8 @@ pub(crate) fn build_multipart_payload(
         MultipartChunk::Owned(
             format!(
                 "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                escape_quoted(file_field_name),
-                escape_quoted(file.file_name())
+                escape_quoted_header_value("multipart file field name", file_field_name)?,
+                escape_quoted_header_value("multipart file name", file.file_name())?
             )
             .into_bytes(),
         ),
@@ -766,15 +766,20 @@ pub(crate) fn build_multipart_payload(
         MultipartChunk::Owned(format!("--{boundary}--\r\n").into_bytes()),
     );
 
-    MultipartPayload {
+    Ok(MultipartPayload {
         chunks,
         content_type: format!("multipart/form-data; boundary={boundary}"),
         content_length,
-    }
+    })
 }
 
-fn escape_quoted(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+fn escape_quoted_header_value(label: &str, value: &str) -> Result<String, Error> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} must not contain control characters"),
+        });
+    }
+    Ok(value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -823,8 +828,13 @@ mod tests {
             Ok(value) => value,
             Err(_) => return,
         };
-        let payload =
+        let payload_result =
             build_multipart_payload(&[("chat_id".to_owned(), "1".to_owned())], "photo", &file);
+        assert!(payload_result.is_ok());
+        let payload = match payload_result {
+            Ok(value) => value,
+            Err(_) => return,
+        };
         let content_length = payload.content_length();
         let content_type = payload.content_type().to_owned();
 
@@ -839,5 +849,32 @@ mod tests {
         assert!(text.contains("name=\"chat_id\""));
         assert!(text.contains("name=\"photo\"; filename=\"hello.txt\""));
         assert!(text.contains("abc123"));
+    }
+
+    #[test]
+    fn rejects_multipart_control_chars_in_header_values() {
+        let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
+        assert!(file_result.is_ok());
+        let file = match file_result {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+
+        assert!(
+            build_multipart_payload(
+                &[("bad\r\nname".to_owned(), "1".to_owned())],
+                "photo",
+                &file
+            )
+            .is_err()
+        );
+        assert!(
+            build_multipart_payload(
+                &[("chat_id".to_owned(), "1".to_owned())],
+                "bad\r\nfile",
+                &file
+            )
+            .is_err()
+        );
     }
 }

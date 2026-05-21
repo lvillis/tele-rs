@@ -2,7 +2,29 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_required_vec(field: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `sendInvoice`.
 #[derive(Clone, Debug, Serialize)]
@@ -113,6 +135,15 @@ impl AdvancedSendInvoiceRequest {
 impl AdvancedRequest for AdvancedSendInvoiceRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "sendInvoice";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("title", &self.title)?;
+        validate_required_string("description", &self.description)?;
+        validate_required_string("payload", &self.payload)?;
+        validate_required_string("currency", &self.currency)?;
+        validate_required_vec("prices", self.prices.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `createInvoiceLink`.
@@ -197,6 +228,15 @@ impl AdvancedCreateInvoiceLinkRequest {
 impl AdvancedRequest for AdvancedCreateInvoiceLinkRequest {
     type Response = String;
     const METHOD: &'static str = "createInvoiceLink";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("title", &self.title)?;
+        validate_required_string("description", &self.description)?;
+        validate_required_string("payload", &self.payload)?;
+        validate_required_string("currency", &self.currency)?;
+        validate_required_vec("prices", self.prices.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `answerShippingQuery`.
@@ -224,6 +264,11 @@ impl AdvancedAnswerShippingQueryRequest {
 impl AdvancedRequest for AdvancedAnswerShippingQueryRequest {
     type Response = Value;
     const METHOD: &'static str = "answerShippingQuery";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("shipping_query_id", &self.shipping_query_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `answerPreCheckoutQuery`.
@@ -248,6 +293,11 @@ impl AdvancedAnswerPreCheckoutQueryRequest {
 impl AdvancedRequest for AdvancedAnswerPreCheckoutQueryRequest {
     type Response = Value;
     const METHOD: &'static str = "answerPreCheckoutQuery";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("pre_checkout_query_id", &self.pre_checkout_query_id)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setPassportDataErrors`.
@@ -269,4 +319,9 @@ impl AdvancedSetPassportDataErrorsRequest {
 impl AdvancedRequest for AdvancedSetPassportDataErrorsRequest {
     type Response = bool;
     const METHOD: &'static str = "setPassportDataErrors";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_vec("errors", self.errors.len())?;
+        Ok(())
+    }
 }

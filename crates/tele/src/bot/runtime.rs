@@ -33,11 +33,30 @@ impl Default for PollingConfig {
 }
 
 impl PollingConfig {
+    pub fn validate(&self) -> Result<()> {
+        let request = GetUpdatesRequest {
+            limit: self.limit,
+            allowed_updates: self.allowed_updates.clone(),
+            ..GetUpdatesRequest::default()
+        };
+
+        request.validate().map_err(|error| match error {
+            Error::InvalidRequest { reason } => Error::Configuration {
+                reason: format!("invalid polling config: {reason}"),
+            },
+            error => error,
+        })?;
+
+        Ok(())
+    }
+
     fn resolve_poll_timeout_seconds(
         &self,
         request_timeout: Duration,
         total_timeout: Option<Duration>,
     ) -> Result<u16> {
+        self.validate()?;
+
         let request_budget =
             total_timeout.map_or(request_timeout, |total| total.min(request_timeout));
 
@@ -68,23 +87,34 @@ impl PollingConfig {
 pub enum DispatchOutcome {
     Handled { update_id: i64 },
     Ignored { update_id: i64 },
+    Failed { update_id: i64 },
 }
 
 impl DispatchOutcome {
     pub fn update_id(self) -> i64 {
         match self {
-            Self::Handled { update_id } | Self::Ignored { update_id } => update_id,
+            Self::Handled { update_id }
+            | Self::Ignored { update_id }
+            | Self::Failed { update_id } => update_id,
         }
     }
 
     pub fn is_handled(self) -> bool {
         matches!(self, Self::Handled { .. })
     }
+
+    pub fn is_failed(self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
 }
 
 /// Pluggable update input source used by `BotEngine`.
 pub trait UpdateSource: Send + 'static {
     fn poll<'a>(&'a mut self) -> SourceFuture<'a>;
+
+    fn commit<'a>(&'a mut self, _outcomes: &'a [DispatchOutcome]) -> SourceCommitFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Exponential backoff policy for source-side polling errors.
@@ -102,6 +132,34 @@ impl Default for SourceErrorBackoffConfig {
             max_delay: Duration::from_secs(30),
             jitter_ratio: 0.2,
         }
+    }
+}
+
+impl SourceErrorBackoffConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.base_delay.is_zero() {
+            return Err(Error::Configuration {
+                reason: "source_error_backoff base_delay must be greater than zero".to_owned(),
+            });
+        }
+        if self.max_delay.is_zero() {
+            return Err(Error::Configuration {
+                reason: "source_error_backoff max_delay must be greater than zero".to_owned(),
+            });
+        }
+        if self.base_delay > self.max_delay {
+            return Err(Error::Configuration {
+                reason: "source_error_backoff base_delay must not exceed max_delay".to_owned(),
+            });
+        }
+        if !self.jitter_ratio.is_finite() || !(0.0..=1.0).contains(&self.jitter_ratio) {
+            return Err(Error::Configuration {
+                reason: "source_error_backoff jitter_ratio must be finite and between 0.0 and 1.0"
+                    .to_owned(),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -129,6 +187,29 @@ impl Default for EngineConfig {
             continue_on_handler_error: true,
             max_handler_concurrency: 1,
         }
+    }
+}
+
+impl EngineConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.max_handler_concurrency == 0 {
+            return Err(Error::Configuration {
+                reason: "max_handler_concurrency must be at least 1".to_owned(),
+            });
+        }
+        if self.continue_on_source_error
+            && self.source_error_backoff.is_none()
+            && self.error_delay.is_zero()
+        {
+            return Err(Error::Configuration {
+                reason: "error_delay must be greater than zero when source errors are retried without backoff".to_owned(),
+            });
+        }
+        if let Some(backoff) = self.source_error_backoff.as_ref() {
+            backoff.validate()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -164,6 +245,7 @@ impl LongPollingSource {
 
     /// Sets polling config and validates timeout budget immediately.
     pub fn with_config_checked(mut self, config: PollingConfig) -> Result<Self> {
+        config.validate()?;
         self.config = config;
         let _ = self.validate_timeout_budget()?;
         Ok(self)
@@ -220,7 +302,19 @@ impl LongPollingSource {
         Ok(())
     }
 
-    fn advance_next_offset(&mut self, update_id: i64) -> bool {
+    fn next_offset_after_update_ids<I>(&self, update_ids: I) -> Option<i64>
+    where
+        I: IntoIterator<Item = i64>,
+    {
+        update_ids
+            .into_iter()
+            .fold(self.next_offset, |next, update_id| {
+                let candidate = update_id.saturating_add(1);
+                Some(next.map_or(candidate, |current| current.max(candidate)))
+            })
+    }
+
+    fn apply_committed_update(&mut self, update_id: i64) -> bool {
         let candidate = update_id.saturating_add(1);
         let next = Some(
             self.next_offset
@@ -244,13 +338,6 @@ impl LongPollingSource {
 
         self.offset_loaded = true;
         Ok(())
-    }
-
-    async fn persist_offset_if_configured(&self) -> Result<()> {
-        let Some(path) = self.config.persist_offset_path.as_deref() else {
-            return Ok(());
-        };
-        persist_polling_offset_async(path.to_path_buf(), self.next_offset).await
     }
 
     fn is_duplicate_update(&self, update_id: i64) -> bool {
@@ -277,6 +364,26 @@ impl LongPollingSource {
         }
     }
 
+    async fn commit_update_ids(&mut self, update_ids: &[i64]) -> Result<()> {
+        if update_ids.is_empty() {
+            return Ok(());
+        }
+
+        let next_offset = self.next_offset_after_update_ids(update_ids.iter().copied());
+        if next_offset != self.next_offset
+            && let Some(path) = self.config.persist_offset_path.as_deref()
+        {
+            persist_polling_offset_async(path.to_path_buf(), next_offset).await?;
+        }
+
+        for update_id in update_ids {
+            let _ = self.apply_committed_update(*update_id);
+            self.remember_update(*update_id);
+        }
+
+        Ok(())
+    }
+
     fn effective_poll_timeout_seconds(&self) -> Result<u16> {
         self.config.resolve_poll_timeout_seconds(
             self.client.request_timeout(),
@@ -288,6 +395,7 @@ impl LongPollingSource {
 impl UpdateSource for LongPollingSource {
     fn poll<'a>(&'a mut self) -> SourceFuture<'a> {
         Box::pin(async move {
+            self.config.validate()?;
             self.ensure_prepared().await?;
 
             let mut request =
@@ -297,24 +405,32 @@ impl UpdateSource for LongPollingSource {
             request.allowed_updates = self.config.allowed_updates.clone();
 
             let updates = self.client.updates().get_updates(&request).await?;
-            let mut offset_changed = false;
-            for update in &updates {
-                offset_changed |= self.advance_next_offset(update.update_id);
-            }
-            if offset_changed {
-                self.persist_offset_if_configured().await?;
-            }
 
             let mut deduped = Vec::with_capacity(updates.len());
+            let mut batch_seen = HashSet::new();
             for update in updates {
-                if self.is_duplicate_update(update.update_id) {
+                if self.is_duplicate_update(update.update_id)
+                    || !batch_seen.insert(update.update_id)
+                {
                     continue;
                 }
-                self.remember_update(update.update_id);
                 deduped.push(update);
             }
 
             Ok(deduped)
+        })
+    }
+
+    fn commit<'a>(&'a mut self, outcomes: &'a [DispatchOutcome]) -> SourceCommitFuture<'a> {
+        Box::pin(async move {
+            if outcomes.iter().any(|outcome| outcome.is_failed()) {
+                return Ok(());
+            }
+            let update_ids = outcomes
+                .iter()
+                .map(|outcome| outcome.update_id())
+                .collect::<Vec<_>>();
+            self.commit_update_ids(&update_ids).await
         })
     }
 }
@@ -406,9 +522,14 @@ impl ChannelUpdateSource {
         }
     }
 
-    pub fn with_max_batch(mut self, max_batch: usize) -> Self {
-        self.max_batch = max_batch.max(1);
-        self
+    pub fn with_max_batch(mut self, max_batch: usize) -> Result<Self> {
+        if max_batch == 0 {
+            return Err(Error::Configuration {
+                reason: "channel update source max_batch must be at least 1".to_owned(),
+            });
+        }
+        self.max_batch = max_batch;
+        Ok(self)
     }
 }
 
@@ -419,7 +540,7 @@ impl UpdateSource for ChannelUpdateSource {
                 return Err(invalid_request("update source channel is closed"));
             };
 
-            let mut updates = Vec::with_capacity(self.max_batch.max(1));
+            let mut updates = Vec::with_capacity(self.max_batch);
             updates.push(first);
 
             while updates.len() < self.max_batch {
@@ -436,7 +557,12 @@ impl UpdateSource for ChannelUpdateSource {
 }
 
 /// Creates a webhook-friendly channel source pair.
-pub fn channel_source(buffer: usize) -> (UpdateSink, ChannelUpdateSource) {
-    let (sender, receiver) = mpsc::channel(buffer.max(1));
-    (UpdateSink::new(sender), ChannelUpdateSource::new(receiver))
+pub fn channel_source(buffer: usize) -> Result<(UpdateSink, ChannelUpdateSource)> {
+    if buffer == 0 {
+        return Err(Error::Configuration {
+            reason: "channel source buffer must be at least 1".to_owned(),
+        });
+    }
+    let (sender, receiver) = mpsc::channel(buffer);
+    Ok((UpdateSink::new(sender), ChannelUpdateSource::new(receiver)))
 }

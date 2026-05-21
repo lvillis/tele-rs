@@ -10,6 +10,7 @@ use crate::Error;
 type HmacSha256 = Hmac<Sha256>;
 type Sha256Digest = [u8; 32];
 const WEB_APP_DATA_KEY: &[u8] = b"WebAppData";
+const WEB_APP_INIT_DATA_FUTURE_SKEW: Duration = Duration::from_secs(60);
 
 /// Verified Mini App `initData` payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,9 +74,7 @@ pub fn verify_web_app_init_data(
     init_data: &str,
     max_age: Option<Duration>,
 ) -> Result<VerifiedWebAppInitData, Error> {
-    if bot_token.trim().is_empty() {
-        return Err(Error::InvalidBotToken);
-    }
+    validate_bot_token(bot_token)?;
 
     let mut fields = parse_web_app_init_data(init_data)?;
     let hash_hex = fields.remove("hash").ok_or_else(|| Error::InvalidRequest {
@@ -92,6 +91,11 @@ pub fn verify_web_app_init_data(
     let expected_hash = hmac_sha256(secret_key, data_check_string.as_bytes());
 
     let actual_hash = decode_hex(hash_hex.as_str())?;
+    if actual_hash.len() != std::mem::size_of::<Sha256Digest>() {
+        return Err(Error::InvalidRequest {
+            reason: "initData hash must decode to 32 bytes".to_owned(),
+        });
+    }
     if !expected_hash.ct_equal(actual_hash.as_slice()) {
         return Err(Error::InvalidRequest {
             reason: "invalid initData signature".to_owned(),
@@ -119,6 +123,19 @@ pub fn verify_web_app_init_data(
                 reason: format!("system clock error while validating initData age: {error}"),
             })?
             .as_secs();
+        if auth_date > now {
+            let skew_secs = auth_date - now;
+            if skew_secs > WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs() {
+                return Err(Error::InvalidRequest {
+                    reason: format!(
+                        "initData `auth_date` is in the future: skew={}s exceeds allowed_skew={}s",
+                        skew_secs,
+                        WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs()
+                    ),
+                });
+            }
+        }
+
         let age_secs = now.saturating_sub(auth_date);
         if age_secs > max_age.as_secs() {
             return Err(Error::InvalidRequest {
@@ -232,9 +249,7 @@ impl BotToken {
     /// Create a new bot token.
     pub fn new(token: impl Into<String>) -> Result<Self, Error> {
         let token = token.into();
-        if token.trim().is_empty() {
-            return Err(Error::InvalidBotToken);
-        }
+        validate_bot_token(&token)?;
 
         Ok(Self(token))
     }
@@ -242,6 +257,25 @@ impl BotToken {
     pub(crate) fn expose(&self) -> &str {
         &self.0
     }
+}
+
+fn validate_bot_token(token: &str) -> Result<(), Error> {
+    let Some((bot_id, secret)) = token.split_once(':') else {
+        return Err(Error::InvalidBotToken);
+    };
+
+    if bot_id.is_empty()
+        || secret.is_empty()
+        || secret.contains(':')
+        || !bot_id.bytes().all(|byte| byte.is_ascii_digit())
+        || !secret
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(Error::InvalidBotToken);
+    }
+
+    Ok(())
 }
 
 impl fmt::Debug for BotToken {
@@ -357,6 +391,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_wrong_hash_length() -> std::result::Result<(), Box<dyn StdError>> {
+        let bot_token = "123456:bot-token";
+        let init_data = "auth_date=1700000000&query_id=q-1&hash=deadbeef";
+
+        let error = match verify_web_app_init_data(bot_token, init_data, None) {
+            Ok(_) => return Err("short hash should fail".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("32 bytes"));
+        Ok(())
+    }
+
+    #[test]
     fn rejects_stale_init_data() -> std::result::Result<(), Box<dyn StdError>> {
         let bot_token = "123456:bot-token";
         let stale_auth_date = "1";
@@ -376,6 +424,52 @@ mod tests {
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("initData has expired"));
         Ok(())
+    }
+
+    #[test]
+    fn rejects_future_init_data_beyond_clock_skew() -> std::result::Result<(), Box<dyn StdError>> {
+        let bot_token = "123456:bot-token";
+        let future = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600;
+        let future_auth_date = future.to_string();
+        let init_data = sign_init_data(
+            bot_token,
+            &[
+                ("auth_date", future_auth_date.as_str()),
+                ("query_id", "q-1"),
+            ],
+        )?;
+
+        let error = match verify_web_app_init_data(
+            bot_token,
+            init_data.as_str(),
+            Some(Duration::from_secs(60)),
+        ) {
+            Ok(_) => return Err("future payload should fail".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("future"));
+        Ok(())
+    }
+
+    #[test]
+    fn validates_bot_token_shape_before_path_use() {
+        assert!(BotToken::new("123456:ABC_def-123").is_ok());
+
+        for token in [
+            "",
+            " ",
+            "abc:def",
+            "123",
+            "123:",
+            ":abc",
+            "123:abc:def",
+            "123:abc/def",
+            "123:abc def",
+            "123:abc\n",
+        ] {
+            assert!(matches!(BotToken::new(token), Err(Error::InvalidBotToken)));
+        }
     }
 
     #[test]

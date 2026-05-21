@@ -18,9 +18,7 @@ pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<O
     let Some(language_code) = language_code else {
         return Ok(None);
     };
-    if language_code.trim().is_empty() {
-        return Err(invalid_request("language_code cannot be empty"));
-    }
+    crate::types::command::validate_language_code_value(&language_code)?;
     Ok(Some(language_code))
 }
 

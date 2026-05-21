@@ -90,4 +90,4 @@ pub use update::{
     UpdateKind,
 };
 pub use upload::UploadFile;
-pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo};
+pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo, WebhookSecretToken};

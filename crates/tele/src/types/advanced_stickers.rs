@@ -2,7 +2,29 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::{Error, Result};
+
 use super::AdvancedRequest;
+
+fn validate_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_required_vec(field: &str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    Ok(())
+}
 
 /// Auto-generated request for `setUserEmojiStatus`.
 #[derive(Clone, Debug, Serialize)]
@@ -84,6 +106,11 @@ impl AdvancedSendStickerRequest {
 impl AdvancedRequest for AdvancedSendStickerRequest {
     type Response = crate::types::message::Message;
     const METHOD: &'static str = "sendSticker";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getStickerSet`.
@@ -101,6 +128,11 @@ impl AdvancedGetStickerSetRequest {
 impl AdvancedRequest for AdvancedGetStickerSetRequest {
     type Response = crate::types::sticker::StickerSet;
     const METHOD: &'static str = "getStickerSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `getCustomEmojiStickers`.
@@ -118,6 +150,11 @@ impl AdvancedGetCustomEmojiStickersRequest {
 impl AdvancedRequest for AdvancedGetCustomEmojiStickersRequest {
     type Response = Vec<crate::types::sticker::Sticker>;
     const METHOD: &'static str = "getCustomEmojiStickers";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_vec("custom_emoji_ids", self.custom_emoji_ids.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `uploadStickerFile`.
@@ -145,6 +182,11 @@ impl AdvancedUploadStickerFileRequest {
 impl AdvancedRequest for AdvancedUploadStickerFileRequest {
     type Response = crate::types::file::File;
     const METHOD: &'static str = "uploadStickerFile";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker_format", &self.sticker_format)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `createNewStickerSet`.
@@ -181,6 +223,13 @@ impl AdvancedCreateNewStickerSetRequest {
 impl AdvancedRequest for AdvancedCreateNewStickerSetRequest {
     type Response = bool;
     const METHOD: &'static str = "createNewStickerSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        validate_required_string("title", &self.title)?;
+        validate_required_vec("stickers", self.stickers.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `addStickerToSet`.
@@ -208,6 +257,11 @@ impl AdvancedAddStickerToSetRequest {
 impl AdvancedRequest for AdvancedAddStickerToSetRequest {
     type Response = bool;
     const METHOD: &'static str = "addStickerToSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerPositionInSet`.
@@ -229,6 +283,11 @@ impl AdvancedSetStickerPositionInSetRequest {
 impl AdvancedRequest for AdvancedSetStickerPositionInSetRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerPositionInSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `deleteStickerFromSet`.
@@ -248,6 +307,11 @@ impl AdvancedDeleteStickerFromSetRequest {
 impl AdvancedRequest for AdvancedDeleteStickerFromSetRequest {
     type Response = bool;
     const METHOD: &'static str = "deleteStickerFromSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `replaceStickerInSet`.
@@ -278,6 +342,12 @@ impl AdvancedReplaceStickerInSetRequest {
 impl AdvancedRequest for AdvancedReplaceStickerInSetRequest {
     type Response = bool;
     const METHOD: &'static str = "replaceStickerInSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        validate_required_string("old_sticker", &self.old_sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerEmojiList`.
@@ -299,6 +369,12 @@ impl AdvancedSetStickerEmojiListRequest {
 impl AdvancedRequest for AdvancedSetStickerEmojiListRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerEmojiList";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        validate_required_vec("emoji_list", self.emoji_list.len())?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerKeywords`.
@@ -321,6 +397,11 @@ impl AdvancedSetStickerKeywordsRequest {
 impl AdvancedRequest for AdvancedSetStickerKeywordsRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerKeywords";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerMaskPosition`.
@@ -343,6 +424,11 @@ impl AdvancedSetStickerMaskPositionRequest {
 impl AdvancedRequest for AdvancedSetStickerMaskPositionRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerMaskPosition";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("sticker", &self.sticker)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerSetTitle`.
@@ -364,6 +450,12 @@ impl AdvancedSetStickerSetTitleRequest {
 impl AdvancedRequest for AdvancedSetStickerSetTitleRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerSetTitle";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        validate_required_string("title", &self.title)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setStickerSetThumbnail`.
@@ -394,6 +486,12 @@ impl AdvancedSetStickerSetThumbnailRequest {
 impl AdvancedRequest for AdvancedSetStickerSetThumbnailRequest {
     type Response = bool;
     const METHOD: &'static str = "setStickerSetThumbnail";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        validate_required_string("format", &self.format)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `setCustomEmojiStickerSetThumbnail`.
@@ -416,6 +514,11 @@ impl AdvancedSetCustomEmojiStickerSetThumbnailRequest {
 impl AdvancedRequest for AdvancedSetCustomEmojiStickerSetThumbnailRequest {
     type Response = bool;
     const METHOD: &'static str = "setCustomEmojiStickerSetThumbnail";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `deleteStickerSet`.
@@ -433,4 +536,9 @@ impl AdvancedDeleteStickerSetRequest {
 impl AdvancedRequest for AdvancedDeleteStickerSetRequest {
     type Response = bool;
     const METHOD: &'static str = "deleteStickerSet";
+
+    fn validate(&self) -> Result<()> {
+        validate_required_string("name", &self.name)?;
+        Ok(())
+    }
 }

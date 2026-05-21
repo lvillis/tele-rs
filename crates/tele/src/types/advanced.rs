@@ -2,10 +2,16 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::Result;
+
 /// Typed request marker for advanced API methods.
 pub trait AdvancedRequest: Serialize {
     type Response: DeserializeOwned;
     const METHOD: &'static str;
+
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[path = "advanced_business.rs"]

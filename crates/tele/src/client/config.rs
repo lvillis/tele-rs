@@ -37,6 +37,38 @@ impl Default for RetryConfig {
     }
 }
 
+impl RetryConfig {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.max_attempts == 0 {
+            return Err(Error::Configuration {
+                reason: "retry max_attempts must be at least 1".to_owned(),
+            });
+        }
+        if self.base_backoff.is_zero() {
+            return Err(Error::Configuration {
+                reason: "retry base_backoff must be greater than zero".to_owned(),
+            });
+        }
+        if self.max_backoff.is_zero() {
+            return Err(Error::Configuration {
+                reason: "retry max_backoff must be greater than zero".to_owned(),
+            });
+        }
+        if !self.jitter_ratio.is_finite() || !(0.0..=1.0).contains(&self.jitter_ratio) {
+            return Err(Error::Configuration {
+                reason: "retry jitter_ratio must be finite and between 0.0 and 1.0".to_owned(),
+            });
+        }
+        if self.base_backoff > self.max_backoff {
+            return Err(Error::Configuration {
+                reason: "retry base_backoff must not exceed max_backoff".to_owned(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 /// Token bucket rate limit settings.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -53,6 +85,41 @@ impl RateLimitConfig {
             burst: 30,
             max_throttle_delay: Duration::from_secs(30),
         }
+    }
+
+    pub fn new(
+        requests_per_second: f64,
+        burst: usize,
+        max_throttle_delay: Duration,
+    ) -> Result<Self, Error> {
+        let config = Self {
+            requests_per_second,
+            burst,
+            max_throttle_delay,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        if !self.requests_per_second.is_finite() || self.requests_per_second <= 0.0 {
+            return Err(Error::Configuration {
+                reason: "rate limit requests_per_second must be finite and greater than 0"
+                    .to_owned(),
+            });
+        }
+        if self.burst == 0 {
+            return Err(Error::Configuration {
+                reason: "rate limit burst must be at least 1".to_owned(),
+            });
+        }
+        if self.max_throttle_delay.is_zero() {
+            return Err(Error::Configuration {
+                reason: "rate limit max_throttle_delay must be greater than zero".to_owned(),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -103,6 +170,56 @@ impl Default for RequestDefaults {
     }
 }
 
+impl RequestDefaults {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.request_timeout.is_zero() {
+            return Err(Error::Configuration {
+                reason: "request_timeout must be greater than zero".to_owned(),
+            });
+        }
+        if self.connect_timeout.is_zero() {
+            return Err(Error::Configuration {
+                reason: "connect_timeout must be greater than zero".to_owned(),
+            });
+        }
+        if self.total_timeout.is_some_and(|timeout| timeout.is_zero()) {
+            return Err(Error::Configuration {
+                reason: "total_timeout must be greater than zero when set".to_owned(),
+            });
+        }
+        if self.max_response_body_bytes == 0 {
+            return Err(Error::Configuration {
+                reason: "max_response_body_bytes must be at least 1".to_owned(),
+            });
+        }
+        if self.capture_body_snippet && self.body_snippet_limit == 0 {
+            return Err(Error::Configuration {
+                reason: "body_snippet_limit must be at least 1 when body snippets are enabled"
+                    .to_owned(),
+            });
+        }
+        self.retry.validate()?;
+        if let Some(rate_limit) = self.global_rate_limit.as_ref() {
+            rate_limit.validate()?;
+        }
+        if let Some(rate_limit) = self.per_host_rate_limit.as_ref() {
+            rate_limit.validate()?;
+        }
+        if self.max_in_flight.is_some_and(|max| max == 0) {
+            return Err(Error::Configuration {
+                reason: "max_in_flight must be at least 1 when set".to_owned(),
+            });
+        }
+        if self.max_in_flight_per_host.is_some_and(|max| max == 0) {
+            return Err(Error::Configuration {
+                reason: "max_in_flight_per_host must be at least 1 when set".to_owned(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 pub(crate) struct BuilderParts {
     pub(crate) base_url: String,
     pub(crate) auth: Auth,
@@ -147,25 +264,25 @@ impl ClientBuilder {
 
     /// Sets default per-phase timeout.
     pub fn request_timeout(mut self, timeout: Duration) -> Self {
-        self.defaults.request_timeout = timeout.max(Duration::from_millis(1));
+        self.defaults.request_timeout = timeout;
         self
     }
 
     /// Sets total end-to-end timeout.
     pub fn total_timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.defaults.total_timeout = timeout.map(|value| value.max(Duration::from_millis(1)));
+        self.defaults.total_timeout = timeout;
         self
     }
 
     /// Sets connect timeout.
     pub fn connect_timeout(mut self, timeout: Duration) -> Self {
-        self.defaults.connect_timeout = timeout.max(Duration::from_millis(1));
+        self.defaults.connect_timeout = timeout;
         self
     }
 
     /// Max response bytes accepted from Telegram.
     pub fn max_response_body_bytes(mut self, max_bytes: usize) -> Self {
-        self.defaults.max_response_body_bytes = max_bytes.max(1);
+        self.defaults.max_response_body_bytes = max_bytes;
         self
     }
 
@@ -177,37 +294,47 @@ impl ClientBuilder {
 
     /// Max chars to keep for body snippets.
     pub fn body_snippet_limit(mut self, max_chars: usize) -> Self {
-        self.defaults.body_snippet_limit = max_chars.max(1);
+        self.defaults.body_snippet_limit = max_chars;
         self
     }
 
     /// Retry policy.
-    pub fn retry_config(mut self, retry: RetryConfig) -> Self {
+    pub fn retry_config(mut self, retry: RetryConfig) -> Result<Self, Error> {
+        retry.validate()?;
         self.defaults.retry = retry;
-        self
+        Ok(self)
     }
 
     /// Global local-side token bucket limiter.
-    pub fn global_rate_limit(mut self, rate_limit: Option<RateLimitConfig>) -> Self {
+    pub fn global_rate_limit(mut self, rate_limit: Option<RateLimitConfig>) -> Result<Self, Error> {
+        if let Some(rate_limit) = rate_limit.as_ref() {
+            rate_limit.validate()?;
+        }
         self.defaults.global_rate_limit = rate_limit;
-        self
+        Ok(self)
     }
 
     /// Per-host local-side token bucket limiter.
-    pub fn per_host_rate_limit(mut self, rate_limit: Option<RateLimitConfig>) -> Self {
+    pub fn per_host_rate_limit(
+        mut self,
+        rate_limit: Option<RateLimitConfig>,
+    ) -> Result<Self, Error> {
+        if let Some(rate_limit) = rate_limit.as_ref() {
+            rate_limit.validate()?;
+        }
         self.defaults.per_host_rate_limit = rate_limit;
-        self
+        Ok(self)
     }
 
     /// Maximum total in-flight requests.
     pub fn max_in_flight(mut self, max: Option<usize>) -> Self {
-        self.defaults.max_in_flight = max.map(|value| value.max(1));
+        self.defaults.max_in_flight = max;
         self
     }
 
     /// Maximum in-flight requests per host.
     pub fn max_in_flight_per_host(mut self, max: Option<usize>) -> Self {
-        self.defaults.max_in_flight_per_host = max.map(|value| value.max(1));
+        self.defaults.max_in_flight_per_host = max;
         self
     }
 
@@ -253,48 +380,16 @@ impl ClientBuilder {
         let parsed = raw.parse::<Uri>().map_err(|source| Error::InvalidRequest {
             reason: format!("invalid http proxy uri `{raw}`: {source}"),
         })?;
-        let Some(scheme) = parsed.scheme_str() else {
-            return Err(Error::InvalidRequest {
-                reason: format!(
-                    "invalid http proxy uri `{raw}`: proxy uri must include an explicit scheme"
-                ),
-            });
-        };
-        if !scheme.eq_ignore_ascii_case("http") {
-            return Err(Error::InvalidRequest {
-                reason: format!("invalid http proxy uri `{raw}`: proxy uri must use http scheme"),
-            });
-        }
-        if parsed.host().is_none() {
-            return Err(Error::InvalidRequest {
-                reason: format!("invalid http proxy uri `{raw}`: proxy uri must include host"),
-            });
-        }
-        if let Some(path_and_query) = parsed.path_and_query() {
-            let path = path_and_query.path();
-            if !path.is_empty() && path != "/" {
-                return Err(Error::InvalidRequest {
-                    reason: format!(
-                        "invalid http proxy uri `{raw}`: proxy uri must not include path segments"
-                    ),
-                });
-            }
-            if path_and_query.query().is_some() {
-                return Err(Error::InvalidRequest {
-                    reason: format!(
-                        "invalid http proxy uri `{raw}`: proxy uri must not include query parameters"
-                    ),
-                });
-            }
-        }
+        validate_http_proxy_uri(raw, &parsed)?;
         self.defaults.http_proxy = Some(parsed);
         Ok(self)
     }
 
     /// Sets HTTP proxy URI using a pre-parsed value.
-    pub fn http_proxy_uri(mut self, proxy_uri: Uri) -> Self {
+    pub fn http_proxy_uri(mut self, proxy_uri: Uri) -> Result<Self, Error> {
+        validate_http_proxy_uri(&proxy_uri.to_string(), &proxy_uri)?;
         self.defaults.http_proxy = Some(proxy_uri);
-        self
+        Ok(self)
     }
 
     /// Clears configured HTTP proxy URI.
@@ -360,6 +455,11 @@ impl ClientBuilder {
         }
     }
 
+    /// Validates all transport defaults configured on this builder.
+    pub fn validate(&self) -> Result<(), Error> {
+        self.defaults.validate()
+    }
+
     /// Builds async client.
     #[cfg(feature = "_async")]
     pub fn build(self) -> Result<super::async_client::Client, Error> {
@@ -371,6 +471,45 @@ impl ClientBuilder {
     pub fn build_blocking(self) -> Result<super::blocking_client::BlockingClient, Error> {
         super::blocking_client::BlockingClient::from_builder(self)
     }
+}
+
+fn validate_http_proxy_uri(raw: &str, parsed: &Uri) -> Result<(), Error> {
+    let Some(scheme) = parsed.scheme_str() else {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "invalid http proxy uri `{raw}`: proxy uri must include an explicit scheme"
+            ),
+        });
+    };
+    if !scheme.eq_ignore_ascii_case("http") {
+        return Err(Error::InvalidRequest {
+            reason: format!("invalid http proxy uri `{raw}`: proxy uri must use http scheme"),
+        });
+    }
+    if parsed.host().is_none() {
+        return Err(Error::InvalidRequest {
+            reason: format!("invalid http proxy uri `{raw}`: proxy uri must include host"),
+        });
+    }
+    if let Some(path_and_query) = parsed.path_and_query() {
+        let path = path_and_query.path();
+        if !path.is_empty() && path != "/" {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "invalid http proxy uri `{raw}`: proxy uri must not include path segments"
+                ),
+            });
+        }
+        if path_and_query.query().is_some() {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "invalid http proxy uri `{raw}`: proxy uri must not include query parameters"
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -408,6 +547,133 @@ mod tests {
             parts.defaults.no_proxy_rules,
             vec!["localhost", ".example.com", "127.0.0.1"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_retry_config() -> Result<(), Error> {
+        let retry = RetryConfig {
+            max_attempts: 0,
+            ..RetryConfig::default()
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.retry_config(retry);
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+
+        let retry = RetryConfig {
+            jitter_ratio: f64::NAN,
+            ..RetryConfig::default()
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.retry_config(retry);
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+
+        let retry = RetryConfig {
+            base_backoff: Duration::ZERO,
+            ..RetryConfig::default()
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.retry_config(retry);
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+
+        let retry = RetryConfig {
+            base_backoff: Duration::from_secs(2),
+            max_backoff: Duration::from_secs(1),
+            ..RetryConfig::default()
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.retry_config(retry);
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_rate_limit_config() -> Result<(), Error> {
+        let invalid_rate = RateLimitConfig {
+            requests_per_second: f64::INFINITY,
+            ..RateLimitConfig::standard()
+        };
+        let result =
+            ClientBuilder::new("https://api.telegram.org")?.global_rate_limit(Some(invalid_rate));
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+
+        let invalid_burst = RateLimitConfig {
+            burst: 0,
+            ..RateLimitConfig::standard()
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?
+            .per_host_rate_limit(Some(invalid_burst));
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+
+        assert!(matches!(
+            RateLimitConfig::new(1.0, 1, Duration::ZERO),
+            Err(Error::Configuration { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn validates_request_defaults_without_silent_clamping() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?;
+        assert!(builder.validate().is_ok());
+
+        let zero_request_timeout =
+            ClientBuilder::new("https://api.telegram.org")?.request_timeout(Duration::ZERO);
+        assert!(matches!(
+            zero_request_timeout.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_total_timeout =
+            ClientBuilder::new("https://api.telegram.org")?.total_timeout(Some(Duration::ZERO));
+        assert!(matches!(
+            zero_total_timeout.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_connect_timeout =
+            ClientBuilder::new("https://api.telegram.org")?.connect_timeout(Duration::ZERO);
+        assert!(matches!(
+            zero_connect_timeout.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_body = ClientBuilder::new("https://api.telegram.org")?.max_response_body_bytes(0);
+        assert!(matches!(
+            zero_body.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_snippet = ClientBuilder::new("https://api.telegram.org")?.body_snippet_limit(0);
+        assert!(matches!(
+            zero_snippet.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_in_flight = ClientBuilder::new("https://api.telegram.org")?.max_in_flight(Some(0));
+        assert!(matches!(
+            zero_in_flight.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        let zero_in_flight_per_host =
+            ClientBuilder::new("https://api.telegram.org")?.max_in_flight_per_host(Some(0));
+        assert!(matches!(
+            zero_in_flight_per_host.validate(),
+            Err(Error::Configuration { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_preparsed_http_proxy_uri() -> Result<(), Error> {
+        let parsed = match "https://127.0.0.1:8080".parse::<Uri>() {
+            Ok(parsed) => parsed,
+            Err(source) => {
+                return Err(Error::InvalidRequest {
+                    reason: format!("failed to parse test uri: {source}"),
+                });
+            }
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.http_proxy_uri(parsed);
+        assert!(result.is_err());
         Ok(())
     }
 

@@ -39,6 +39,7 @@ impl BlockingClient {
     }
 
     pub(crate) fn from_builder(builder: ClientBuilder) -> Result<Self> {
+        builder.validate()?;
         let BuilderParts {
             base_url,
             auth,

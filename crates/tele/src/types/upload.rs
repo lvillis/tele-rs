@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use http::header::HeaderValue;
+
 use crate::{Error, Result};
 
 /// Binary file payload for Telegram multipart uploads.
@@ -20,6 +22,7 @@ impl UploadFile {
                 reason: "upload file_name cannot be empty".to_owned(),
             });
         }
+        validate_multipart_header_fragment("upload file_name", &file_name)?;
 
         Ok(Self {
             file_name,
@@ -48,9 +51,15 @@ impl UploadFile {
     }
 
     /// Attach a specific content-type for this file part.
-    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
-        self.content_type = Some(content_type.into());
-        self
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Result<Self> {
+        let content_type = content_type.into();
+        validate_multipart_header_fragment("upload content_type", &content_type)?;
+        HeaderValue::from_str(&content_type).map_err(|source| Error::InvalidHeaderValue {
+            name: "content-type".to_owned(),
+            source,
+        })?;
+        self.content_type = Some(content_type);
+        Ok(self)
     }
 
     pub(crate) fn file_name(&self) -> &str {
@@ -63,5 +72,31 @@ impl UploadFile {
 
     pub(crate) fn data_arc(&self) -> Arc<[u8]> {
         Arc::clone(&self.data)
+    }
+}
+
+fn validate_multipart_header_fragment(label: &str, value: &str) -> Result<()> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} must not contain control characters"),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UploadFile;
+
+    #[test]
+    fn rejects_header_injection_metadata() {
+        assert!(UploadFile::from_bytes("a\r\nx: y", Vec::new()).is_err());
+        let file = UploadFile::from_bytes("a.txt", Vec::new());
+        assert!(file.is_ok());
+        let file = match file {
+            Ok(file) => file,
+            Err(_) => return,
+        };
+        assert!(file.with_content_type("text/plain\r\nx: y").is_err());
     }
 }

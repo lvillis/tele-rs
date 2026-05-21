@@ -18,7 +18,67 @@ struct Paths {
     types_dir: PathBuf,
 }
 
+struct GeneratedFile {
+    path: PathBuf,
+    content: String,
+}
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn create(name: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut path = std::env::temp_dir();
+        path.push(format!("{name}-{}", std::process::id()));
+        if path.exists() {
+            fs::remove_dir_all(&path)?;
+        }
+        fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 pub(crate) fn generate() -> Result<(), Box<dyn std::error::Error>> {
+    let files = render_generated_files()?;
+    write_generated_files(&files)?;
+    let paths = files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    run_rustfmt(&paths)?;
+    Ok(())
+}
+
+pub(crate) fn check() -> Result<(), Box<dyn std::error::Error>> {
+    let files = format_generated_files(&render_generated_files()?)?;
+    let changed = files
+        .iter()
+        .filter(|file| {
+            fs::read_to_string(&file.path).ok().as_deref() != Some(file.content.as_str())
+        })
+        .map(|file| file.path.as_path())
+        .collect::<Vec<_>>();
+
+    if !changed.is_empty() {
+        let mut message = String::from("generated advanced API files are out of date:");
+        for path in changed {
+            let _ = write!(&mut message, "\n- {}", path.display());
+        }
+        message.push_str("\nrun `cargo run -p tele-codegen -- gen-advanced`");
+        return Err(message.into());
+    }
+
+    Ok(())
+}
+
+fn render_generated_files() -> Result<Vec<GeneratedFile>, Box<dyn std::error::Error>> {
     let paths = paths()?;
     let spec: BotApiSpec = serde_json::from_slice(&fs::read(&paths.spec)?)?;
     spec.validate()
@@ -36,76 +96,80 @@ pub(crate) fn generate() -> Result<(), Box<dyn std::error::Error>> {
         methods.push(method);
     }
 
-    write_if_changed(&paths.types_root, &generate_types_root(&grouped))?;
-
-    for domain in DOMAIN_ORDER {
-        let path = paths.types_dir.join(format!("advanced_{domain}.rs"));
-        let content = generate_domain_module(grouped.get(domain).map_or(&[], Vec::as_slice));
-        write_if_changed(&path, &content)?;
-    }
-
-    write_if_changed(
-        &paths.api_methods,
-        &generate_api_methods(&spec.advanced_methods),
-    )?;
-    Ok(())
-}
-
-pub(crate) fn check() -> Result<(), Box<dyn std::error::Error>> {
-    let paths = paths()?;
-    let generated_paths = generated_paths(&paths);
-    let before = read_generated_files(&generated_paths)?;
-
-    generate()?;
-    run_cargo_fmt()?;
-
-    let after = read_generated_files(&generated_paths)?;
-    let changed = generated_paths
-        .iter()
-        .zip(before.iter().zip(after.iter()))
-        .filter_map(|(path, (before, after))| (before != after).then_some(path))
-        .collect::<Vec<_>>();
-
-    if !changed.is_empty() {
-        let mut message = String::from("generated advanced API files were out of date:");
-        for path in changed {
-            let _ = write!(&mut message, "\n- {}", path.display());
-        }
-        message.push_str("\nrun `cargo run -p tele-codegen -- gen-advanced && cargo fmt --all`");
-        return Err(message.into());
-    }
-
-    Ok(())
-}
-
-fn generated_paths(paths: &Paths) -> Vec<PathBuf> {
     let mut files = Vec::with_capacity(DOMAIN_ORDER.len() + 2);
-    files.push(paths.types_root.clone());
+    files.push(GeneratedFile {
+        path: paths.types_root,
+        content: generate_types_root(&grouped),
+    });
+
     for domain in DOMAIN_ORDER {
-        files.push(paths.types_dir.join(format!("advanced_{domain}.rs")));
+        files.push(GeneratedFile {
+            path: paths.types_dir.join(format!("advanced_{domain}.rs")),
+            content: generate_domain_module(grouped.get(domain).map_or(&[], Vec::as_slice)),
+        });
     }
-    files.push(paths.api_methods.clone());
-    files
+
+    files.push(GeneratedFile {
+        path: paths.api_methods,
+        content: generate_api_methods(&spec.advanced_methods),
+    });
+    Ok(files)
 }
 
-fn read_generated_files(
-    paths: &[PathBuf],
-) -> Result<Vec<Option<String>>, Box<dyn std::error::Error>> {
-    paths
+fn write_generated_files(files: &[GeneratedFile]) -> Result<(), Box<dyn std::error::Error>> {
+    for file in files {
+        write_if_changed(&file.path, &file.content)?;
+    }
+    Ok(())
+}
+
+fn format_generated_files(
+    files: &[GeneratedFile],
+) -> Result<Vec<GeneratedFile>, Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::create("tele-codegen-advanced")?;
+    let mut temp_paths = Vec::with_capacity(files.len());
+    for file in files {
+        let file_name = file.path.file_name().ok_or_else(|| {
+            format!(
+                "generated file path has no file name: {}",
+                file.path.display()
+            )
+        })?;
+        let temp_path = temp_dir.path.join(file_name);
+        fs::write(&temp_path, &file.content)?;
+        temp_paths.push(temp_path);
+    }
+    run_rustfmt(&temp_paths)?;
+    files
         .iter()
-        .map(|path| match fs::read_to_string(path) {
-            Ok(content) => Ok(Some(content)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(format!("failed to read {}: {error}", path.display()).into()),
+        .zip(temp_paths)
+        .map(|(file, temp_path)| {
+            Ok(GeneratedFile {
+                path: file.path.clone(),
+                content: fs::read_to_string(temp_path)?,
+            })
         })
         .collect()
 }
 
-fn run_cargo_fmt() -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new("cargo").args(["fmt", "--all"]).status()?;
-    if !status.success() {
-        return Err(format!("cargo fmt --all failed with status {status}").into());
+fn run_rustfmt(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    if paths.is_empty() {
+        return Ok(());
     }
+    let output = Command::new("rustfmt")
+        .args(["--edition", "2024"])
+        .args(paths)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "rustfmt failed with status {}\n{}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
     Ok(())
 }
 
@@ -350,6 +414,28 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
     }
 }
 
+fn validation_rule(param: &ParamSpec) -> Option<String> {
+    if !param.required {
+        return None;
+    }
+
+    let field_ty = resolve_param_type(param);
+    if field_ty == "String" {
+        return Some(format!(
+            "        validate_required_string(\"{}\", &self.{})?;",
+            param.name, param.field_name
+        ));
+    }
+    if field_ty.starts_with("Vec<") {
+        return Some(format!(
+            "        validate_required_vec(\"{}\", self.{}.len())?;",
+            param.name, param.field_name
+        ));
+    }
+
+    None
+}
+
 fn domain_for_method(fn_name: &str) -> &'static str {
     if fn_name.contains("business") {
         return "business";
@@ -382,6 +468,11 @@ fn render_request(method: &MethodSpec) -> String {
         .iter()
         .filter(|param| param.required)
         .collect();
+    let validation_rules = method
+        .params
+        .iter()
+        .filter_map(validation_rule)
+        .collect::<Vec<_>>();
     let derive = if required_params.is_empty() {
         "#[derive(Clone, Debug, Default, Serialize)]"
     } else {
@@ -471,6 +562,15 @@ fn render_request(method: &MethodSpec) -> String {
         "    const METHOD: &'static str = \"{}\";",
         method.method
     );
+    if !validation_rules.is_empty() {
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    fn validate(&self) -> Result<()> {{");
+        for rule in validation_rules {
+            let _ = writeln!(&mut out, "{rule}");
+        }
+        let _ = writeln!(&mut out, "        Ok(())");
+        let _ = writeln!(&mut out, "    }}");
+    }
     let _ = writeln!(&mut out, "}}");
     let _ = writeln!(&mut out);
     out
@@ -485,6 +585,8 @@ fn generate_types_root(grouped: &HashMap<&'static str, Vec<&MethodSpec>>) -> Str
     let _ = writeln!(&mut out, "use serde::Serialize;");
     let _ = writeln!(&mut out, "use serde::de::DeserializeOwned;");
     let _ = writeln!(&mut out);
+    let _ = writeln!(&mut out, "use crate::Result;");
+    let _ = writeln!(&mut out);
     let _ = writeln!(
         &mut out,
         "/// Typed request marker for advanced API methods."
@@ -492,6 +594,10 @@ fn generate_types_root(grouped: &HashMap<&'static str, Vec<&MethodSpec>>) -> Str
     let _ = writeln!(&mut out, "pub trait AdvancedRequest: Serialize {{");
     let _ = writeln!(&mut out, "    type Response: DeserializeOwned;");
     let _ = writeln!(&mut out, "    const METHOD: &'static str;");
+    let _ = writeln!(&mut out);
+    let _ = writeln!(&mut out, "    fn validate(&self) -> Result<()> {{");
+    let _ = writeln!(&mut out, "        Ok(())");
+    let _ = writeln!(&mut out, "    }}");
     let _ = writeln!(&mut out, "}}");
     let _ = writeln!(&mut out);
     for domain in DOMAIN_ORDER {
@@ -517,6 +623,9 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
     let uses_value = body.contains("Value");
+    let uses_required_string_validator = body.contains("validate_required_string(");
+    let uses_required_vec_validator = body.contains("validate_required_vec(");
+    let uses_validation = uses_required_string_validator || uses_required_vec_validator;
 
     let mut out = String::new();
     let _ = writeln!(
@@ -532,8 +641,48 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "use serde_json::Value;");
     }
     let _ = writeln!(&mut out);
+    if uses_validation {
+        let _ = writeln!(&mut out, "use crate::{{Error, Result}};");
+        let _ = writeln!(&mut out);
+    }
     let _ = writeln!(&mut out, "use super::AdvancedRequest;");
     let _ = writeln!(&mut out);
+    if uses_required_string_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_string(field: &str, value: &str) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if value.trim().is_empty() {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_required_vec_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_vec(field: &str, len: usize) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if len == 0 {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} cannot be empty\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
     if !body.is_empty() {
         let _ = writeln!(&mut out, "{body}");
     }

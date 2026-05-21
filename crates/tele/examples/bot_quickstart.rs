@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) => OutboxConfig::default().with_persistence_path(path),
         Err(_error) => OutboxConfig::default(),
     };
-    let outbox = client.control().spawn_outbox(outbox_config);
+    let outbox = client.control().spawn_outbox(outbox_config)?;
 
     let mut router = Router::new();
     router.command_route("start").handle_with_policy(

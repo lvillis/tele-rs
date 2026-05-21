@@ -25,11 +25,13 @@ impl UpdatesService {
 
     /// Calls `getUpdates`.
     pub async fn get_updates(&self, request: &GetUpdatesRequest) -> Result<Vec<Update>> {
+        request.validate()?;
         self.client.call_method("getUpdates", request).await
     }
 
     /// Calls `setWebhook`.
     pub async fn set_webhook(&self, request: &SetWebhookRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setWebhook", request).await
     }
 
@@ -39,6 +41,7 @@ impl UpdatesService {
         request: &SetWebhookRequest,
         certificate: &UploadFile,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method_multipart("setWebhook", request, "certificate", certificate)
             .await
@@ -59,6 +62,7 @@ impl UpdatesService {
         &self,
         request: &AnswerCallbackQueryRequest,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method("answerCallbackQuery", request)
             .await
@@ -66,6 +70,7 @@ impl UpdatesService {
 
     /// Calls `answerInlineQuery`.
     pub async fn answer_inline_query(&self, request: &AnswerInlineQueryRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("answerInlineQuery", request).await
     }
 }
@@ -85,11 +90,13 @@ impl BlockingUpdatesService {
 
     /// Calls `getUpdates`.
     pub fn get_updates(&self, request: &GetUpdatesRequest) -> Result<Vec<Update>> {
+        request.validate()?;
         self.client.call_method("getUpdates", request)
     }
 
     /// Calls `setWebhook`.
     pub fn set_webhook(&self, request: &SetWebhookRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("setWebhook", request)
     }
 
@@ -99,6 +106,7 @@ impl BlockingUpdatesService {
         request: &SetWebhookRequest,
         certificate: &UploadFile,
     ) -> Result<bool> {
+        request.validate()?;
         self.client
             .call_method_multipart("setWebhook", request, "certificate", certificate)
     }
@@ -115,11 +123,13 @@ impl BlockingUpdatesService {
 
     /// Calls `answerCallbackQuery`.
     pub fn answer_callback_query(&self, request: &AnswerCallbackQueryRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("answerCallbackQuery", request)
     }
 
     /// Calls `answerInlineQuery`.
     pub fn answer_inline_query(&self, request: &AnswerInlineQueryRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("answerInlineQuery", request)
     }
 }

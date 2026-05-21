@@ -30,6 +30,7 @@ impl MessagesService {
 
     /// Calls `sendMessage`.
     pub async fn send_message(&self, request: &SendMessageRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendMessage", request).await
     }
 
@@ -48,11 +49,13 @@ impl MessagesService {
         &self,
         request: &CopyMessagesRequest,
     ) -> Result<Vec<MessageIdObject>> {
+        request.validate()?;
         self.client.call_method("copyMessages", request).await
     }
 
     /// Calls `sendPhoto`.
     pub async fn send_photo(&self, request: &SendPhotoRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendPhoto", request).await
     }
 
@@ -63,6 +66,7 @@ impl MessagesService {
         request: &SendPhotoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendPhoto", request, "photo", file)
             .await
@@ -70,6 +74,7 @@ impl MessagesService {
 
     /// Calls `sendAudio`.
     pub async fn send_audio(&self, request: &SendAudioRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendAudio", request).await
     }
 
@@ -80,6 +85,7 @@ impl MessagesService {
         request: &SendAudioRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendAudio", request, "audio", file)
             .await
@@ -87,6 +93,7 @@ impl MessagesService {
 
     /// Calls `sendDocument`.
     pub async fn send_document(&self, request: &SendDocumentRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendDocument", request).await
     }
 
@@ -97,6 +104,7 @@ impl MessagesService {
         request: &SendDocumentRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendDocument", request, "document", file)
             .await
@@ -104,6 +112,7 @@ impl MessagesService {
 
     /// Calls `sendVideo`.
     pub async fn send_video(&self, request: &SendVideoRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVideo", request).await
     }
 
@@ -114,6 +123,7 @@ impl MessagesService {
         request: &SendVideoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVideo", request, "video", file)
             .await
@@ -121,6 +131,7 @@ impl MessagesService {
 
     /// Calls `sendAnimation`.
     pub async fn send_animation(&self, request: &SendAnimationRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendAnimation", request).await
     }
 
@@ -131,6 +142,7 @@ impl MessagesService {
         request: &SendAnimationRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendAnimation", request, "animation", file)
             .await
@@ -138,6 +150,7 @@ impl MessagesService {
 
     /// Calls `sendVoice`.
     pub async fn send_voice(&self, request: &SendVoiceRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVoice", request).await
     }
 
@@ -148,6 +161,7 @@ impl MessagesService {
         request: &SendVoiceRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVoice", request, "voice", file)
             .await
@@ -155,6 +169,7 @@ impl MessagesService {
 
     /// Calls `sendVideoNote`.
     pub async fn send_video_note(&self, request: &SendVideoNoteRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVideoNote", request).await
     }
 
@@ -165,6 +180,7 @@ impl MessagesService {
         request: &SendVideoNoteRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVideoNote", request, "video_note", file)
             .await
@@ -172,26 +188,31 @@ impl MessagesService {
 
     /// Calls `sendMediaGroup`.
     pub async fn send_media_group(&self, request: &SendMediaGroupRequest) -> Result<Vec<Message>> {
+        request.validate()?;
         self.client.call_method("sendMediaGroup", request).await
     }
 
     /// Calls `sendLocation`.
     pub async fn send_location(&self, request: &SendLocationRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendLocation", request).await
     }
 
     /// Calls `sendVenue`.
     pub async fn send_venue(&self, request: &SendVenueRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVenue", request).await
     }
 
     /// Calls `sendContact`.
     pub async fn send_contact(&self, request: &SendContactRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendContact", request).await
     }
 
     /// Calls `sendPoll`.
     pub async fn send_poll(&self, request: &SendPollRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendPoll", request).await
     }
 
@@ -268,6 +289,7 @@ impl MessagesService {
 
     /// Calls `deleteMessages`.
     pub async fn delete_messages(&self, request: &DeleteMessagesRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMessages", request).await
     }
 }
@@ -287,6 +309,7 @@ impl BlockingMessagesService {
 
     /// Calls `sendMessage`.
     pub fn send_message(&self, request: &SendMessageRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendMessage", request)
     }
 
@@ -302,11 +325,13 @@ impl BlockingMessagesService {
 
     /// Calls `copyMessages`.
     pub fn copy_messages(&self, request: &CopyMessagesRequest) -> Result<Vec<MessageIdObject>> {
+        request.validate()?;
         self.client.call_method("copyMessages", request)
     }
 
     /// Calls `sendPhoto`.
     pub fn send_photo(&self, request: &SendPhotoRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendPhoto", request)
     }
 
@@ -317,12 +342,14 @@ impl BlockingMessagesService {
         request: &SendPhotoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendPhoto", request, "photo", file)
     }
 
     /// Calls `sendAudio`.
     pub fn send_audio(&self, request: &SendAudioRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendAudio", request)
     }
 
@@ -333,12 +360,14 @@ impl BlockingMessagesService {
         request: &SendAudioRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendAudio", request, "audio", file)
     }
 
     /// Calls `sendDocument`.
     pub fn send_document(&self, request: &SendDocumentRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendDocument", request)
     }
 
@@ -349,12 +378,14 @@ impl BlockingMessagesService {
         request: &SendDocumentRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendDocument", request, "document", file)
     }
 
     /// Calls `sendVideo`.
     pub fn send_video(&self, request: &SendVideoRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVideo", request)
     }
 
@@ -365,12 +396,14 @@ impl BlockingMessagesService {
         request: &SendVideoRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVideo", request, "video", file)
     }
 
     /// Calls `sendAnimation`.
     pub fn send_animation(&self, request: &SendAnimationRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendAnimation", request)
     }
 
@@ -381,12 +414,14 @@ impl BlockingMessagesService {
         request: &SendAnimationRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendAnimation", request, "animation", file)
     }
 
     /// Calls `sendVoice`.
     pub fn send_voice(&self, request: &SendVoiceRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVoice", request)
     }
 
@@ -397,12 +432,14 @@ impl BlockingMessagesService {
         request: &SendVoiceRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVoice", request, "voice", file)
     }
 
     /// Calls `sendVideoNote`.
     pub fn send_video_note(&self, request: &SendVideoNoteRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVideoNote", request)
     }
 
@@ -413,32 +450,38 @@ impl BlockingMessagesService {
         request: &SendVideoNoteRequest,
         file: &UploadFile,
     ) -> Result<Message> {
+        request.validate()?;
         self.client
             .call_method_multipart("sendVideoNote", request, "video_note", file)
     }
 
     /// Calls `sendMediaGroup`.
     pub fn send_media_group(&self, request: &SendMediaGroupRequest) -> Result<Vec<Message>> {
+        request.validate()?;
         self.client.call_method("sendMediaGroup", request)
     }
 
     /// Calls `sendLocation`.
     pub fn send_location(&self, request: &SendLocationRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendLocation", request)
     }
 
     /// Calls `sendVenue`.
     pub fn send_venue(&self, request: &SendVenueRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendVenue", request)
     }
 
     /// Calls `sendContact`.
     pub fn send_contact(&self, request: &SendContactRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendContact", request)
     }
 
     /// Calls `sendPoll`.
     pub fn send_poll(&self, request: &SendPollRequest) -> Result<Message> {
+        request.validate()?;
         self.client.call_method("sendPoll", request)
     }
 
@@ -506,6 +549,7 @@ impl BlockingMessagesService {
 
     /// Calls `deleteMessages`.
     pub fn delete_messages(&self, request: &DeleteMessagesRequest) -> Result<bool> {
+        request.validate()?;
         self.client.call_method("deleteMessages", request)
     }
 }

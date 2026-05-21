@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use tele::testing::{FakeTelegramServer, RequestExpectation};
-use tele::types::advanced::AdvancedGetAvailableGiftsRequest;
+use tele::types::advanced::{AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
     ChatAdministratorCapability, CreateInvoiceLinkRequest, GetChatMemberCountRequest,
     InlineKeyboardButton, InlineKeyboardMarkup, InputMedia, LabeledPrice, MessageId, ParseMode,
@@ -11,6 +11,7 @@ use tele::types::{
 };
 use tele::{
     BanMemberOptions, BlockingClient, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions,
+    RetryConfig,
 };
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -110,6 +111,22 @@ async fn blocking_advanced_get_available_gifts_success() -> Result<(), DynError>
     assert!(value.is_object());
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_typed_layer_validates_advanced_request_before_transport() -> Result<(), DynError>
+{
+    let client = BlockingClient::builder("http://127.0.0.1:1")?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let request = AdvancedForwardMessagesRequest::new(1_i64, 2_i64, Vec::new());
+
+    let error = match client.typed().call(&request) {
+        Ok(_) => return Err("empty required vector must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
     Ok(())
 }
 
@@ -253,6 +270,26 @@ async fn blocking_moderation_facade_handles_join_actions_and_member_controls()
     );
 
     join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_raw_retry_rejects_invalid_policy_before_request() -> Result<(), DynError> {
+    let client = BlockingClient::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let mut retry = RetryConfig::default();
+    retry.base_backoff = Duration::ZERO;
+
+    let error = match client
+        .raw()
+        .call_no_params_with_retry::<tele::types::User>("getMe", retry)
+    {
+        Ok(_) => return Err("invalid retry policy unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::Configuration { .. }));
+
     Ok(())
 }
 

@@ -4,6 +4,7 @@ use url::Url;
 use crate::Error;
 
 const REDACTED_TOKEN: &str = "<redacted-token>";
+const REDACTED_CREDENTIAL: &str = "redacted";
 
 pub(crate) fn normalize_base_url(input: &str) -> Result<Url, Error> {
     let parsed = Url::parse(input).map_err(|source| Error::InvalidBaseUrl {
@@ -46,6 +47,46 @@ pub(crate) fn redact_token(input: &str, token: &str) -> String {
     input.replace(token, REDACTED_TOKEN)
 }
 
+pub(crate) fn redact_url_credentials(input: &str) -> String {
+    if let Ok(mut url) = Url::parse(input) {
+        if (!url.username().is_empty() || url.password().is_some())
+            && url.set_username(REDACTED_CREDENTIAL).is_err()
+        {
+            return redact_url_credentials_fallback(input);
+        }
+        if url.password().is_some() && url.set_password(Some(REDACTED_CREDENTIAL)).is_err() {
+            return redact_url_credentials_fallback(input);
+        }
+        return url.to_string();
+    }
+
+    redact_url_credentials_fallback(input)
+}
+
+fn redact_url_credentials_fallback(input: &str) -> String {
+    let Some(scheme_end) = input.find("://") else {
+        return input.to_owned();
+    };
+    let authority_start = scheme_end + 3;
+    let rest = &input[authority_start..];
+    let authority_end = rest
+        .find(['/', '?', '#'])
+        .map(|index| authority_start + index)
+        .unwrap_or(input.len());
+    let authority = &input[authority_start..authority_end];
+    let Some(at_index) = authority.rfind('@') else {
+        return input.to_owned();
+    };
+
+    let credentials_end = authority_start + at_index + 1;
+    format!(
+        "{}{}{}",
+        &input[..authority_start],
+        "redacted@",
+        &input[credentials_end..]
+    )
+}
+
 pub(crate) fn body_snippet(body: &[u8], max_chars: usize) -> Option<String> {
     if body.is_empty() || max_chars == 0 {
         return None;
@@ -85,12 +126,21 @@ pub(crate) fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_snippet, redact_token};
+    use super::{body_snippet, redact_token, redact_url_credentials};
 
     #[test]
     fn redacts_token_in_text() {
         let redacted = redact_token("/bot123:abc/getMe", "123:abc");
         assert_eq!(redacted, "/bot<redacted-token>/getMe");
+    }
+
+    #[test]
+    fn redacts_url_credentials() {
+        let redacted = redact_url_credentials("postgres://user:secret@example.com/db");
+        assert_eq!(redacted, "postgres://redacted:redacted@example.com/db");
+
+        let redacted = redact_url_credentials("redis://:secret@example.com/0");
+        assert_eq!(redacted, "redis://redacted:redacted@example.com/0");
     }
 
     #[test]

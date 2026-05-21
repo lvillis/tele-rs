@@ -1,7 +1,14 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::common::{ChatId, UserId};
 use crate::{Error, Result};
+
+const MAX_BOT_NAME_CHARS: usize = 64;
+const MAX_BOT_DESCRIPTION_CHARS: usize = 512;
+const MAX_BOT_SHORT_DESCRIPTION_CHARS: usize = 120;
+const MAX_LANGUAGE_CODE_BYTES: usize = 35;
 
 /// Telegram bot command object.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -16,22 +23,160 @@ impl BotCommand {
         let command = command.into();
         let description = description.into();
 
-        if command.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "command cannot be empty".to_owned(),
-            });
-        }
-
-        if description.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "command description cannot be empty".to_owned(),
-            });
-        }
+        validate_bot_command_name(&command)?;
+        validate_bot_command_description(&description)?;
 
         Ok(Self {
             command,
             description,
         })
+    }
+}
+
+fn validate_bot_command_name(command: &str) -> Result<()> {
+    let length = command.len();
+    if length == 0 || length > 32 {
+        return Err(Error::InvalidRequest {
+            reason: "command must be 1-32 characters".to_owned(),
+        });
+    }
+
+    let first = command.as_bytes()[0];
+    if !first.is_ascii_lowercase() {
+        return Err(Error::InvalidRequest {
+            reason: "command must start with a lowercase ASCII letter".to_owned(),
+        });
+    }
+
+    if !command
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(Error::InvalidRequest {
+            reason: "command must contain only lowercase ASCII letters, digits, or `_`".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_bot_command_description(description: &str) -> Result<()> {
+    let length = description.chars().count();
+    if !(3..=256).contains(&length) {
+        return Err(Error::InvalidRequest {
+            reason: "command description must be 3-256 characters".to_owned(),
+        });
+    }
+
+    if description.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: "command description must not contain control characters".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_bot_commands(commands: &[BotCommand]) -> Result<()> {
+    if commands.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "setMyCommands requires at least one command".to_owned(),
+        });
+    }
+    if commands.len() > 100 {
+        return Err(Error::InvalidRequest {
+            reason: "setMyCommands accepts at most 100 commands".to_owned(),
+        });
+    }
+
+    let mut seen = BTreeSet::new();
+    for command in commands {
+        validate_bot_command_name(&command.command)?;
+        validate_bot_command_description(&command.description)?;
+        if !seen.insert(command.command.as_str()) {
+            return Err(Error::InvalidRequest {
+                reason: format!("duplicate bot command `{}`", command.command),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_language_code_value(language_code: &str) -> Result<()> {
+    if language_code.is_empty() || language_code.len() > MAX_LANGUAGE_CODE_BYTES {
+        return Err(Error::InvalidRequest {
+            reason: format!("language_code must be 1-{MAX_LANGUAGE_CODE_BYTES} bytes").to_owned(),
+        });
+    }
+
+    if !language_code
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(Error::InvalidRequest {
+            reason: "language_code must contain only ASCII letters, digits, or `-`".to_owned(),
+        });
+    }
+
+    if language_code.starts_with('-')
+        || language_code.ends_with('-')
+        || language_code.contains("--")
+    {
+        return Err(Error::InvalidRequest {
+            reason: "language_code must not contain empty subtags".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_language_code_field(language_code: Option<&str>) -> Result<()> {
+    if let Some(language_code) = language_code {
+        validate_language_code_value(language_code)?;
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum TextLayout {
+    SingleLine,
+    MultiLine,
+}
+
+fn validate_optional_text(
+    field: &str,
+    value: Option<&str>,
+    layout: TextLayout,
+    max_chars: usize,
+) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    let length = value.chars().count();
+    if length > max_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be at most {max_chars} characters"),
+        });
+    }
+    if value
+        .chars()
+        .any(|character| is_disallowed_control(character, layout))
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn is_disallowed_control(character: char, layout: TextLayout) -> bool {
+    match layout {
+        TextLayout::SingleLine => character.is_control(),
+        TextLayout::MultiLine => character.is_control() && !matches!(character, '\n' | '\r' | '\t'),
     }
 }
 
@@ -60,11 +205,7 @@ pub struct SetMyCommandsRequest {
 
 impl SetMyCommandsRequest {
     pub fn new(commands: Vec<BotCommand>) -> Result<Self> {
-        if commands.is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "setMyCommands requires at least one command".to_owned(),
-            });
-        }
+        validate_bot_commands(&commands)?;
 
         Ok(Self {
             commands,
@@ -80,13 +221,14 @@ impl SetMyCommandsRequest {
 
     pub fn language_code(mut self, language_code: impl Into<String>) -> Result<Self> {
         let language_code = language_code.into();
-        if language_code.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "language_code cannot be empty".to_owned(),
-            });
-        }
+        validate_language_code_value(&language_code)?;
         self.language_code = Some(language_code);
         Ok(self)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_bot_commands(&self.commands)?;
+        validate_language_code_field(self.language_code.as_deref())
     }
 }
 
@@ -99,6 +241,12 @@ pub struct GetMyCommandsRequest {
     pub language_code: Option<String>,
 }
 
+impl GetMyCommandsRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_language_code_field(self.language_code.as_deref())
+    }
+}
+
 /// `deleteMyCommands` request.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DeleteMyCommandsRequest {
@@ -106,6 +254,12 @@ pub struct DeleteMyCommandsRequest {
     pub scope: Option<BotCommandScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_code: Option<String>,
+}
+
+impl DeleteMyCommandsRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_language_code_field(self.language_code.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -116,10 +270,28 @@ pub struct SetMyNameRequest {
     pub language_code: Option<String>,
 }
 
+impl SetMyNameRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_optional_text(
+            "name",
+            self.name.as_deref(),
+            TextLayout::SingleLine,
+            MAX_BOT_NAME_CHARS,
+        )?;
+        validate_language_code_field(self.language_code.as_deref())
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct GetMyNameRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_code: Option<String>,
+}
+
+impl GetMyNameRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_language_code_field(self.language_code.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -130,10 +302,28 @@ pub struct SetMyDescriptionRequest {
     pub language_code: Option<String>,
 }
 
+impl SetMyDescriptionRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_optional_text(
+            "description",
+            self.description.as_deref(),
+            TextLayout::MultiLine,
+            MAX_BOT_DESCRIPTION_CHARS,
+        )?;
+        validate_language_code_field(self.language_code.as_deref())
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct GetMyDescriptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_code: Option<String>,
+}
+
+impl GetMyDescriptionRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_language_code_field(self.language_code.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -144,10 +334,28 @@ pub struct SetMyShortDescriptionRequest {
     pub language_code: Option<String>,
 }
 
+impl SetMyShortDescriptionRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_optional_text(
+            "short_description",
+            self.short_description.as_deref(),
+            TextLayout::SingleLine,
+            MAX_BOT_SHORT_DESCRIPTION_CHARS,
+        )?;
+        validate_language_code_field(self.language_code.as_deref())
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct GetMyShortDescriptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_code: Option<String>,
+}
+
+impl GetMyShortDescriptionRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_language_code_field(self.language_code.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -163,4 +371,136 @@ pub struct BotDescription {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BotShortDescription {
     pub short_description: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_bot_command_contract() -> Result<()> {
+        assert!(BotCommand::new("start_1", "start the bot").is_ok());
+
+        for command in [
+            "",
+            "1start",
+            "_start",
+            "Start",
+            "/start",
+            "start-bot",
+            "a_very_long_command_name_over_32_chars",
+        ] {
+            assert!(matches!(
+                BotCommand::new(command, "valid description"),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+
+        for description in ["", "go", "bad\ntext"] {
+            assert!(matches!(
+                BotCommand::new("start", description),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_set_my_commands_collection() -> Result<()> {
+        assert!(matches!(
+            SetMyCommandsRequest::new(Vec::new()),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let duplicate = vec![
+            BotCommand::new("start", "start the bot")?,
+            BotCommand::new("start", "start again")?,
+        ];
+        assert!(matches!(
+            SetMyCommandsRequest::new(duplicate),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let too_many = (0..101)
+            .map(|index| BotCommand::new(format!("cmd{index}"), "valid description"))
+            .collect::<Result<Vec<_>>>()?;
+        assert!(matches!(
+            SetMyCommandsRequest::new(too_many),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_language_codes_on_public_requests() -> Result<()> {
+        SetMyCommandsRequest::new(vec![BotCommand::new("start", "start the bot")?])?
+            .language_code("zh-hans")?
+            .validate()?;
+
+        for language_code in ["", "-", "en-", "en--us", "en us", "en_us"] {
+            let request = GetMyCommandsRequest {
+                language_code: Some(language_code.to_owned()),
+                ..GetMyCommandsRequest::default()
+            };
+            assert!(matches!(
+                request.validate(),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_bot_profile_text_limits() {
+        let valid = SetMyNameRequest {
+            name: Some(String::new()),
+            ..SetMyNameRequest::default()
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid_name = SetMyNameRequest {
+            name: Some("a".repeat(MAX_BOT_NAME_CHARS + 1)),
+            ..SetMyNameRequest::default()
+        };
+        assert!(matches!(
+            invalid_name.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let multiline_name = SetMyNameRequest {
+            name: Some("bot\nname".to_owned()),
+            ..SetMyNameRequest::default()
+        };
+        assert!(matches!(
+            multiline_name.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_description = SetMyDescriptionRequest {
+            description: Some("a".repeat(MAX_BOT_DESCRIPTION_CHARS + 1)),
+            ..SetMyDescriptionRequest::default()
+        };
+        assert!(matches!(
+            invalid_description.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let multiline_description = SetMyDescriptionRequest {
+            description: Some("hello\nworld".to_owned()),
+            ..SetMyDescriptionRequest::default()
+        };
+        assert!(multiline_description.validate().is_ok());
+
+        let invalid_short_description = SetMyShortDescriptionRequest {
+            short_description: Some("a".repeat(MAX_BOT_SHORT_DESCRIPTION_CHARS + 1)),
+            ..SetMyShortDescriptionRequest::default()
+        };
+        assert!(matches!(
+            invalid_short_description.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
 }

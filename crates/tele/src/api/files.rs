@@ -21,6 +21,7 @@ impl FilesService {
 
     /// Calls `getFile`.
     pub async fn get_file(&self, request: &GetFileRequest) -> Result<File> {
+        request.validate()?;
         self.client.call_method("getFile", request).await
     }
 }
@@ -40,6 +41,7 @@ impl BlockingFilesService {
 
     /// Calls `getFile`.
     pub fn get_file(&self, request: &GetFileRequest) -> Result<File> {
+        request.validate()?;
         self.client.call_method("getFile", request)
     }
 }
