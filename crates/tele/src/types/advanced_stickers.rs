@@ -15,127 +15,7 @@ trait GeneratedValidate {
     fn validate_generated(&self) -> Result<()>;
 }
 
-impl GeneratedValidate for crate::types::common::ChatId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::NumericChatId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::UserId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::MessageId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
 impl GeneratedValidate for crate::types::sticker::InputSticker {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::sticker::MaskPosition {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputChecklist {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputStoryContent {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::KeyboardButton {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::MenuButton {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::PassportElementError {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReactionType {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyParameters {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::StoryArea {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }
@@ -157,6 +37,19 @@ fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> R
     }
 
     validate_items(values)
+}
+
+fn validate_string_items(field: &str, values: &[String]) -> Result<()> {
+    for (index, value) in values.iter().enumerate() {
+        validate_string_id(&format!("{field}[{index}]"), value)?;
+    }
+
+    Ok(())
+}
+
+fn validate_required_string_items(field: &str, values: &[String]) -> Result<()> {
+    validate_required_vec(field, values.len())?;
+    validate_string_items(field, values)
 }
 
 /// Auto-generated request for `setUserEmojiStatus`.
@@ -318,7 +211,7 @@ impl AdvancedRequest for AdvancedGetCustomEmojiStickersRequest {
     const METHOD: &'static str = "getCustomEmojiStickers";
 
     fn validate(&self) -> Result<()> {
-        validate_required_vec("custom_emoji_ids", self.custom_emoji_ids.len())?;
+        validate_required_string_items("custom_emoji_ids", &self.custom_emoji_ids)?;
         Ok(())
     }
 }
@@ -512,7 +405,7 @@ impl AdvancedRequest for AdvancedSetStickerEmojiListRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
-        validate_required_vec("emoji_list", self.emoji_list.len())?;
+        validate_required_string_items("emoji_list", &self.emoji_list)?;
         Ok(())
     }
 }
@@ -540,6 +433,9 @@ impl AdvancedRequest for AdvancedSetStickerKeywordsRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
+        if let Some(values) = self.keywords.as_deref() {
+            validate_string_items("keywords", values)?;
+        }
         Ok(())
     }
 }

@@ -66,11 +66,7 @@ fn validate_prices(method: &str, prices: &[LabeledPrice]) -> Result<(), Error> {
     }
 
     for (index, price) in prices.iter().enumerate() {
-        if price.label.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: format!("{method} price at index {index} requires non-empty `label`"),
-            });
-        }
+        price.validate_with_context(method, index)?;
     }
 
     Ok(())
@@ -191,6 +187,20 @@ impl LabeledPrice {
             amount,
         }
     }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        ensure_non_empty("labeledPrice", "label", &self.label)
+    }
+
+    fn validate_with_context(&self, method: &str, index: usize) -> Result<(), Error> {
+        if self.label.trim().is_empty() {
+            return Err(Error::InvalidRequest {
+                reason: format!("{method} price at index {index} requires non-empty `label`"),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// Telegram shipping option.
@@ -208,6 +218,12 @@ impl ShippingOption {
             title: title.into(),
             prices,
         }
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_id("shippingOption", "id", &self.id)?;
+        ensure_non_empty("shippingOption", "title", &self.title)?;
+        validate_prices("shippingOption", &self.prices)
     }
 }
 

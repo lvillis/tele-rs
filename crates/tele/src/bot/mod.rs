@@ -30,7 +30,7 @@ use crate::types::telegram::{
     CallbackCodec, CallbackPayload, CallbackPayloadCodec, CompactCallbackCodec,
     CompactCallbackPayload, WebAppData,
 };
-use crate::types::update::{GetUpdatesRequest, Update, UpdateKind};
+use crate::types::update::{AllowedUpdate, GetUpdatesRequest, Update, UpdateKind};
 use crate::types::webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookSecretToken};
 use crate::{Client, Error, ErrorClass, Result};
 

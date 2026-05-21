@@ -15,18 +15,21 @@ use serde_json::json;
 use tele::Client;
 use tele::bot::testing::BotHarness;
 use tele::bot::{
-    BotApp, BotContext, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
-    CallbackInput, ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession, CommandData,
-    DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy,
-    HandlerError, InMemorySessionStore, JsonFileSessionStore, LongPollingSource,
-    MyChatMemberUpdatedInput, OutboxConfig, PollingConfig, RequestStateKey, Router,
-    SourceErrorBackoffConfig, StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput,
-    WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition, channel_source,
-    clear_chat_state, extract_callback_data, extract_callback_json, extract_chat_join_request,
-    extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
-    extract_compact_callback, extract_message, extract_my_chat_member_update, extract_text,
-    extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
-    parse_command_text, parse_command_text_for_bot, save_chat_state, tokenize_command_args,
+    BotApp, BotContext, BotEngine, BotOutbox, BusinessConnectionInput,
+    BusinessMessagesDeletedInput, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
+    CallbackInput, CallbackQueryInput, ChatBoostInput, ChatJoinRequestInput,
+    ChatMemberUpdatedInput, ChatSession, CommandData, DispatchMetricOutcome, DispatchOutcome,
+    EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore,
+    InlineQueryInput, JsonFileSessionStore, LongPollingSource, ManagedBotInput,
+    MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig, PollAnswerInput, PollingConfig,
+    RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig, StateTransition,
+    TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner, WriteAccessAllowedInput,
+    apply_chat_state_transition, channel_source, clear_chat_state, extract_callback_data,
+    extract_callback_json, extract_chat_join_request, extract_chat_member_update, extract_command,
+    extract_command_args, extract_command_data, extract_compact_callback, extract_message,
+    extract_my_chat_member_update, extract_text, extract_typed_callback, extract_web_app_data,
+    extract_write_access_allowed, load_chat_state, parse_command_text, parse_command_text_for_bot,
+    save_chat_state, tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
@@ -35,7 +38,9 @@ use tele::types::telegram::{
     WebAppInfo,
 };
 use tele::types::update::Update;
-use tele::types::{ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind};
+use tele::types::{
+    AllowedUpdate, ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind,
+};
 use tele::{BootstrapStepStatus, Error, ErrorClass, MenuButtonConfig};
 
 type DynError = Box<dyn std::error::Error>;
@@ -324,6 +329,26 @@ fn callback_update(update_id: i64, chat_id: i64, data: &str) -> serde_json::Valu
                 "date": 1700000000 + update_id,
                 "chat": {"id": chat_id, "type": "private"},
                 "text": "button clicked"
+            },
+            "data": data
+        }
+    })
+}
+
+fn inaccessible_callback_update(update_id: i64, chat_id: i64, data: &str) -> serde_json::Value {
+    json!({
+        "update_id": update_id,
+        "callback_query": {
+            "id": format!("cb-{update_id}"),
+            "from": {
+                "id": 123,
+                "is_bot": false,
+                "first_name": "tester"
+            },
+            "message": {
+                "message_id": update_id,
+                "date": 0,
+                "chat": {"id": chat_id, "type": "supergroup", "title": "ops"}
             },
             "data": data
         }
@@ -632,6 +657,24 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert_eq!(callback.callback_data(), Some("btn-1"));
     assert!(callback.message().is_some());
 
+    let Some(inaccessible_callback) =
+        parse_update(inaccessible_callback_update(203, -10042, "btn-2"))
+    else {
+        return Ok(());
+    };
+    assert_eq!(extract_callback_data(&inaccessible_callback), Some("btn-2"));
+    assert_eq!(
+        inaccessible_callback.update_kind(),
+        UpdateKind::CallbackQuery
+    );
+    assert_eq!(inaccessible_callback.chat_id(), Some(-10042));
+    assert_eq!(
+        inaccessible_callback.chat().map(|chat| chat.id),
+        Some(-10042)
+    );
+    assert!(inaccessible_callback.message().is_none());
+    assert_eq!(inaccessible_callback.message_kind(), None);
+
     let maybe_join_request = parse_update(serde_json::json!({
         "update_id": 204,
         "chat_join_request": {
@@ -805,6 +848,87 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     };
     assert_eq!(poll_answer.update_kind(), UpdateKind::PollAnswer);
     assert_eq!(poll_answer.user_id(), Some(90));
+
+    let maybe_anonymous_poll_answer = parse_update(serde_json::json!({
+        "update_id": 210,
+        "poll_answer": {
+            "poll_id": "poll-2",
+            "voter_chat": {"id": -10055, "type": "supergroup", "title": "ops"},
+            "option_ids": [1]
+        }
+    }));
+    assert!(maybe_anonymous_poll_answer.is_some());
+    let Some(anonymous_poll_answer) = maybe_anonymous_poll_answer else {
+        return Ok(());
+    };
+    assert_eq!(anonymous_poll_answer.update_kind(), UpdateKind::PollAnswer);
+    assert_eq!(anonymous_poll_answer.chat_id(), Some(-10055));
+    assert_eq!(
+        anonymous_poll_answer.chat().map(|chat| chat.id),
+        Some(-10055)
+    );
+    assert_eq!(anonymous_poll_answer.user_id(), None);
+
+    let Some(reaction_update) = parse_update(serde_json::json!({
+        "update_id": 211,
+        "message_reaction": {
+            "chat": {"id": -10056, "type": "supergroup", "title": "ops"},
+            "message_id": 10,
+            "user": {"id": 91, "is_bot": false, "first_name": "reactor"},
+            "date": 1700000211,
+            "old_reaction": [],
+            "new_reaction": [{"type": "emoji", "emoji": "👍"}]
+        }
+    })) else {
+        return Ok(());
+    };
+    assert_eq!(reaction_update.update_kind(), UpdateKind::MessageReaction);
+    assert_eq!(reaction_update.chat_id(), Some(-10056));
+    assert_eq!(reaction_update.user_id(), Some(91));
+    assert_eq!(reaction_update.message_kind(), None);
+
+    let Some(chat_boost_update) = parse_update(serde_json::json!({
+        "update_id": 212,
+        "chat_boost": {
+            "chat": {"id": -10057, "type": "supergroup", "title": "ops"},
+            "boost": {
+                "boost_id": "boost-1",
+                "add_date": 1700000212,
+                "expiration_date": 1700086612,
+                "source": {
+                    "source": "premium",
+                    "user": {"id": 92, "is_bot": false, "first_name": "booster"}
+                }
+            }
+        }
+    })) else {
+        return Ok(());
+    };
+    assert_eq!(chat_boost_update.update_kind(), UpdateKind::ChatBoost);
+    assert_eq!(chat_boost_update.chat_id(), Some(-10057));
+    assert_eq!(chat_boost_update.user_id(), Some(92));
+
+    let Some(shipping_update) = parse_update(serde_json::json!({
+        "update_id": 213,
+        "shipping_query": {
+            "id": "shipping-1",
+            "from": {"id": 93, "is_bot": false, "first_name": "buyer"},
+            "invoice_payload": "payload",
+            "shipping_address": {
+                "country_code": "US",
+                "state": "CA",
+                "city": "San Francisco",
+                "street_line1": "1 Market St",
+                "street_line2": "Suite 1",
+                "post_code": "94105"
+            }
+        }
+    })) else {
+        return Ok(());
+    };
+    assert_eq!(shipping_update.update_kind(), UpdateKind::ShippingQuery);
+    assert_eq!(shipping_update.user_id(), Some(93));
+    assert_eq!(shipping_update.chat_id(), None);
 
     Ok(())
 }
@@ -1436,7 +1560,10 @@ async fn long_polling_config_checked_rejects_invalid_request_options() -> Result
 
     let duplicate_allowed_update =
         LongPollingSource::new(client).with_config_checked(PollingConfig {
-            allowed_updates: Some(vec!["message".to_owned(), "message".to_owned()]),
+            allowed_updates: Some(vec![
+                AllowedUpdate::new("message")?,
+                AllowedUpdate::new("message")?,
+            ]),
             ..PollingConfig::default()
         });
     assert!(matches!(
@@ -3199,6 +3326,259 @@ async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
     );
     assert_eq!(chat_member_hits.load(Ordering::SeqCst), 1);
     assert_eq!(my_chat_member_hits.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        router.business_connection_route().handle(
+            move |_context: BotContext, _update: Update, connection: BusinessConnectionInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if connection.0.id == "business-route" && connection.0.user_chat_id == 7007 {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.deleted_business_messages_route().handle(
+            move |_context: BotContext, _update: Update, deleted: BusinessMessagesDeletedInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if deleted.0.business_connection_id == "business-route"
+                        && deleted.0.message_ids.len() == 2
+                    {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.message_reaction_route().handle(
+            move |_context: BotContext, _update: Update, reaction: MessageReactionInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if reaction.0.chat.id == -3001 && reaction.0.message_id.0 == 10 {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.shipping_query_route().handle(
+            move |_context: BotContext, _update: Update, query: ShippingQueryInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if query.0.id == "shipping-route"
+                        && query.0.shipping_address.country_code == "US"
+                    {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.poll_answer_route().handle(
+            move |_context: BotContext, _update: Update, answer: PollAnswerInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if answer.0.poll_id == "poll-route" && answer.0.option_ids == [1] {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.chat_boost_route().handle(
+            move |_context: BotContext, _update: Update, boost: ChatBoostInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if boost.0.chat.id == -3002 && boost.0.boost.boost_id == "boost-route" {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.managed_bot_route().handle(
+            move |_context: BotContext, _update: Update, managed: ManagedBotInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if managed.0.user.id.0 == 71 && managed.0.bot.id.0 == 72 {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.callback_query_input_route().handle(
+            move |_context: BotContext, _update: Update, callback: CallbackQueryInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if callback.0.id == "callback-route"
+                        && callback.0.data.as_deref() == Some("payload")
+                    {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.inline_query_input_route().handle(
+            move |_context: BotContext, _update: Update, inline: InlineQueryInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if inline.0.id == "inline-route" && inline.0.query == "search" {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let payloads = [
+        serde_json::json!({
+            "update_id": 4010,
+            "business_connection": {
+                "id": "business-route",
+                "user": {"id": 7007, "is_bot": false, "first_name": "customer"},
+                "user_chat_id": 7007,
+                "date": 1700000410,
+                "is_enabled": true
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4011,
+            "deleted_business_messages": {
+                "business_connection_id": "business-route",
+                "chat": {"id": 7007, "type": "private", "first_name": "customer"},
+                "message_ids": [10, 11]
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4012,
+            "message_reaction": {
+                "chat": {"id": -3001, "type": "supergroup", "title": "mods"},
+                "message_id": 10,
+                "user": {"id": 70, "is_bot": false, "first_name": "reactor"},
+                "date": 1700000412,
+                "old_reaction": [],
+                "new_reaction": [{"type": "emoji", "emoji": "👍"}]
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4013,
+            "shipping_query": {
+                "id": "shipping-route",
+                "from": {"id": 70, "is_bot": false, "first_name": "buyer"},
+                "invoice_payload": "payload",
+                "shipping_address": {
+                    "country_code": "US",
+                    "state": "CA",
+                    "city": "San Francisco",
+                    "street_line1": "1 Market St",
+                    "street_line2": "Suite 1",
+                    "post_code": "94105"
+                }
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4014,
+            "poll_answer": {
+                "poll_id": "poll-route",
+                "user": {"id": 70, "is_bot": false, "first_name": "voter"},
+                "option_ids": [1]
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4015,
+            "chat_boost": {
+                "chat": {"id": -3002, "type": "supergroup", "title": "mods"},
+                "boost": {
+                    "boost_id": "boost-route",
+                    "add_date": 1700000415,
+                    "expiration_date": 1700086815,
+                    "source": {
+                        "source": "premium",
+                        "user": {"id": 70, "is_bot": false, "first_name": "booster"}
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4016,
+            "managed_bot": {
+                "user": {"id": 71, "is_bot": false, "first_name": "owner"},
+                "bot": {"id": 72, "is_bot": true, "first_name": "managed"}
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4017,
+            "callback_query": {
+                "id": "callback-route",
+                "from": {"id": 70, "is_bot": false, "first_name": "clicker"},
+                "chat_instance": "ci",
+                "data": "payload"
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4018,
+            "inline_query": {
+                "id": "inline-route",
+                "from": {"id": 70, "is_bot": false, "first_name": "searcher"},
+                "query": "search",
+                "offset": ""
+            }
+        }),
+    ];
+
+    let expected_hits = payloads.len();
+    for payload in payloads {
+        let Some(update) = parse_update(payload) else {
+            return Ok(());
+        };
+        assert!(
+            router
+                .dispatch(BotContext::new(client.clone()), update)
+                .await?
+        );
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), expected_hits);
 
     Ok(())
 }

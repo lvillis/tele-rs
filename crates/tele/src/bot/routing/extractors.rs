@@ -1,5 +1,11 @@
 use super::*;
-use crate::types::update::{BusinessMessagesDeleted, ChatJoinRequest, ChatMemberUpdated};
+use crate::types::message::Poll;
+use crate::types::update::{
+    BusinessConnection, BusinessMessagesDeleted, CallbackQuery, ChatBoostRemoved, ChatBoostUpdated,
+    ChatJoinRequest, ChatMemberUpdated, ChosenInlineResult, InlineQuery, ManagedBotUpdated,
+    MessageReactionCountUpdated, MessageReactionUpdated, PaidMediaPurchased, PollAnswer,
+    PreCheckoutQuery, ShippingQuery,
+};
 
 /// Parsed slash command with command name and trailing arguments.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,6 +78,30 @@ pub trait UpdateExtractor: Sized {
     fn describe() -> &'static str {
         "required update payload"
     }
+}
+
+macro_rules! typed_update_input {
+    ($(#[$meta:meta])* $input:ident($payload:ty), $extractor:ident, $description:literal) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug)]
+        pub struct $input(pub $payload);
+
+        impl $input {
+            pub fn into_inner(self) -> $payload {
+                self.0
+            }
+        }
+
+        impl UpdateExtractor for $input {
+            fn extract(update: &Update) -> Option<Self> {
+                $extractor(update).cloned().map(Self)
+            }
+
+            fn describe() -> &'static str {
+                $description
+            }
+        }
+    };
 }
 
 /// Plain text message extractor payload.
@@ -218,6 +248,34 @@ impl UpdateExtractor for WriteAccessAllowedInput {
     }
 }
 
+typed_update_input!(
+    /// Callback query extractor payload.
+    CallbackQueryInput(CallbackQuery),
+    extract_callback_query,
+    "callback query"
+);
+
+typed_update_input!(
+    /// Inline query extractor payload.
+    InlineQueryInput(InlineQuery),
+    extract_inline_query,
+    "inline query"
+);
+
+typed_update_input!(
+    /// Chosen inline result extractor payload.
+    ChosenInlineResultInput(ChosenInlineResult),
+    extract_chosen_inline_result,
+    "chosen inline result"
+);
+
+typed_update_input!(
+    /// Business connection extractor payload.
+    BusinessConnectionInput(BusinessConnection),
+    extract_business_connection,
+    "business connection"
+);
+
 /// Chat join request extractor payload.
 #[derive(Clone, Debug)]
 pub struct ChatJoinRequestInput(pub ChatJoinRequest);
@@ -277,6 +335,83 @@ impl UpdateExtractor for MyChatMemberUpdatedInput {
         "my chat member update"
     }
 }
+
+typed_update_input!(
+    /// Business-message deletion extractor payload.
+    BusinessMessagesDeletedInput(BusinessMessagesDeleted),
+    extract_deleted_business_messages,
+    "deleted business messages"
+);
+
+typed_update_input!(
+    /// Message reaction extractor payload.
+    MessageReactionInput(MessageReactionUpdated),
+    extract_message_reaction,
+    "message reaction"
+);
+
+typed_update_input!(
+    /// Aggregate message reaction-count extractor payload.
+    MessageReactionCountInput(MessageReactionCountUpdated),
+    extract_message_reaction_count,
+    "message reaction count"
+);
+
+typed_update_input!(
+    /// Shipping query extractor payload.
+    ShippingQueryInput(ShippingQuery),
+    extract_shipping_query,
+    "shipping query"
+);
+
+typed_update_input!(
+    /// Pre-checkout query extractor payload.
+    PreCheckoutQueryInput(PreCheckoutQuery),
+    extract_pre_checkout_query,
+    "pre-checkout query"
+);
+
+typed_update_input!(
+    /// Paid media purchase extractor payload.
+    PaidMediaPurchasedInput(PaidMediaPurchased),
+    extract_purchased_paid_media,
+    "paid media purchase"
+);
+
+typed_update_input!(
+    /// Poll extractor payload.
+    PollInput(Poll),
+    extract_poll,
+    "poll"
+);
+
+typed_update_input!(
+    /// Poll answer extractor payload.
+    PollAnswerInput(PollAnswer),
+    extract_poll_answer,
+    "poll answer"
+);
+
+typed_update_input!(
+    /// Chat boost extractor payload.
+    ChatBoostInput(ChatBoostUpdated),
+    extract_chat_boost,
+    "chat boost"
+);
+
+typed_update_input!(
+    /// Removed chat boost extractor payload.
+    ChatBoostRemovedInput(ChatBoostRemoved),
+    extract_removed_chat_boost,
+    "removed chat boost"
+);
+
+typed_update_input!(
+    /// Managed bot extractor payload.
+    ManagedBotInput(ManagedBotUpdated),
+    extract_managed_bot,
+    "managed bot"
+);
 
 /// JSON-decoded callback extractor payload.
 #[derive(Clone, Debug)]
@@ -557,12 +692,26 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
         .callback_query
         .as_ref()
         .and_then(|query| query.message.as_deref())
+        .and_then(|message| message.accessible())
 }
 
 /// Returns canonical chat extracted from the update.
 pub fn extract_chat(update: &Update) -> Option<&Chat> {
     if let Some(message) = extract_message(update) {
         return Some(message.chat());
+    }
+    if let Some(message) = update
+        .callback_query
+        .as_ref()
+        .and_then(|query| query.message.as_deref())
+    {
+        return Some(message.chat());
+    }
+    if let Some(reaction) = update.message_reaction.as_ref() {
+        return Some(&reaction.chat);
+    }
+    if let Some(reaction_count) = update.message_reaction_count.as_ref() {
+        return Some(&reaction_count.chat);
     }
     if let Some(member_update) = extract_chat_member_update(update) {
         return Some(&member_update.chat);
@@ -573,12 +722,28 @@ pub fn extract_chat(update: &Update) -> Option<&Chat> {
     if let Some(deleted) = update.deleted_business_messages.as_ref() {
         return Some(&deleted.chat);
     }
+    if let Some(voter_chat) = update
+        .poll_answer
+        .as_ref()
+        .and_then(|answer| answer.voter_chat.as_ref())
+    {
+        return Some(voter_chat);
+    }
+    if let Some(boost) = update.chat_boost.as_ref() {
+        return Some(&boost.chat);
+    }
+    if let Some(boost) = update.removed_chat_boost.as_ref() {
+        return Some(&boost.chat);
+    }
 
     extract_chat_join_request(update).map(|request| &request.chat)
 }
 
 /// Returns the actor that caused this update when available.
 pub fn extract_actor(update: &Update) -> Option<&User> {
+    if let Some(connection) = update.business_connection.as_ref() {
+        return Some(&connection.user);
+    }
     if let Some(query) = update.callback_query.as_ref() {
         return Some(&query.from);
     }
@@ -587,6 +752,37 @@ pub fn extract_actor(update: &Update) -> Option<&User> {
     }
     if let Some(result) = update.chosen_inline_result.as_ref() {
         return Some(&result.from);
+    }
+    if let Some(query) = update.shipping_query.as_ref() {
+        return Some(&query.from);
+    }
+    if let Some(query) = update.pre_checkout_query.as_ref() {
+        return Some(&query.from);
+    }
+    if let Some(purchase) = update.purchased_paid_media.as_ref() {
+        return Some(&purchase.from);
+    }
+    if let Some(reaction) = update.message_reaction.as_ref()
+        && let Some(user) = reaction.user.as_ref()
+    {
+        return Some(user);
+    }
+    if let Some(boost) = update
+        .chat_boost
+        .as_ref()
+        .and_then(|boost| boost.boost.source.user.as_ref())
+    {
+        return Some(boost);
+    }
+    if let Some(boost) = update
+        .removed_chat_boost
+        .as_ref()
+        .and_then(|boost| boost.source.user.as_ref())
+    {
+        return Some(boost);
+    }
+    if let Some(managed_bot) = update.managed_bot.as_ref() {
+        return Some(&managed_bot.user);
     }
     if let Some(answer) = update.poll_answer.as_ref()
         && let Some(user) = answer.user.as_ref()
@@ -634,6 +830,9 @@ pub fn extract_subject(update: &Update) -> Option<&User> {
     if let Some(member_update) = update.my_chat_member.as_ref() {
         return Some(member_update.subject());
     }
+    if let Some(managed_bot) = update.managed_bot.as_ref() {
+        return Some(&managed_bot.bot);
+    }
 
     extract_actor(update)
 }
@@ -678,6 +877,26 @@ pub fn extract_write_access_allowed(update: &Update) -> Option<&WriteAccessAllow
     extract_message(update)?.write_access_allowed()
 }
 
+/// Returns typed callback query payload from update.
+pub fn extract_callback_query(update: &Update) -> Option<&CallbackQuery> {
+    update.callback_query.as_ref()
+}
+
+/// Returns typed inline query payload from update.
+pub fn extract_inline_query(update: &Update) -> Option<&InlineQuery> {
+    update.inline_query.as_ref()
+}
+
+/// Returns typed chosen inline result payload from update.
+pub fn extract_chosen_inline_result(update: &Update) -> Option<&ChosenInlineResult> {
+    update.chosen_inline_result.as_ref()
+}
+
+/// Returns typed business connection payload from update.
+pub fn extract_business_connection(update: &Update) -> Option<&BusinessConnection> {
+    update.business_connection()
+}
+
 /// Returns typed chat join request payload from update.
 pub fn extract_chat_join_request(update: &Update) -> Option<&ChatJoinRequest> {
     update.chat_join_request()
@@ -696,6 +915,56 @@ pub fn extract_my_chat_member_update(update: &Update) -> Option<&ChatMemberUpdat
 /// Returns typed business-message deletion payload from update.
 pub fn extract_deleted_business_messages(update: &Update) -> Option<&BusinessMessagesDeleted> {
     update.deleted_business_messages()
+}
+
+/// Returns typed message reaction payload from update.
+pub fn extract_message_reaction(update: &Update) -> Option<&MessageReactionUpdated> {
+    update.message_reaction()
+}
+
+/// Returns typed aggregate message reaction-count payload from update.
+pub fn extract_message_reaction_count(update: &Update) -> Option<&MessageReactionCountUpdated> {
+    update.message_reaction_count()
+}
+
+/// Returns typed shipping query payload from update.
+pub fn extract_shipping_query(update: &Update) -> Option<&ShippingQuery> {
+    update.shipping_query()
+}
+
+/// Returns typed pre-checkout query payload from update.
+pub fn extract_pre_checkout_query(update: &Update) -> Option<&PreCheckoutQuery> {
+    update.pre_checkout_query()
+}
+
+/// Returns typed paid media purchase payload from update.
+pub fn extract_purchased_paid_media(update: &Update) -> Option<&PaidMediaPurchased> {
+    update.purchased_paid_media()
+}
+
+/// Returns typed poll payload from update.
+pub fn extract_poll(update: &Update) -> Option<&Poll> {
+    update.poll.as_deref()
+}
+
+/// Returns typed poll answer payload from update.
+pub fn extract_poll_answer(update: &Update) -> Option<&PollAnswer> {
+    update.poll_answer.as_ref()
+}
+
+/// Returns typed chat boost payload from update.
+pub fn extract_chat_boost(update: &Update) -> Option<&ChatBoostUpdated> {
+    update.chat_boost()
+}
+
+/// Returns typed removed chat boost payload from update.
+pub fn extract_removed_chat_boost(update: &Update) -> Option<&ChatBoostRemoved> {
+    update.removed_chat_boost()
+}
+
+/// Returns typed managed bot payload from update.
+pub fn extract_managed_bot(update: &Update) -> Option<&ManagedBotUpdated> {
+    update.managed_bot()
 }
 
 /// Returns callback query data payload from update.
@@ -825,6 +1094,18 @@ pub trait UpdateExt {
     fn write_access_allowed(&self) -> Option<&WriteAccessAllowed> {
         None
     }
+    fn callback_query(&self) -> Option<&CallbackQuery> {
+        None
+    }
+    fn inline_query(&self) -> Option<&InlineQuery> {
+        None
+    }
+    fn chosen_inline_result(&self) -> Option<&ChosenInlineResult> {
+        None
+    }
+    fn business_connection(&self) -> Option<&BusinessConnection> {
+        None
+    }
     fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
         None
     }
@@ -835,6 +1116,36 @@ pub trait UpdateExt {
         None
     }
     fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
+        None
+    }
+    fn message_reaction(&self) -> Option<&MessageReactionUpdated> {
+        None
+    }
+    fn message_reaction_count(&self) -> Option<&MessageReactionCountUpdated> {
+        None
+    }
+    fn shipping_query(&self) -> Option<&ShippingQuery> {
+        None
+    }
+    fn pre_checkout_query(&self) -> Option<&PreCheckoutQuery> {
+        None
+    }
+    fn purchased_paid_media(&self) -> Option<&PaidMediaPurchased> {
+        None
+    }
+    fn poll(&self) -> Option<&Poll> {
+        None
+    }
+    fn poll_answer(&self) -> Option<&PollAnswer> {
+        None
+    }
+    fn chat_boost(&self) -> Option<&ChatBoostUpdated> {
+        None
+    }
+    fn removed_chat_boost(&self) -> Option<&ChatBoostRemoved> {
+        None
+    }
+    fn managed_bot(&self) -> Option<&ManagedBotUpdated> {
         None
     }
     fn callback_data(&self) -> Option<&str>;
@@ -900,6 +1211,22 @@ impl UpdateExt for Update {
         extract_write_access_allowed(self)
     }
 
+    fn callback_query(&self) -> Option<&CallbackQuery> {
+        extract_callback_query(self)
+    }
+
+    fn inline_query(&self) -> Option<&InlineQuery> {
+        extract_inline_query(self)
+    }
+
+    fn chosen_inline_result(&self) -> Option<&ChosenInlineResult> {
+        extract_chosen_inline_result(self)
+    }
+
+    fn business_connection(&self) -> Option<&BusinessConnection> {
+        extract_business_connection(self)
+    }
+
     fn chat_join_request(&self) -> Option<&ChatJoinRequest> {
         extract_chat_join_request(self)
     }
@@ -914,6 +1241,46 @@ impl UpdateExt for Update {
 
     fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
         extract_deleted_business_messages(self)
+    }
+
+    fn message_reaction(&self) -> Option<&MessageReactionUpdated> {
+        extract_message_reaction(self)
+    }
+
+    fn message_reaction_count(&self) -> Option<&MessageReactionCountUpdated> {
+        extract_message_reaction_count(self)
+    }
+
+    fn shipping_query(&self) -> Option<&ShippingQuery> {
+        extract_shipping_query(self)
+    }
+
+    fn pre_checkout_query(&self) -> Option<&PreCheckoutQuery> {
+        extract_pre_checkout_query(self)
+    }
+
+    fn purchased_paid_media(&self) -> Option<&PaidMediaPurchased> {
+        extract_purchased_paid_media(self)
+    }
+
+    fn poll(&self) -> Option<&Poll> {
+        extract_poll(self)
+    }
+
+    fn poll_answer(&self) -> Option<&PollAnswer> {
+        extract_poll_answer(self)
+    }
+
+    fn chat_boost(&self) -> Option<&ChatBoostUpdated> {
+        extract_chat_boost(self)
+    }
+
+    fn removed_chat_boost(&self) -> Option<&ChatBoostRemoved> {
+        extract_removed_chat_boost(self)
+    }
+
+    fn managed_bot(&self) -> Option<&ManagedBotUpdated> {
+        extract_managed_bot(self)
     }
 
     fn callback_data(&self) -> Option<&str> {
@@ -986,18 +1353,5 @@ impl UpdateExt for Update {
 
 /// Tries to extract a canonical chat id from an incoming update.
 pub fn update_chat_id(update: &Update) -> Option<i64> {
-    if let Some(message) = extract_message(update) {
-        return Some(message.chat.id);
-    }
-    if let Some(member_update) = extract_chat_member_update(update) {
-        return Some(member_update.chat.id);
-    }
-    if let Some(member_update) = extract_my_chat_member_update(update) {
-        return Some(member_update.chat.id);
-    }
-    if let Some(deleted) = update.deleted_business_messages.as_ref() {
-        return Some(deleted.chat.id);
-    }
-
-    extract_chat_join_request(update).map(|request| request.chat.id)
+    Some(extract_chat(update)?.id)
 }

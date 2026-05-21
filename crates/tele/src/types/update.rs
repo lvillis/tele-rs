@@ -1,13 +1,18 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::chat::{ChatInviteLink, ChatMember};
 use crate::types::common::MessageId;
-use crate::types::message::{Chat, Location, Message, Poll};
-use crate::types::telegram::{InlineQueryResult, InlineQueryResultsButton, WebAppData};
+use crate::types::message::{
+    Chat, Location, MaybeInaccessibleMessage, Message, OrderInfo, Poll, ShippingAddress,
+};
+use crate::types::telegram::{
+    InlineQueryResult, InlineQueryResultsButton, ReactionType, WebAppData,
+};
 use crate::{Error, Result};
 
 const MAX_GET_UPDATES_LIMIT: u8 = 100;
@@ -23,39 +28,250 @@ pub enum UpdateKind {
     EditedMessage,
     ChannelPost,
     EditedChannelPost,
+    BusinessConnection,
     BusinessMessage,
     EditedBusinessMessage,
     DeletedBusinessMessages,
     GuestMessage,
+    MessageReaction,
+    MessageReactionCount,
     CallbackQuery,
     InlineQuery,
     ChosenInlineResult,
+    ShippingQuery,
+    PreCheckoutQuery,
+    PurchasedPaidMedia,
     Poll,
     PollAnswer,
     MyChatMember,
     ChatMember,
     ChatJoinRequest,
+    ChatBoost,
+    RemovedChatBoost,
+    ManagedBot,
     Unknown,
 }
 
-const KNOWN_UPDATE_KINDS: [UpdateKind; 16] = [
+const KNOWN_UPDATE_KINDS: [UpdateKind; 25] = [
     UpdateKind::Message,
     UpdateKind::EditedMessage,
     UpdateKind::ChannelPost,
     UpdateKind::EditedChannelPost,
+    UpdateKind::BusinessConnection,
     UpdateKind::BusinessMessage,
     UpdateKind::EditedBusinessMessage,
     UpdateKind::DeletedBusinessMessages,
     UpdateKind::GuestMessage,
+    UpdateKind::MessageReaction,
+    UpdateKind::MessageReactionCount,
     UpdateKind::CallbackQuery,
     UpdateKind::InlineQuery,
     UpdateKind::ChosenInlineResult,
+    UpdateKind::ShippingQuery,
+    UpdateKind::PreCheckoutQuery,
+    UpdateKind::PurchasedPaidMedia,
     UpdateKind::Poll,
     UpdateKind::PollAnswer,
     UpdateKind::MyChatMember,
     UpdateKind::ChatMember,
     UpdateKind::ChatJoinRequest,
+    UpdateKind::ChatBoost,
+    UpdateKind::RemovedChatBoost,
+    UpdateKind::ManagedBot,
 ];
+
+impl UpdateKind {
+    /// Returns every modeled Telegram update kind except [`UpdateKind::Unknown`].
+    pub const fn all_known() -> &'static [Self] {
+        &KNOWN_UPDATE_KINDS
+    }
+
+    /// Returns the canonical Telegram field name for this update kind.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::EditedMessage => "edited_message",
+            Self::ChannelPost => "channel_post",
+            Self::EditedChannelPost => "edited_channel_post",
+            Self::BusinessConnection => "business_connection",
+            Self::BusinessMessage => "business_message",
+            Self::EditedBusinessMessage => "edited_business_message",
+            Self::DeletedBusinessMessages => "deleted_business_messages",
+            Self::GuestMessage => "guest_message",
+            Self::MessageReaction => "message_reaction",
+            Self::MessageReactionCount => "message_reaction_count",
+            Self::CallbackQuery => "callback_query",
+            Self::InlineQuery => "inline_query",
+            Self::ChosenInlineResult => "chosen_inline_result",
+            Self::ShippingQuery => "shipping_query",
+            Self::PreCheckoutQuery => "pre_checkout_query",
+            Self::PurchasedPaidMedia => "purchased_paid_media",
+            Self::Poll => "poll",
+            Self::PollAnswer => "poll_answer",
+            Self::MyChatMember => "my_chat_member",
+            Self::ChatMember => "chat_member",
+            Self::ChatJoinRequest => "chat_join_request",
+            Self::ChatBoost => "chat_boost",
+            Self::RemovedChatBoost => "removed_chat_boost",
+            Self::ManagedBot => "managed_bot",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Returns the Telegram `allowed_updates` value for modeled kinds.
+    pub const fn allowed_update_name(self) -> Option<&'static str> {
+        match self {
+            Self::Unknown => None,
+            known => Some(known.as_str()),
+        }
+    }
+
+    /// Parses a canonical Telegram update field name into a modeled kind.
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "message" => Some(Self::Message),
+            "edited_message" => Some(Self::EditedMessage),
+            "channel_post" => Some(Self::ChannelPost),
+            "edited_channel_post" => Some(Self::EditedChannelPost),
+            "business_connection" => Some(Self::BusinessConnection),
+            "business_message" => Some(Self::BusinessMessage),
+            "edited_business_message" => Some(Self::EditedBusinessMessage),
+            "deleted_business_messages" => Some(Self::DeletedBusinessMessages),
+            "guest_message" => Some(Self::GuestMessage),
+            "message_reaction" => Some(Self::MessageReaction),
+            "message_reaction_count" => Some(Self::MessageReactionCount),
+            "callback_query" => Some(Self::CallbackQuery),
+            "inline_query" => Some(Self::InlineQuery),
+            "chosen_inline_result" => Some(Self::ChosenInlineResult),
+            "shipping_query" => Some(Self::ShippingQuery),
+            "pre_checkout_query" => Some(Self::PreCheckoutQuery),
+            "purchased_paid_media" => Some(Self::PurchasedPaidMedia),
+            "poll" => Some(Self::Poll),
+            "poll_answer" => Some(Self::PollAnswer),
+            "my_chat_member" => Some(Self::MyChatMember),
+            "chat_member" => Some(Self::ChatMember),
+            "chat_join_request" => Some(Self::ChatJoinRequest),
+            "chat_boost" => Some(Self::ChatBoost),
+            "removed_chat_boost" => Some(Self::RemovedChatBoost),
+            "managed_bot" => Some(Self::ManagedBot),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for UpdateKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for UpdateKind {
+    type Err = Error;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        Self::from_name(value)
+            .ok_or_else(|| invalid_request(format!("unknown update kind `{value}`")))
+    }
+}
+
+/// Validated Telegram `allowed_updates` entry.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+#[serde(transparent)]
+pub struct AllowedUpdate(String);
+
+impl AllowedUpdate {
+    /// Creates a custom allowed update name.
+    ///
+    /// This keeps the SDK forward-compatible with Bot API update kinds that may
+    /// not be modeled yet while still preventing empty/control-character names.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        validate_allowed_update_name(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Creates an allowed update value from a modeled update kind.
+    pub fn from_kind(kind: UpdateKind) -> Result<Self> {
+        let name = kind.allowed_update_name().ok_or_else(|| {
+            invalid_request("UpdateKind::Unknown cannot be used as allowed_updates")
+        })?;
+        Ok(Self(name.to_owned()))
+    }
+
+    /// Creates allowed update values from modeled update kinds.
+    pub fn from_kinds(kinds: impl IntoIterator<Item = UpdateKind>) -> Result<Vec<Self>> {
+        kinds.into_iter().map(Self::from_kind).collect()
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl AsRef<str> for AllowedUpdate {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for AllowedUpdate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for AllowedUpdate {
+    type Err = Error;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for AllowedUpdate {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<String> for AllowedUpdate {
+    type Error = Error;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for AllowedUpdate {
+    type Error = Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<UpdateKind> for AllowedUpdate {
+    type Error = Error;
+
+    fn try_from(kind: UpdateKind) -> std::result::Result<Self, Self::Error> {
+        Self::from_kind(kind)
+    }
+}
+
+impl From<AllowedUpdate> for String {
+    fn from(value: AllowedUpdate) -> Self {
+        value.into_inner()
+    }
+}
 
 /// Telegram callback query object.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -64,7 +280,7 @@ pub struct CallbackQuery {
     pub id: String,
     pub from: User,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<Box<Message>>,
+    pub message: Option<Box<MaybeInaccessibleMessage>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,6 +332,203 @@ pub struct PollAnswer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<User>,
     pub option_ids: Vec<u8>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram shipping query payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ShippingQuery {
+    pub id: String,
+    pub from: User,
+    pub invoice_payload: String,
+    pub shipping_address: ShippingAddress,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram pre-checkout query payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct PreCheckoutQuery {
+    pub id: String,
+    pub from: User,
+    pub currency: String,
+    pub total_amount: i64,
+    pub invoice_payload: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shipping_option_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_info: Option<OrderInfo>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram paid media purchase payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct PaidMediaPurchased {
+    pub from: User,
+    pub paid_media_payload: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Rights granted to a bot by a business connection.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct BusinessBotRights {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_reply: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_read_messages: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_delete_sent_messages: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_delete_all_messages: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_edit_name: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_edit_bio: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_edit_profile_photo: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_edit_username: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_change_gift_settings: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_view_gifts_and_stars: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_convert_gifts_to_stars: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_transfer_and_upgrade_gifts: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_transfer_stars: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub can_manage_stories: bool,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram business connection update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct BusinessConnection {
+    pub id: String,
+    pub user: User,
+    pub user_chat_id: i64,
+    pub date: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rights: Option<BusinessBotRights>,
+    pub is_enabled: bool,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl BusinessConnection {
+    pub fn user_id(&self) -> i64 {
+        self.user.id.0
+    }
+}
+
+/// Reaction-count entry for aggregate reaction-count updates.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ReactionCount {
+    #[serde(rename = "type")]
+    pub kind: ReactionType,
+    pub total_count: i64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram message reaction update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct MessageReactionUpdated {
+    pub chat: Chat,
+    pub message_id: MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_chat: Option<Chat>,
+    pub date: i64,
+    pub old_reaction: Vec<ReactionType>,
+    pub new_reaction: Vec<ReactionType>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram aggregate message reaction-count update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct MessageReactionCountUpdated {
+    pub chat: Chat,
+    pub message_id: MessageId,
+    pub date: i64,
+    pub reactions: Vec<ReactionCount>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Forward-compatible chat boost source payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatBoostSource {
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub giveaway_message_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prize_star_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_unclaimed: bool,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram chat boost payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatBoost {
+    pub boost_id: String,
+    pub add_date: i64,
+    pub expiration_date: i64,
+    pub source: ChatBoostSource,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram chat boost update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatBoostUpdated {
+    pub chat: Chat,
+    pub boost: ChatBoost,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram removed chat boost update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ChatBoostRemoved {
+    pub chat: Chat,
+    pub boost_id: String,
+    pub remove_date: i64,
+    pub source: ChatBoostSource,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Telegram managed bot update payload.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ManagedBotUpdated {
+    pub user: User,
+    pub bot: User,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -230,6 +643,8 @@ pub struct Update {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_channel_post: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection: Option<BusinessConnection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_message: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_business_message: Option<Box<Message>>,
@@ -238,11 +653,21 @@ pub struct Update {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_message: Option<Box<Message>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_reaction: Option<MessageReactionUpdated>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_reaction_count: Option<MessageReactionCountUpdated>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback_query: Option<CallbackQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_query: Option<InlineQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_inline_result: Option<ChosenInlineResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shipping_query: Option<ShippingQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_checkout_query: Option<PreCheckoutQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purchased_paid_media: Option<PaidMediaPurchased>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Box<Poll>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -253,6 +678,12 @@ pub struct Update {
     pub chat_member: Option<ChatMemberUpdated>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_join_request: Option<ChatJoinRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_boost: Option<ChatBoostUpdated>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_chat_boost: Option<ChatBoostRemoved>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_bot: Option<ManagedBotUpdated>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -263,18 +694,27 @@ impl Update {
             || self.edited_message.is_some()
             || self.channel_post.is_some()
             || self.edited_channel_post.is_some()
+            || self.business_connection.is_some()
             || self.business_message.is_some()
             || self.edited_business_message.is_some()
             || self.deleted_business_messages.is_some()
             || self.guest_message.is_some()
+            || self.message_reaction.is_some()
+            || self.message_reaction_count.is_some()
             || self.callback_query.is_some()
             || self.inline_query.is_some()
             || self.chosen_inline_result.is_some()
+            || self.shipping_query.is_some()
+            || self.pre_checkout_query.is_some()
+            || self.purchased_paid_media.is_some()
             || self.poll.is_some()
             || self.poll_answer.is_some()
             || self.my_chat_member.is_some()
             || self.chat_member.is_some()
             || self.chat_join_request.is_some()
+            || self.chat_boost.is_some()
+            || self.removed_chat_boost.is_some()
+            || self.managed_bot.is_some()
     }
 
     fn has_unmodeled_kind(&self) -> bool {
@@ -315,18 +755,27 @@ impl Update {
             UpdateKind::EditedMessage => self.edited_message.is_some(),
             UpdateKind::ChannelPost => self.channel_post.is_some(),
             UpdateKind::EditedChannelPost => self.edited_channel_post.is_some(),
+            UpdateKind::BusinessConnection => self.business_connection.is_some(),
             UpdateKind::BusinessMessage => self.business_message.is_some(),
             UpdateKind::EditedBusinessMessage => self.edited_business_message.is_some(),
             UpdateKind::DeletedBusinessMessages => self.deleted_business_messages.is_some(),
             UpdateKind::GuestMessage => self.guest_message.is_some(),
+            UpdateKind::MessageReaction => self.message_reaction.is_some(),
+            UpdateKind::MessageReactionCount => self.message_reaction_count.is_some(),
             UpdateKind::CallbackQuery => self.callback_query.is_some(),
             UpdateKind::InlineQuery => self.inline_query.is_some(),
             UpdateKind::ChosenInlineResult => self.chosen_inline_result.is_some(),
+            UpdateKind::ShippingQuery => self.shipping_query.is_some(),
+            UpdateKind::PreCheckoutQuery => self.pre_checkout_query.is_some(),
+            UpdateKind::PurchasedPaidMedia => self.purchased_paid_media.is_some(),
             UpdateKind::Poll => self.poll.is_some(),
             UpdateKind::PollAnswer => self.poll_answer.is_some(),
             UpdateKind::MyChatMember => self.my_chat_member.is_some(),
             UpdateKind::ChatMember => self.chat_member.is_some(),
             UpdateKind::ChatJoinRequest => self.chat_join_request.is_some(),
+            UpdateKind::ChatBoost => self.chat_boost.is_some(),
+            UpdateKind::RemovedChatBoost => self.removed_chat_boost.is_some(),
+            UpdateKind::ManagedBot => self.managed_bot.is_some(),
             UpdateKind::Unknown => self.has_unmodeled_kind() || !self.has_modeled_kind(),
         }
     }
@@ -358,6 +807,7 @@ impl Update {
         self.callback_query
             .as_ref()
             .and_then(|query| query.message.as_deref())
+            .and_then(|message| message.accessible())
             .and_then(|message| message.web_app_data())
     }
 
@@ -365,8 +815,32 @@ impl Update {
         self.chat_join_request.as_ref()
     }
 
+    pub fn business_connection(&self) -> Option<&BusinessConnection> {
+        self.business_connection.as_ref()
+    }
+
     pub fn deleted_business_messages(&self) -> Option<&BusinessMessagesDeleted> {
         self.deleted_business_messages.as_ref()
+    }
+
+    pub fn message_reaction(&self) -> Option<&MessageReactionUpdated> {
+        self.message_reaction.as_ref()
+    }
+
+    pub fn message_reaction_count(&self) -> Option<&MessageReactionCountUpdated> {
+        self.message_reaction_count.as_ref()
+    }
+
+    pub fn shipping_query(&self) -> Option<&ShippingQuery> {
+        self.shipping_query.as_ref()
+    }
+
+    pub fn pre_checkout_query(&self) -> Option<&PreCheckoutQuery> {
+        self.pre_checkout_query.as_ref()
+    }
+
+    pub fn purchased_paid_media(&self) -> Option<&PaidMediaPurchased> {
+        self.purchased_paid_media.as_ref()
     }
 
     pub fn my_chat_member(&self) -> Option<&ChatMemberUpdated> {
@@ -375,6 +849,18 @@ impl Update {
 
     pub fn chat_member(&self) -> Option<&ChatMemberUpdated> {
         self.chat_member.as_ref()
+    }
+
+    pub fn chat_boost(&self) -> Option<&ChatBoostUpdated> {
+        self.chat_boost.as_ref()
+    }
+
+    pub fn removed_chat_boost(&self) -> Option<&ChatBoostRemoved> {
+        self.removed_chat_boost.as_ref()
+    }
+
+    pub fn managed_bot(&self) -> Option<&ManagedBotUpdated> {
+        self.managed_bot.as_ref()
     }
 }
 
@@ -392,7 +878,7 @@ pub struct GetUpdatesRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_updates: Option<Vec<String>>,
+    pub allowed_updates: Option<Vec<AllowedUpdate>>,
 }
 
 impl GetUpdatesRequest {
@@ -401,6 +887,43 @@ impl GetUpdatesRequest {
             timeout: Some(timeout_seconds),
             ..Self::default()
         }
+    }
+
+    pub fn allowed_updates(
+        mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> Self {
+        self.set_allowed_updates(allowed_updates);
+        self
+    }
+
+    pub fn allowed_update_kinds(
+        mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<Self> {
+        self.set_allowed_update_kinds(kinds)?;
+        Ok(self)
+    }
+
+    pub fn set_allowed_updates(
+        &mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> &mut Self {
+        self.allowed_updates = Some(allowed_updates.into_iter().collect());
+        self
+    }
+
+    pub fn set_allowed_update_kinds(
+        &mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<&mut Self> {
+        self.allowed_updates = Some(AllowedUpdate::from_kinds(kinds)?);
+        Ok(self)
+    }
+
+    pub fn clear_allowed_updates(&mut self) -> &mut Self {
+        self.allowed_updates = None;
+        self
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -583,19 +1106,30 @@ fn validate_http_url(field: &str, value: &str) -> Result<()> {
     }
 }
 
-pub(crate) fn validate_allowed_updates(allowed_updates: &[String]) -> Result<()> {
-    let mut seen = std::collections::BTreeSet::new();
+fn validate_allowed_update_name(update: &str) -> Result<()> {
+    if update.trim().is_empty() {
+        return Err(invalid_request(
+            "allowed_updates must not contain empty values",
+        ));
+    }
+    if update.chars().any(char::is_control) {
+        return Err(invalid_request(
+            "allowed_updates must not contain control characters",
+        ));
+    }
+    if update.chars().any(char::is_whitespace) {
+        return Err(invalid_request(
+            "allowed_updates must not contain whitespace",
+        ));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_allowed_updates(allowed_updates: &[AllowedUpdate]) -> Result<()> {
+    let mut seen = BTreeSet::new();
     for update in allowed_updates {
-        if update.trim().is_empty() {
-            return Err(invalid_request(
-                "allowed_updates must not contain empty values",
-            ));
-        }
-        if update.chars().any(char::is_control) {
-            return Err(invalid_request(
-                "allowed_updates must not contain control characters",
-            ));
-        }
+        validate_allowed_update_name(update.as_str())?;
         if !seen.insert(update.as_str()) {
             return Err(invalid_request(format!(
                 "allowed_updates contains duplicate value `{update}`"
@@ -659,6 +1193,35 @@ mod tests {
             vec![UpdateKind::Message, UpdateKind::CallbackQuery]
         );
         assert!(update.has_kind(UpdateKind::CallbackQuery));
+        Ok(())
+    }
+
+    #[test]
+    fn callback_query_accepts_inaccessible_message() -> std::result::Result<(), Box<dyn StdError>> {
+        let update: Update = serde_json::from_value(json!({
+            "update_id": 21,
+            "callback_query": {
+                "id": "cb-inaccessible",
+                "from": {"id": 1, "is_bot": false, "first_name": "tester"},
+                "message": {
+                    "message_id": 55,
+                    "date": 0,
+                    "chat": {"id": -10010, "type": "supergroup", "title": "mods"}
+                },
+                "chat_instance": "ci",
+                "data": "payload"
+            }
+        }))?;
+
+        let message = update
+            .callback_query
+            .as_ref()
+            .and_then(|query| query.message.as_deref())
+            .ok_or("missing callback message")?;
+        assert!(!message.is_accessible());
+        assert_eq!(message.chat().id, -10010);
+        assert_eq!(message.message_id(), MessageId(55));
+        assert_eq!(update.web_app_data(), None);
         Ok(())
     }
 
@@ -735,6 +1298,20 @@ mod tests {
                     "text": "post"
                 }
             }),
+            UpdateKind::BusinessConnection => json!({
+                "update_id": 117,
+                "business_connection": {
+                    "id": "business-1",
+                    "user": {"id": 7001, "is_bot": false, "first_name": "owner"},
+                    "user_chat_id": 7001,
+                    "date": 1700000117,
+                    "rights": {
+                        "can_reply": true,
+                        "can_read_messages": true
+                    },
+                    "is_enabled": true
+                }
+            }),
             UpdateKind::BusinessMessage => json!({
                 "update_id": 113,
                 "business_message": {
@@ -776,6 +1353,29 @@ mod tests {
                     "text": "guest hello"
                 }
             }),
+            UpdateKind::MessageReaction => json!({
+                "update_id": 118,
+                "message_reaction": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "message_id": 20,
+                    "user": {"id": 1, "is_bot": false, "first_name": "reactor"},
+                    "date": 1700000118,
+                    "old_reaction": [],
+                    "new_reaction": [{"type": "emoji", "emoji": "👍"}]
+                }
+            }),
+            UpdateKind::MessageReactionCount => json!({
+                "update_id": 119,
+                "message_reaction_count": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "message_id": 20,
+                    "date": 1700000119,
+                    "reactions": [{
+                        "type": {"type": "emoji", "emoji": "👍"},
+                        "total_count": 3
+                    }]
+                }
+            }),
             UpdateKind::CallbackQuery => json!({
                 "update_id": 104,
                 "callback_query": {
@@ -800,6 +1400,44 @@ mod tests {
                     "result_id": "res-106",
                     "from": {"id": 1, "is_bot": false, "first_name": "tester"},
                     "query": "search"
+                }
+            }),
+            UpdateKind::ShippingQuery => json!({
+                "update_id": 120,
+                "shipping_query": {
+                    "id": "shipping-1",
+                    "from": {"id": 1, "is_bot": false, "first_name": "buyer"},
+                    "invoice_payload": "invoice-payload",
+                    "shipping_address": {
+                        "country_code": "US",
+                        "state": "CA",
+                        "city": "San Francisco",
+                        "street_line1": "1 Market St",
+                        "street_line2": "Suite 1",
+                        "post_code": "94105"
+                    }
+                }
+            }),
+            UpdateKind::PreCheckoutQuery => json!({
+                "update_id": 121,
+                "pre_checkout_query": {
+                    "id": "checkout-1",
+                    "from": {"id": 1, "is_bot": false, "first_name": "buyer"},
+                    "currency": "USD",
+                    "total_amount": 145,
+                    "invoice_payload": "invoice-payload",
+                    "shipping_option_id": "ground",
+                    "order_info": {
+                        "name": "Buyer",
+                        "email": "buyer@example.com"
+                    }
+                }
+            }),
+            UpdateKind::PurchasedPaidMedia => json!({
+                "update_id": 122,
+                "purchased_paid_media": {
+                    "from": {"id": 1, "is_bot": false, "first_name": "buyer"},
+                    "paid_media_payload": "paid-media-payload"
                 }
             }),
             UpdateKind::Poll => json!({
@@ -867,6 +1505,40 @@ mod tests {
                     "bio": "hello there"
                 }
             }),
+            UpdateKind::ChatBoost => json!({
+                "update_id": 123,
+                "chat_boost": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "boost": {
+                        "boost_id": "boost-1",
+                        "add_date": 1700000123,
+                        "expiration_date": 1700086523,
+                        "source": {
+                            "source": "premium",
+                            "user": {"id": 1, "is_bot": false, "first_name": "booster"}
+                        }
+                    }
+                }
+            }),
+            UpdateKind::RemovedChatBoost => json!({
+                "update_id": 124,
+                "removed_chat_boost": {
+                    "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                    "boost_id": "boost-1",
+                    "remove_date": 1700000124,
+                    "source": {
+                        "source": "premium",
+                        "user": {"id": 1, "is_bot": false, "first_name": "booster"}
+                    }
+                }
+            }),
+            UpdateKind::ManagedBot => json!({
+                "update_id": 125,
+                "managed_bot": {
+                    "user": {"id": 1, "is_bot": false, "first_name": "owner"},
+                    "bot": {"id": 2, "is_bot": true, "first_name": "managed"}
+                }
+            }),
             UpdateKind::Unknown => json!({
                 "update_id": 112,
                 "new_kind_payload": {"foo": "bar"}
@@ -918,6 +1590,19 @@ mod tests {
     #[test]
     fn parses_business_and_guest_updates_as_message_like_models()
     -> std::result::Result<(), Box<dyn StdError>> {
+        let connection = update_for_kind(UpdateKind::BusinessConnection)?;
+        let connection = connection
+            .business_connection()
+            .ok_or("missing business connection")?;
+        assert_eq!(connection.id, "business-1");
+        assert_eq!(connection.user_id(), 7001);
+        assert!(
+            connection
+                .rights
+                .as_ref()
+                .is_some_and(|rights| rights.can_reply)
+        );
+
         let business = update_for_kind(UpdateKind::BusinessMessage)?;
         assert_eq!(business.kind(), UpdateKind::BusinessMessage);
         let message = business
@@ -962,6 +1647,71 @@ mod tests {
     }
 
     #[test]
+    fn parses_modern_update_payloads_as_typed_models() -> std::result::Result<(), Box<dyn StdError>>
+    {
+        let reaction = update_for_kind(UpdateKind::MessageReaction)?;
+        let reaction = reaction
+            .message_reaction()
+            .ok_or("missing message reaction")?;
+        assert_eq!(reaction.chat.id, -1001);
+        assert_eq!(reaction.message_id, MessageId(20));
+        assert_eq!(reaction.user.as_ref().map(|user| user.id.0), Some(1));
+        assert_eq!(reaction.new_reaction.len(), 1);
+
+        let reaction_count = update_for_kind(UpdateKind::MessageReactionCount)?;
+        let reaction_count = reaction_count
+            .message_reaction_count()
+            .ok_or("missing message reaction count")?;
+        assert_eq!(reaction_count.reactions.len(), 1);
+        assert_eq!(reaction_count.reactions[0].total_count, 3);
+
+        let shipping = update_for_kind(UpdateKind::ShippingQuery)?;
+        let shipping = shipping.shipping_query().ok_or("missing shipping query")?;
+        assert_eq!(shipping.from.id.0, 1);
+        assert_eq!(shipping.shipping_address.country_code, "US");
+
+        let checkout = update_for_kind(UpdateKind::PreCheckoutQuery)?;
+        let checkout = checkout
+            .pre_checkout_query()
+            .ok_or("missing pre-checkout query")?;
+        assert_eq!(checkout.total_amount, 145);
+        assert_eq!(
+            checkout
+                .order_info
+                .as_ref()
+                .and_then(|info| info.email.as_deref()),
+            Some("buyer@example.com")
+        );
+
+        let purchase = update_for_kind(UpdateKind::PurchasedPaidMedia)?;
+        let purchase = purchase
+            .purchased_paid_media()
+            .ok_or("missing paid media purchase")?;
+        assert_eq!(purchase.paid_media_payload, "paid-media-payload");
+
+        let boost = update_for_kind(UpdateKind::ChatBoost)?;
+        let boost = boost.chat_boost().ok_or("missing chat boost")?;
+        assert_eq!(boost.chat.id, -1001);
+        assert_eq!(
+            boost.boost.source.user.as_ref().map(|user| user.id.0),
+            Some(1)
+        );
+
+        let removed = update_for_kind(UpdateKind::RemovedChatBoost)?;
+        let removed = removed
+            .removed_chat_boost()
+            .ok_or("missing removed chat boost")?;
+        assert_eq!(removed.boost_id, "boost-1");
+
+        let managed = update_for_kind(UpdateKind::ManagedBot)?;
+        let managed = managed.managed_bot().ok_or("missing managed bot")?;
+        assert_eq!(managed.user.id.0, 1);
+        assert_eq!(managed.bot.id.0, 2);
+
+        Ok(())
+    }
+
+    #[test]
     fn parses_chat_member_updates_as_typed_model() -> std::result::Result<(), Box<dyn StdError>> {
         let member_update = update_for_kind(UpdateKind::ChatMember)?;
         let my_member_update = update_for_kind(UpdateKind::MyChatMember)?;
@@ -985,10 +1735,64 @@ mod tests {
     }
 
     #[test]
-    fn validates_get_updates_request_bounds() {
+    fn update_kind_names_round_trip() {
+        for kind in UpdateKind::all_known() {
+            assert_eq!(UpdateKind::from_name(kind.as_str()), Some(*kind));
+            assert_eq!(kind.allowed_update_name(), Some(kind.as_str()));
+        }
+
+        assert_eq!(UpdateKind::Unknown.as_str(), "unknown");
+        assert_eq!(UpdateKind::Unknown.allowed_update_name(), None);
+        assert_eq!(UpdateKind::from_name("unknown"), Some(UpdateKind::Unknown));
+        assert_eq!(UpdateKind::from_name("future_update"), None);
+    }
+
+    #[test]
+    fn allowed_update_values_are_validated() -> std::result::Result<(), Box<dyn StdError>> {
+        assert_eq!(
+            AllowedUpdate::from_kind(UpdateKind::CallbackQuery)?.as_str(),
+            "callback_query"
+        );
+        assert_eq!(
+            serde_json::from_str::<AllowedUpdate>("\"message\"")?.as_str(),
+            "message"
+        );
+        assert_eq!(
+            AllowedUpdate::from_kinds([UpdateKind::Message, UpdateKind::ChatBoost])?,
+            vec![
+                AllowedUpdate::new("message")?,
+                AllowedUpdate::new("chat_boost")?
+            ]
+        );
+        assert!(matches!(
+            AllowedUpdate::from_kind(UpdateKind::Unknown),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new(""),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new("message\n"),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new(" message "),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(serde_json::from_str::<AllowedUpdate>("\" message \"").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_get_updates_request_bounds() -> Result<()> {
         let valid = GetUpdatesRequest {
             limit: Some(100),
-            allowed_updates: Some(vec!["message".to_owned(), "callback_query".to_owned()]),
+            allowed_updates: Some(vec![
+                AllowedUpdate::new("message")?,
+                AllowedUpdate::new("callback_query")?,
+            ]),
             ..GetUpdatesRequest::default()
         };
         assert!(valid.validate().is_ok());
@@ -1003,13 +1807,18 @@ mod tests {
         ));
 
         let duplicate_update = GetUpdatesRequest {
-            allowed_updates: Some(vec!["message".to_owned(), "message".to_owned()]),
+            allowed_updates: Some(vec![
+                AllowedUpdate::new("message")?,
+                AllowedUpdate::new("message")?,
+            ]),
             ..GetUpdatesRequest::default()
         };
         assert!(matches!(
             duplicate_update.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        Ok(())
     }
 
     #[test]

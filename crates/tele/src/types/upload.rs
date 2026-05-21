@@ -53,6 +53,11 @@ impl UploadFile {
     /// Attach a specific content-type for this file part.
     pub fn with_content_type(mut self, content_type: impl Into<String>) -> Result<Self> {
         let content_type = content_type.into();
+        if content_type.trim().is_empty() {
+            return Err(Error::InvalidRequest {
+                reason: "upload content_type cannot be empty".to_owned(),
+            });
+        }
         validate_multipart_header_fragment("upload content_type", &content_type)?;
         HeaderValue::from_str(&content_type).map_err(|source| Error::InvalidHeaderValue {
             name: "content-type".to_owned(),
@@ -163,6 +168,7 @@ mod tests {
             Ok(file) => file,
             Err(_) => return,
         };
+        assert!(file.clone().with_content_type("").is_err());
         assert!(file.with_content_type("text/plain\r\nx: y").is_err());
     }
 

@@ -11,7 +11,7 @@ pub struct PollingConfig {
     /// Set this value to `0` for explicit short polling.
     pub poll_timeout_seconds: u16,
     pub limit: Option<u8>,
-    pub allowed_updates: Option<Vec<String>>,
+    pub allowed_updates: Option<Vec<AllowedUpdate>>,
     pub disable_webhook_on_start: bool,
     pub drop_pending_updates_on_start: bool,
     pub dedupe_window_size: usize,
@@ -33,6 +33,43 @@ impl Default for PollingConfig {
 }
 
 impl PollingConfig {
+    pub fn allowed_updates(
+        mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> Self {
+        self.set_allowed_updates(allowed_updates);
+        self
+    }
+
+    pub fn allowed_update_kinds(
+        mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<Self> {
+        self.set_allowed_update_kinds(kinds)?;
+        Ok(self)
+    }
+
+    pub fn set_allowed_updates(
+        &mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> &mut Self {
+        self.allowed_updates = Some(allowed_updates.into_iter().collect());
+        self
+    }
+
+    pub fn set_allowed_update_kinds(
+        &mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<&mut Self> {
+        self.allowed_updates = Some(AllowedUpdate::from_kinds(kinds)?);
+        Ok(self)
+    }
+
+    pub fn clear_allowed_updates(&mut self) -> &mut Self {
+        self.allowed_updates = None;
+        self
+    }
+
     pub fn validate(&self) -> Result<()> {
         let request = GetUpdatesRequest {
             limit: self.limit,

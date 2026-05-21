@@ -609,8 +609,28 @@ impl Router {
         self.custom_route("callback_query", |update| update.callback_query.is_some())
     }
 
+    pub fn callback_query_input_route(&mut self) -> ExtractedRouteBuilder<'_, CallbackQueryInput> {
+        ExtractedRouteBuilder::new(self, "callback_query")
+    }
+
     pub fn inline_query_route(&mut self) -> UpdateRouteBuilder<'_> {
         self.custom_route("inline_query", |update| update.inline_query.is_some())
+    }
+
+    pub fn inline_query_input_route(&mut self) -> ExtractedRouteBuilder<'_, InlineQueryInput> {
+        ExtractedRouteBuilder::new(self, "inline_query")
+    }
+
+    pub fn chosen_inline_result_route(
+        &mut self,
+    ) -> ExtractedRouteBuilder<'_, ChosenInlineResultInput> {
+        ExtractedRouteBuilder::new(self, "chosen_inline_result")
+    }
+
+    pub fn business_connection_route(
+        &mut self,
+    ) -> ExtractedRouteBuilder<'_, BusinessConnectionInput> {
+        ExtractedRouteBuilder::new(self, "business_connection")
     }
 
     pub fn extracted_route<E>(&mut self) -> ExtractedRouteBuilder<'_, E>
@@ -652,12 +672,62 @@ impl Router {
         ExtractedRouteBuilder::new(self, "chat_join_request")
     }
 
+    pub fn deleted_business_messages_route(
+        &mut self,
+    ) -> ExtractedRouteBuilder<'_, BusinessMessagesDeletedInput> {
+        ExtractedRouteBuilder::new(self, "deleted_business_messages")
+    }
+
     pub fn chat_member_route(&mut self) -> ExtractedRouteBuilder<'_, ChatMemberUpdatedInput> {
         ExtractedRouteBuilder::new(self, "chat_member")
     }
 
     pub fn my_chat_member_route(&mut self) -> ExtractedRouteBuilder<'_, MyChatMemberUpdatedInput> {
         ExtractedRouteBuilder::new(self, "my_chat_member")
+    }
+
+    pub fn message_reaction_route(&mut self) -> ExtractedRouteBuilder<'_, MessageReactionInput> {
+        ExtractedRouteBuilder::new(self, "message_reaction")
+    }
+
+    pub fn message_reaction_count_route(
+        &mut self,
+    ) -> ExtractedRouteBuilder<'_, MessageReactionCountInput> {
+        ExtractedRouteBuilder::new(self, "message_reaction_count")
+    }
+
+    pub fn shipping_query_route(&mut self) -> ExtractedRouteBuilder<'_, ShippingQueryInput> {
+        ExtractedRouteBuilder::new(self, "shipping_query")
+    }
+
+    pub fn pre_checkout_query_route(&mut self) -> ExtractedRouteBuilder<'_, PreCheckoutQueryInput> {
+        ExtractedRouteBuilder::new(self, "pre_checkout_query")
+    }
+
+    pub fn purchased_paid_media_route(
+        &mut self,
+    ) -> ExtractedRouteBuilder<'_, PaidMediaPurchasedInput> {
+        ExtractedRouteBuilder::new(self, "purchased_paid_media")
+    }
+
+    pub fn poll_route(&mut self) -> ExtractedRouteBuilder<'_, PollInput> {
+        ExtractedRouteBuilder::new(self, "poll")
+    }
+
+    pub fn poll_answer_route(&mut self) -> ExtractedRouteBuilder<'_, PollAnswerInput> {
+        ExtractedRouteBuilder::new(self, "poll_answer")
+    }
+
+    pub fn chat_boost_route(&mut self) -> ExtractedRouteBuilder<'_, ChatBoostInput> {
+        ExtractedRouteBuilder::new(self, "chat_boost")
+    }
+
+    pub fn removed_chat_boost_route(&mut self) -> ExtractedRouteBuilder<'_, ChatBoostRemovedInput> {
+        ExtractedRouteBuilder::new(self, "removed_chat_boost")
+    }
+
+    pub fn managed_bot_route(&mut self) -> ExtractedRouteBuilder<'_, ManagedBotInput> {
+        ExtractedRouteBuilder::new(self, "managed_bot")
     }
 
     pub fn command_input_route(&mut self) -> CommandInputRouteBuilder<'_> {

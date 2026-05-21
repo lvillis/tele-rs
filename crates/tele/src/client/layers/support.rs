@@ -71,12 +71,25 @@ pub(crate) fn update_message(update: &Update) -> Option<&Message> {
         .callback_query
         .as_ref()
         .and_then(|query| query.message.as_deref())
+        .and_then(|message| message.accessible())
 }
 
 pub(crate) struct ReplyContext {
     pub(crate) chat_id: i64,
     pub(crate) reply_parameters: Option<ReplyParameters>,
     pub(crate) business_connection_id: Option<String>,
+}
+
+fn chat_reply_context(
+    chat_id: i64,
+    message_id: Option<MessageId>,
+    business_connection_id: Option<String>,
+) -> ReplyContext {
+    ReplyContext {
+        chat_id,
+        reply_parameters: message_id.map(ReplyParameters::new),
+        business_connection_id,
+    }
 }
 
 pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
@@ -87,27 +100,75 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
     }
 
     if let Some(request) = update.chat_join_request.as_ref() {
-        return Ok(ReplyContext {
-            chat_id: request.user_chat_id,
-            reply_parameters: None,
-            business_connection_id: None,
-        });
+        return Ok(chat_reply_context(request.user_chat_id, None, None));
     }
 
     if let Some(message) = update_message(update) {
-        return Ok(ReplyContext {
-            chat_id: message.chat.id,
-            reply_parameters: Some(ReplyParameters::new(message.message_id)),
-            business_connection_id: message.business_connection_id.clone(),
-        });
+        return Ok(chat_reply_context(
+            message.chat.id,
+            Some(message.message_id),
+            message.business_connection_id.clone(),
+        ));
+    }
+
+    if let Some(message) = update
+        .callback_query
+        .as_ref()
+        .and_then(|query| query.message.as_deref())
+    {
+        return Ok(chat_reply_context(
+            message.chat().id,
+            Some(message.message_id()),
+            message
+                .accessible()
+                .and_then(|message| message.business_connection_id.clone()),
+        ));
     }
 
     if let Some(deleted) = update.deleted_business_messages.as_ref() {
-        return Ok(ReplyContext {
-            chat_id: deleted.chat.id,
-            reply_parameters: None,
-            business_connection_id: Some(deleted.business_connection_id.clone()),
-        });
+        return Ok(chat_reply_context(
+            deleted.chat.id,
+            None,
+            Some(deleted.business_connection_id.clone()),
+        ));
+    }
+
+    if let Some(connection) = update.business_connection.as_ref() {
+        return Ok(chat_reply_context(
+            connection.user_chat_id,
+            None,
+            Some(connection.id.clone()),
+        ));
+    }
+
+    if let Some(reaction) = update.message_reaction.as_ref() {
+        return Ok(chat_reply_context(
+            reaction.chat.id,
+            Some(reaction.message_id),
+            None,
+        ));
+    }
+
+    if let Some(reaction_count) = update.message_reaction_count.as_ref() {
+        return Ok(chat_reply_context(
+            reaction_count.chat.id,
+            Some(reaction_count.message_id),
+            None,
+        ));
+    }
+
+    if let Some(answer) = update.poll_answer.as_ref()
+        && let Some(voter_chat) = answer.voter_chat.as_ref()
+    {
+        return Ok(chat_reply_context(voter_chat.id, None, None));
+    }
+
+    if let Some(boost) = update.chat_boost.as_ref() {
+        return Ok(chat_reply_context(boost.chat.id, None, None));
+    }
+
+    if let Some(boost) = update.removed_chat_boost.as_ref() {
+        return Ok(chat_reply_context(boost.chat.id, None, None));
     }
 
     let chat_id = update
@@ -117,11 +178,7 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         .map(|member_update| member_update.chat.id)
         .ok_or_else(|| invalid_request("update does not contain a chat id for reply"))?;
 
-    Ok(ReplyContext {
-        chat_id,
-        reply_parameters: None,
-        business_connection_id: None,
-    })
+    Ok(chat_reply_context(chat_id, None, None))
 }
 
 pub(crate) fn callback_query_id(update: &Update) -> Option<String> {

@@ -5,8 +5,8 @@ use serde_json::Value;
 use crate::{Error, Result};
 
 use crate::types::validation::{
-    positive_i64 as validate_positive_i64, required_len as validate_required_vec,
-    required_string as validate_required_string, string_id as validate_string_id,
+    positive_i64 as validate_positive_i64, required_string as validate_required_string,
+    string_id as validate_string_id,
 };
 
 use super::AdvancedRequest;
@@ -15,127 +15,19 @@ trait GeneratedValidate {
     fn validate_generated(&self) -> Result<()>;
 }
 
-impl GeneratedValidate for crate::types::common::ChatId {
+impl GeneratedValidate for crate::types::payment::LabeledPrice {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }
 }
 
-impl GeneratedValidate for crate::types::common::NumericChatId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::UserId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::MessageId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::sticker::InputSticker {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::sticker::MaskPosition {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputChecklist {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputStoryContent {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::KeyboardButton {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::MenuButton {
+impl GeneratedValidate for crate::types::payment::ShippingOption {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }
 }
 
 impl GeneratedValidate for crate::types::telegram::PassportElementError {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReactionType {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyParameters {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::StoryArea {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }
@@ -281,7 +173,7 @@ impl AdvancedRequest for AdvancedSendInvoiceRequest {
         validate_required_string("description", &self.description)?;
         validate_required_string("payload", &self.payload)?;
         validate_required_string("currency", &self.currency)?;
-        validate_required_vec("prices", self.prices.len())?;
+        validate_required_items::<crate::types::payment::LabeledPrice>("prices", &self.prices)?;
         if let Some(value) = self.max_tip_amount {
             validate_positive_i64("max_tip_amount", value)?;
         }
@@ -401,7 +293,7 @@ impl AdvancedRequest for AdvancedCreateInvoiceLinkRequest {
         validate_required_string("description", &self.description)?;
         validate_required_string("payload", &self.payload)?;
         validate_required_string("currency", &self.currency)?;
-        validate_required_vec("prices", self.prices.len())?;
+        validate_required_items::<crate::types::payment::LabeledPrice>("prices", &self.prices)?;
         if let Some(value) = self.subscription_period {
             validate_positive_i64("subscription_period", value)?;
         }
@@ -449,6 +341,42 @@ impl AdvancedRequest for AdvancedAnswerShippingQueryRequest {
 
     fn validate(&self) -> Result<()> {
         validate_string_id("shipping_query_id", &self.shipping_query_id)?;
+        if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery must omit `error_message` when `ok` is true"
+                        .to_owned(),
+                });
+            }
+            let Some(shipping_options) = self.shipping_options.as_deref() else {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery requires `shipping_options` when `ok` is true"
+                        .to_owned(),
+                });
+            };
+            validate_required_items::<crate::types::payment::ShippingOption>(
+                "shipping_options",
+                shipping_options,
+            )?;
+        } else {
+            if self.shipping_options.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery must omit `shipping_options` when `ok` is false"
+                        .to_owned(),
+                });
+            }
+            if self
+                .error_message
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(Error::InvalidRequest {
+                    reason:
+                        "answerShippingQuery requires non-empty `error_message` when `ok` is false"
+                            .to_owned(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -478,6 +406,24 @@ impl AdvancedRequest for AdvancedAnswerPreCheckoutQueryRequest {
 
     fn validate(&self) -> Result<()> {
         validate_string_id("pre_checkout_query_id", &self.pre_checkout_query_id)?;
+        if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerPreCheckoutQuery must omit `error_message` when `ok` is true"
+                        .to_owned(),
+                });
+            }
+        } else if self
+            .error_message
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(Error::InvalidRequest {
+                reason:
+                    "answerPreCheckoutQuery requires non-empty `error_message` when `ok` is false"
+                        .to_owned(),
+            });
+        }
         Ok(())
     }
 }

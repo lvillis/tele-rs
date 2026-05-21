@@ -4,7 +4,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::types::update::validate_allowed_updates;
+use crate::types::update::{AllowedUpdate, UpdateKind, validate_allowed_updates};
 use crate::{Error, Result};
 
 const MAX_WEBHOOK_CONNECTIONS: u8 = 100;
@@ -54,7 +54,7 @@ pub struct SetWebhookRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_connections: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_updates: Option<Vec<String>>,
+    pub allowed_updates: Option<Vec<AllowedUpdate>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop_pending_updates: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +81,43 @@ impl SetWebhookRequest {
     pub fn set_secret_token(&mut self, token: impl Into<String>) -> Result<&mut Self> {
         self.secret_token = Some(WebhookSecretToken::new(token)?);
         Ok(self)
+    }
+
+    pub fn allowed_updates(
+        mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> Self {
+        self.set_allowed_updates(allowed_updates);
+        self
+    }
+
+    pub fn allowed_update_kinds(
+        mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<Self> {
+        self.set_allowed_update_kinds(kinds)?;
+        Ok(self)
+    }
+
+    pub fn set_allowed_updates(
+        &mut self,
+        allowed_updates: impl IntoIterator<Item = AllowedUpdate>,
+    ) -> &mut Self {
+        self.allowed_updates = Some(allowed_updates.into_iter().collect());
+        self
+    }
+
+    pub fn set_allowed_update_kinds(
+        &mut self,
+        kinds: impl IntoIterator<Item = UpdateKind>,
+    ) -> Result<&mut Self> {
+        self.allowed_updates = Some(AllowedUpdate::from_kinds(kinds)?);
+        Ok(self)
+    }
+
+    pub fn clear_allowed_updates(&mut self) -> &mut Self {
+        self.allowed_updates = None;
+        self
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -127,7 +164,7 @@ pub struct WebhookInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_connections: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_updates: Option<Vec<String>>,
+    pub allowed_updates: Option<Vec<AllowedUpdate>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -212,10 +249,10 @@ mod tests {
     }
 
     #[test]
-    fn validates_set_webhook_request() {
+    fn validates_set_webhook_request() -> Result<()> {
         let mut valid = SetWebhookRequest::new("https://example.com/hook");
         valid.max_connections = Some(100);
-        valid.allowed_updates = Some(vec!["message".to_owned(), "callback_query".to_owned()]);
+        valid.set_allowed_update_kinds([UpdateKind::Message, UpdateKind::CallbackQuery])?;
         assert!(valid.validate().is_ok());
 
         let invalid_url = SetWebhookRequest::new("http://example.com/hook");
@@ -237,5 +274,7 @@ mod tests {
             invalid_ip.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        Ok(())
     }
 }

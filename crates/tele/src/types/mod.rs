@@ -86,9 +86,12 @@ pub use telegram::{
     ReplyParameters, StoryArea, SuggestedPostParameters, WebAppData, WebAppInfo,
 };
 pub use update::{
-    AnswerCallbackQueryRequest, AnswerInlineQueryRequest, BusinessMessagesDeleted, CallbackQuery,
-    ChatJoinRequest, ChatMemberUpdated, ChosenInlineResult, GetUpdatesRequest, InlineQuery,
-    PollAnswer, Update, UpdateKind,
+    AllowedUpdate, AnswerCallbackQueryRequest, AnswerInlineQueryRequest, BusinessBotRights,
+    BusinessConnection, BusinessMessagesDeleted, CallbackQuery, ChatBoost, ChatBoostRemoved,
+    ChatBoostSource, ChatBoostUpdated, ChatJoinRequest, ChatMemberUpdated, ChosenInlineResult,
+    GetUpdatesRequest, InlineQuery, ManagedBotUpdated, MessageReactionCountUpdated,
+    MessageReactionUpdated, PaidMediaPurchased, PollAnswer, PreCheckoutQuery, ReactionCount,
+    ShippingQuery, Update, UpdateKind,
 };
 pub use upload::{UploadFile, UploadPart};
 pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo, WebhookSecretToken};

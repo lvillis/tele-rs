@@ -33,11 +33,13 @@ pub use crate::client::{
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};
 
 pub use crate::types::{
-    BotCommand, BusinessMessagesDeleted, CallbackCodec, CallbackPayload,
-    ChatAdministratorCapability, ChatId, ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated,
-    ChatPermissions, CompactCallbackPayload, InputMedia, InputMediaAnimation, InputMediaAudio,
-    InputMediaDocument, InputMediaPhoto, InputMediaVideo, Message, MessageEntityKind, MessageId,
-    MessageKind, MessageOrigin, ParseMode, PollKind, ReplyMarkup, ReplyParameters, Update,
+    AllowedUpdate, BotCommand, BusinessConnection, BusinessMessagesDeleted, CallbackCodec,
+    CallbackPayload, ChatAdministratorCapability, ChatBoostRemoved, ChatBoostUpdated, ChatId,
+    ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload,
+    InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaPhoto,
+    InputMediaVideo, ManagedBotUpdated, Message, MessageEntityKind, MessageId, MessageKind,
+    MessageOrigin, MessageReactionCountUpdated, MessageReactionUpdated, PaidMediaPurchased,
+    ParseMode, PollKind, PreCheckoutQuery, ReplyMarkup, ReplyParameters, ShippingQuery, Update,
     UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
 };
 
@@ -47,13 +49,17 @@ pub use crate::bot::PostgresSessionStore;
 pub use crate::bot::RedisSessionStore;
 #[cfg(feature = "bot")]
 pub use crate::bot::{
-    BotApp, BotContext, BotEngine, BotOutbox, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
-    CallbackInput, CallbackRouteBuilder, ChannelUpdateSource, ChatJoinRequestInput,
-    ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandRouteBuilder, CompactCallbackInput,
+    BotApp, BotContext, BotEngine, BotOutbox, BusinessConnectionInput,
+    BusinessMessagesDeletedInput, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
+    CallbackInput, CallbackQueryInput, CallbackRouteBuilder, ChannelUpdateSource, ChatBoostInput,
+    ChatBoostRemovedInput, ChatJoinRequestInput, ChatMemberUpdatedInput, ChatSession,
+    ChosenInlineResultInput, CommandArgs, CommandRouteBuilder, CompactCallbackInput,
     CompactCallbackRouteBuilder, ContextAppApi, DispatchMetricOutcome, DispatchOutcome,
     EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore,
-    JsonCallback, JsonFileSessionStore, LongPollingSource, MyChatMemberUpdatedInput, OutboxConfig,
-    ParsedCommandRouteBuilder, PollingConfig, RequestStateKey, RouteRejection, Router,
+    InlineQueryInput, JsonCallback, JsonFileSessionStore, LongPollingSource, ManagedBotInput,
+    MessageReactionCountInput, MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig,
+    PaidMediaPurchasedInput, ParsedCommandRouteBuilder, PollAnswerInput, PollInput, PollingConfig,
+    PreCheckoutQueryInput, RequestStateKey, RouteRejection, Router, ShippingQueryInput,
     SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
     TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
     WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,

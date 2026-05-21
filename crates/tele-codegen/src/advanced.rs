@@ -468,6 +468,8 @@ const TYPES_WITH_VALIDATE: &[&str] = &[
     "crate::types::common::NumericChatId",
     "crate::types::common::UserId",
     "crate::types::common::MessageId",
+    "crate::types::payment::LabeledPrice",
+    "crate::types::payment::ShippingOption",
     "crate::types::sticker::InputSticker",
     "crate::types::sticker::MaskPosition",
     "crate::types::telegram::AcceptedGiftTypes",
@@ -487,15 +489,22 @@ const TYPES_WITH_VALIDATE: &[&str] = &[
     "crate::types::telegram::SuggestedPostParameters",
 ];
 
-fn type_has_validate(field_ty: &str) -> bool {
-    TYPES_WITH_VALIDATE.contains(&field_ty)
+fn type_with_validate(field_ty: &str) -> Option<&'static str> {
+    TYPES_WITH_VALIDATE
+        .iter()
+        .copied()
+        .find(|ty| *ty == field_ty)
 }
 
-fn validated_vec_item_type(field_ty: &str) -> Option<&str> {
+fn type_has_validate(field_ty: &str) -> bool {
+    type_with_validate(field_ty).is_some()
+}
+
+fn validated_vec_item_type(field_ty: &str) -> Option<&'static str> {
     field_ty
         .strip_prefix("Vec<")
         .and_then(|inner| inner.strip_suffix('>'))
-        .filter(|inner| type_has_validate(inner))
+        .and_then(type_with_validate)
 }
 
 fn positive_i64_field(field_name: &str) -> bool {
@@ -563,6 +572,20 @@ fn validation_rule(param: &ParamSpec) -> Option<String> {
         return Some(format!(
             "        if let Some(values) = self.{}.as_deref() {{\n            validate_message_ids(values)?;\n        }}",
             param.field_name
+        ));
+    }
+
+    if field_ty == "Vec<String>" {
+        if param.required {
+            return Some(format!(
+                "        validate_required_string_items(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(values) = self.{}.as_deref() {{\n            validate_string_items(\"{}\", values)?;\n        }}",
+            param.field_name, param.name
         ));
     }
 
@@ -644,6 +667,79 @@ fn validation_rule(param: &ParamSpec) -> Option<String> {
     None
 }
 
+fn method_specific_validation_owns_param(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        ("answerShippingQuery", "shipping_options")
+    )
+}
+
+fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
+    match method.method.as_str() {
+        "answerShippingQuery" => vec![
+            r#"        if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery must omit `error_message` when `ok` is true"
+                        .to_owned(),
+                });
+            }
+            let Some(shipping_options) = self.shipping_options.as_deref() else {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery requires `shipping_options` when `ok` is true"
+                        .to_owned(),
+                });
+            };
+            validate_required_items::<crate::types::payment::ShippingOption>(
+                "shipping_options",
+                shipping_options,
+            )?;
+        } else {
+            if self.shipping_options.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerShippingQuery must omit `shipping_options` when `ok` is false"
+                        .to_owned(),
+                });
+            }
+            if self
+                .error_message
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(Error::InvalidRequest {
+                    reason:
+                        "answerShippingQuery requires non-empty `error_message` when `ok` is false"
+                            .to_owned(),
+                });
+            }
+        }"#
+            .to_owned(),
+        ],
+        "answerPreCheckoutQuery" => vec![
+            r#"        if self.ok {
+            if self.error_message.is_some() {
+                return Err(Error::InvalidRequest {
+                    reason: "answerPreCheckoutQuery must omit `error_message` when `ok` is true"
+                        .to_owned(),
+                });
+            }
+        } else if self
+            .error_message
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(Error::InvalidRequest {
+                reason:
+                    "answerPreCheckoutQuery requires non-empty `error_message` when `ok` is false"
+                        .to_owned(),
+            });
+        }"#
+            .to_owned(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 fn domain_for_method(fn_name: &str) -> &'static str {
     if fn_name.contains("business") {
         return "business";
@@ -679,7 +775,9 @@ fn render_request(method: &MethodSpec) -> String {
     let validation_rules = method
         .params
         .iter()
+        .filter(|param| !method_specific_validation_owns_param(method, param))
         .filter_map(validation_rule)
+        .chain(method_specific_validation_rules(method))
         .collect::<Vec<_>>();
     let derive = if required_params.is_empty() {
         "#[derive(Clone, Debug, Default, Serialize)]"
@@ -824,6 +922,23 @@ fn generate_types_root(grouped: &HashMap<&'static str, Vec<&MethodSpec>>) -> Str
     out
 }
 
+fn generated_validate_types(methods: &[&MethodSpec]) -> Vec<&'static str> {
+    let mut used = Vec::new();
+    for method in methods {
+        for param in &method.params {
+            let field_ty = resolve_param_type(param);
+            let Some(item_ty) = validated_vec_item_type(&field_ty) else {
+                continue;
+            };
+            if !used.contains(&item_ty) {
+                used.push(item_ty);
+            }
+        }
+    }
+
+    used
+}
+
 fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let body = methods
         .iter()
@@ -832,20 +947,27 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         .join("\n\n");
     let uses_value = body.contains("Value");
     let uses_required_string_validator = body.contains("validate_required_string(");
-    let uses_string_id_validator = body.contains("validate_string_id(");
-    let uses_required_vec_validator = body.contains("validate_required_vec(");
+    let uses_string_items_validator =
+        body.contains("validate_string_items(") || body.contains("validate_required_string_items(");
+    let uses_string_id_validator =
+        body.contains("validate_string_id(") || uses_string_items_validator;
+    let uses_required_vec_validator =
+        body.contains("validate_required_vec(") || body.contains("validate_required_string_items(");
     let uses_required_message_ids_validator = body.contains("validate_required_message_ids(");
     let uses_message_ids_validator = body.contains("validate_message_ids(");
     let uses_required_items_validator = body.contains("validate_required_items::<");
     let uses_items_validator = body.contains("validate_items(");
     let uses_positive_i64_validator = body.contains("validate_positive_i64(");
     let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
+    let generated_validate_types = generated_validate_types(methods);
     let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator;
-    let uses_error = uses_required_message_ids_validator || uses_required_items_validator;
+    let uses_error = uses_required_message_ids_validator
+        || uses_required_items_validator
+        || body.contains("Error::InvalidRequest");
     let uses_result = body.contains("fn validate(&self) -> Result<()>")
         || uses_required_string_validator
         || uses_string_id_validator
@@ -908,7 +1030,7 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "    fn validate_generated(&self) -> Result<()>;");
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
-        for ty in TYPES_WITH_VALIDATE {
+        for ty in generated_validate_types {
             let _ = writeln!(&mut out, "impl GeneratedValidate for {ty} {{");
             let _ = writeln!(
                 &mut out,
@@ -959,6 +1081,33 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "    }}");
         let _ = writeln!(&mut out);
         let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_string_items_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_string_items(field: &str, values: &[String]) -> Result<()> {{"
+        );
+        let _ = writeln!(
+            &mut out,
+            "    for (index, value) in values.iter().enumerate() {{"
+        );
+        let _ = writeln!(
+            &mut out,
+            "        validate_string_id(&format!(\"{{field}}[{{index}}]\"), value)?;"
+        );
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_string_items(field: &str, values: &[String]) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    validate_required_vec(field, values.len())?;");
+        let _ = writeln!(&mut out, "    validate_string_items(field, values)");
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
     }
@@ -1213,6 +1362,20 @@ mod tests {
                     type_rust: "Value".to_owned(),
                 },
                 ParamSpec {
+                    name: "prices".to_owned(),
+                    field_name: "prices".to_owned(),
+                    required: true,
+                    type_raw: "Array of LabeledPrice".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "shipping_options".to_owned(),
+                    field_name: "shipping_options".to_owned(),
+                    required: false,
+                    type_raw: "Array of ShippingOption".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
                     name: "business_connection_id".to_owned(),
                     field_name: "business_connection_id".to_owned(),
                     required: false,
@@ -1225,6 +1388,20 @@ mod tests {
                     required: true,
                     type_raw: "String".to_owned(),
                     type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "custom_emoji_ids".to_owned(),
+                    field_name: "custom_emoji_ids".to_owned(),
+                    required: true,
+                    type_raw: "Array of String".to_owned(),
+                    type_rust: "Vec<String>".to_owned(),
+                },
+                ParamSpec {
+                    name: "keywords".to_owned(),
+                    field_name: "keywords".to_owned(),
+                    required: false,
+                    type_raw: "Array of String".to_owned(),
+                    type_rust: "Vec<String>".to_owned(),
                 },
             ],
         };
@@ -1253,11 +1430,107 @@ mod tests {
         assert!(
             generated.contains("validate_required_items::<crate::types::telegram::InputPaidMedia>")
         );
+        assert!(
+            generated.contains("validate_required_items::<crate::types::payment::LabeledPrice>")
+        );
+        assert!(generated.contains("if let Some(values) = self.shipping_options.as_deref()"));
+        assert!(generated.contains("validate_items(values)?;"));
         assert!(generated.contains("if let Some(values) = self.reactions.as_deref()"));
         assert!(generated.contains("if let Some(value) = self.accepted_gift_types.as_ref()"));
         assert!(generated.contains("validate_string_id(\"inline_message_id\""));
         assert!(generated.contains("if let Some(value) = self.business_connection_id.as_deref()"));
         assert!(generated.contains("validate_string_id(\"business_connection_id\", value)?;"));
+        assert!(generated.contains("validate_required_string_items(\"custom_emoji_ids\""));
+        assert!(generated.contains("if let Some(values) = self.keywords.as_deref()"));
+        assert!(generated.contains("validate_string_items(\"keywords\", values)?;"));
+    }
+
+    #[test]
+    fn generated_payment_callbacks_validate_ok_semantics() {
+        let shipping = MethodSpec {
+            fn_name: "answer_shipping_query".to_owned(),
+            method: "answerShippingQuery".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "shipping_query_id".to_owned(),
+                    field_name: "shipping_query_id".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "ok".to_owned(),
+                    field_name: "ok".to_owned(),
+                    required: true,
+                    type_raw: "Boolean".to_owned(),
+                    type_rust: "bool".to_owned(),
+                },
+                ParamSpec {
+                    name: "shipping_options".to_owned(),
+                    field_name: "shipping_options".to_owned(),
+                    required: false,
+                    type_raw: "Array of ShippingOption".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "error_message".to_owned(),
+                    field_name: "error_message".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+        let checkout = MethodSpec {
+            fn_name: "answer_pre_checkout_query".to_owned(),
+            method: "answerPreCheckoutQuery".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "pre_checkout_query_id".to_owned(),
+                    field_name: "pre_checkout_query_id".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "ok".to_owned(),
+                    field_name: "ok".to_owned(),
+                    required: true,
+                    type_raw: "Boolean".to_owned(),
+                    type_rust: "bool".to_owned(),
+                },
+                ParamSpec {
+                    name: "error_message".to_owned(),
+                    field_name: "error_message".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&shipping, &checkout]);
+        assert!(generated.contains("use crate::{Error, Result};"));
+        assert!(
+            generated.contains("answerShippingQuery requires `shipping_options` when `ok` is true")
+        );
+        assert!(
+            generated.contains("validate_required_items::<crate::types::payment::ShippingOption>")
+        );
+        assert!(
+            generated.contains(
+                "answerShippingQuery requires non-empty `error_message` when `ok` is false"
+            )
+        );
+        assert!(
+            generated
+                .contains("answerPreCheckoutQuery must omit `error_message` when `ok` is true")
+        );
+        assert!(generated.contains(
+            "answerPreCheckoutQuery requires non-empty `error_message` when `ok` is false"
+        ));
     }
 
     #[test]

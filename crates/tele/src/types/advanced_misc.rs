@@ -15,61 +15,7 @@ trait GeneratedValidate {
     fn validate_generated(&self) -> Result<()>;
 }
 
-impl GeneratedValidate for crate::types::common::ChatId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::NumericChatId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::common::UserId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
 impl GeneratedValidate for crate::types::common::MessageId {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::sticker::InputSticker {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::sticker::MaskPosition {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::AcceptedGiftTypes {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineKeyboardMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InlineQueryResult {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputChecklist {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }
@@ -81,61 +27,7 @@ impl GeneratedValidate for crate::types::telegram::InputPaidMedia {
     }
 }
 
-impl GeneratedValidate for crate::types::telegram::InputProfilePhoto {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::InputStoryContent {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::KeyboardButton {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::MenuButton {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::PassportElementError {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
 impl GeneratedValidate for crate::types::telegram::ReactionType {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyMarkup {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::ReplyParameters {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::StoryArea {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-impl GeneratedValidate for crate::types::telegram::SuggestedPostParameters {
     fn validate_generated(&self) -> Result<()> {
         self.validate()
     }

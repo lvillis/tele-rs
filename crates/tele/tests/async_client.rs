@@ -5,16 +5,19 @@ use std::time::Duration;
 
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{
-    AdvancedAnswerWebAppQueryRequest, AdvancedForwardMessagesRequest,
-    AdvancedGetAvailableGiftsRequest, AdvancedSendStickerRequest,
+    AdvancedAnswerPreCheckoutQueryRequest, AdvancedAnswerShippingQueryRequest,
+    AdvancedAnswerWebAppQueryRequest, AdvancedCreateInvoiceLinkRequest,
+    AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest,
+    AdvancedGetCustomEmojiStickersRequest, AdvancedSendStickerRequest,
+    AdvancedSetStickerKeywordsRequest,
 };
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
     GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
     InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto, InputMediaVideo,
     LabeledPrice, MessageId, ParseMode, SendDocumentRequest, SendMediaGroupRequest,
-    SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest, StickerFormat,
-    Update, UploadStickerFileRequest, WebAppData,
+    SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest,
+    ShippingOption, StickerFormat, Update, UploadStickerFileRequest, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -207,6 +210,115 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("empty generated string identifiers must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("", 100)],
+    );
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("invalid generated payment price entries must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedAnswerShippingQueryRequest::new("shipping-query", true);
+    request.shipping_options = Some(vec![ShippingOption::new(
+        "",
+        "shipping",
+        vec![LabeledPrice::new("shipping", 100)],
+    )]);
+    let error = match client
+        .advanced()
+        .answer_shipping_query::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("invalid generated shipping option entries must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedAnswerShippingQueryRequest::new("shipping-query", true);
+    let error = match client
+        .advanced()
+        .answer_shipping_query::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated shipping success requires shipping options".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedAnswerShippingQueryRequest::new("shipping-query", false);
+    request.shipping_options = Some(vec![ShippingOption::new(
+        "standard",
+        "shipping",
+        vec![LabeledPrice::new("shipping", 100)],
+    )]);
+    request.error_message = Some("unavailable".to_owned());
+    let error = match client
+        .advanced()
+        .answer_shipping_query::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated shipping failure must omit shipping options".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedAnswerPreCheckoutQueryRequest::new("checkout-query", false);
+    let error = match client
+        .advanced()
+        .answer_pre_checkout_query::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated checkout failure requires an error message".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedAnswerPreCheckoutQueryRequest::new("checkout-query", true);
+    request.error_message = Some("declined".to_owned());
+    let error = match client
+        .advanced()
+        .answer_pre_checkout_query::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated checkout success must omit error_message".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedGetCustomEmojiStickersRequest::new(vec!["".to_owned()]);
+    let error = match client
+        .advanced()
+        .get_custom_emoji_stickers::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("empty generated string array entries must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetStickerKeywordsRequest::new("sticker-file-id");
+    request.keywords = Some(vec!["ok".to_owned(), "\n".to_owned()]);
+    let error = match client
+        .advanced()
+        .set_sticker_keywords::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => {
+            return Err("invalid optional generated string array entries must be rejected".into());
+        }
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -846,6 +958,43 @@ async fn app_reply_text_quotes_source_message() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn app_reply_text_targets_inaccessible_callback_message() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":9,"date":1710000002,"chat":{"id":-10010,"type":"supergroup","title":"mods"},"text":"quoted"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"chat_id\":-10010",
+            "\"text\":\"quoted\"",
+            "\"reply_parameters\":{\"message_id\":55",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 45,
+        "callback_query": {
+            "id": "cb-inaccessible",
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "message": {
+                "message_id": 55,
+                "date": 0,
+                "chat": {"id": -10010, "type": "supergroup", "title": "mods"}
+            },
+            "chat_instance": "ci",
+            "data": "payload"
+        }
+    }))?;
+
+    let sent = client.app().reply(&update, "quoted")?.send().await?;
+    assert_eq!(sent.message_id.0, 9);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn app_reply_text_supports_business_message_updates() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":10,"date":1710000003,"chat":{"id":7001,"type":"private","first_name":"customer"},"text":"business reply"}}"#;
     let (base_url, handle) = spawn_server_with_checks(
@@ -914,6 +1063,115 @@ async fn app_reply_text_preserves_deleted_business_message_context() -> Result<(
         .send()
         .await?;
     assert_eq!(sent.message_id.0, 11);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_supports_business_connection_updates() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":12,"date":1710000005,"chat":{"id":7101,"type":"private","first_name":"customer"},"text":"business connected"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"business_connection_id\":\"business-2\"",
+            "\"chat_id\":7101",
+            "\"text\":\"business connected\"",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 50,
+        "business_connection": {
+            "id": "business-2",
+            "user": {"id": 7101, "is_bot": false, "first_name": "customer"},
+            "user_chat_id": 7101,
+            "date": 1710000005,
+            "is_enabled": true
+        }
+    }))?;
+
+    let sent = client
+        .app()
+        .reply(&update, "business connected")?
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 12);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_quotes_reaction_source_message() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":13,"date":1710000006,"chat":{"id":-10012,"type":"supergroup","title":"mods"},"text":"reaction reply"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"chat_id\":-10012",
+            "\"text\":\"reaction reply\"",
+            "\"reply_parameters\":{\"message_id\":88",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 51,
+        "message_reaction": {
+            "chat": {"id": -10012, "type": "supergroup", "title": "mods"},
+            "message_id": 88,
+            "user": {"id": 7102, "is_bot": false, "first_name": "reactor"},
+            "date": 1710000006,
+            "old_reaction": [],
+            "new_reaction": [{"type": "emoji", "emoji": "👍"}]
+        }
+    }))?;
+
+    let sent = client
+        .app()
+        .reply(&update, "reaction reply")?
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 13);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_supports_chat_boost_updates() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":14,"date":1710000007,"chat":{"id":-10013,"type":"supergroup","title":"mods"},"text":"boost reply"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &["\"chat_id\":-10013", "\"text\":\"boost reply\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 52,
+        "chat_boost": {
+            "chat": {"id": -10013, "type": "supergroup", "title": "mods"},
+            "boost": {
+                "boost_id": "boost-2",
+                "add_date": 1710000007,
+                "expiration_date": 1710086407,
+                "source": {
+                    "source": "premium",
+                    "user": {"id": 7103, "is_bot": false, "first_name": "booster"}
+                }
+            }
+        }
+    }))?;
+
+    let sent = client.app().reply(&update, "boost reply")?.send().await?;
+    assert_eq!(sent.message_id.0, 14);
 
     join_server(handle)?;
     Ok(())
