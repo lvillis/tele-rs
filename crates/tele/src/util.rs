@@ -1,4 +1,5 @@
 use http::HeaderMap;
+use std::time::Duration;
 use url::Url;
 
 use crate::Error;
@@ -127,9 +128,19 @@ pub(crate) fn request_id_from_headers(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+pub(crate) fn retry_after_or_backoff(
+    error: &Error,
+    backoff: impl FnOnce() -> Duration,
+) -> Duration {
+    error.retry_after().unwrap_or_else(backoff)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{body_snippet, redact_token, redact_url_credentials};
+    use std::time::Duration;
+
+    use super::{body_snippet, redact_token, redact_url_credentials, retry_after_or_backoff};
+    use crate::Error;
 
     #[test]
     fn redacts_token_in_text() {
@@ -150,5 +161,37 @@ mod tests {
     fn truncates_snippet() {
         let snippet = body_snippet(b"abcdefghijklmnopqrstuvwxyz", 5);
         assert_eq!(snippet.as_deref(), Some("abcde...(truncated)"));
+    }
+
+    #[test]
+    fn retry_delay_respects_provider_retry_after() {
+        let error = Error::Transport {
+            method: "sendMessage".to_owned(),
+            status: Some(429),
+            request_id: None,
+            retry_after: Some(Duration::from_secs(30)),
+            request_path: None,
+            message: "rate limited".into(),
+        };
+
+        let delay = retry_after_or_backoff(&error, || Duration::from_millis(200));
+
+        assert_eq!(delay, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn retry_delay_uses_local_backoff_without_retry_after() {
+        let error = Error::Transport {
+            method: "getMe".to_owned(),
+            status: Some(503),
+            request_id: None,
+            retry_after: None,
+            request_path: None,
+            message: "unavailable".into(),
+        };
+
+        let delay = retry_after_or_backoff(&error, || Duration::from_millis(200));
+
+        assert_eq!(delay, Duration::from_millis(200));
     }
 }

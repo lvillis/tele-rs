@@ -1,9 +1,9 @@
 use super::*;
 
 #[cfg(feature = "_async")]
-use super::bootstrap::retry_with_config_async;
+use super::retry::retry_method_async;
 #[cfg(feature = "_blocking")]
-use super::bootstrap::retry_with_config_blocking;
+use super::retry::retry_method_blocking;
 
 /// Raw Telegram API calling layer for async clients.
 #[cfg(feature = "_async")]
@@ -38,8 +38,10 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_async(&retry, || async {
-            self.client.call_method(method, payload).await
+        retry_method_async(method, &retry, || async {
+            self.client
+                .call_method_without_transport_retry(method, payload)
+                .await
         })
         .await
     }
@@ -57,8 +59,10 @@ impl RawApi {
     where
         R: DeserializeOwned,
     {
-        retry_with_config_async(&retry, || async {
-            self.client.call_method_no_params(method).await
+        retry_method_async(method, &retry, || async {
+            self.client
+                .call_method_no_params_without_transport_retry(method)
+                .await
         })
         .await
     }
@@ -110,9 +114,14 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_async(&retry, || async {
+        retry_method_async(method, &retry, || async {
             self.client
-                .call_method_multipart(method, payload, file_field_name, file)
+                .call_method_multipart_without_transport_retry(
+                    method,
+                    payload,
+                    file_field_name,
+                    file,
+                )
                 .await
         })
         .await
@@ -131,9 +140,14 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_async(&retry, || async {
+        retry_method_async(method, &retry, || async {
             self.client
-                .call_method_multipart_files(method, payload, skip_fields, files)
+                .call_method_multipart_files_without_transport_retry(
+                    method,
+                    payload,
+                    skip_fields,
+                    files,
+                )
                 .await
         })
         .await
@@ -173,7 +187,10 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_blocking(&retry, || self.client.call_method(method, payload))
+        retry_method_blocking(method, &retry, || {
+            self.client
+                .call_method_without_transport_retry(method, payload)
+        })
     }
 
     /// Calls any Telegram method without payload.
@@ -189,7 +206,10 @@ impl BlockingRawApi {
     where
         R: DeserializeOwned,
     {
-        retry_with_config_blocking(&retry, || self.client.call_method_no_params(method))
+        retry_method_blocking(method, &retry, || {
+            self.client
+                .call_method_no_params_without_transport_retry(method)
+        })
     }
 
     /// Calls any Telegram method with a multipart file part.
@@ -237,9 +257,13 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_blocking(&retry, || {
-            self.client
-                .call_method_multipart(method, payload, file_field_name, file)
+        retry_method_blocking(method, &retry, || {
+            self.client.call_method_multipart_without_transport_retry(
+                method,
+                payload,
+                file_field_name,
+                file,
+            )
         })
     }
 
@@ -256,9 +280,14 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_with_config_blocking(&retry, || {
+        retry_method_blocking(method, &retry, || {
             self.client
-                .call_method_multipart_files(method, payload, skip_fields, files)
+                .call_method_multipart_files_without_transport_retry(
+                    method,
+                    payload,
+                    skip_fields,
+                    files,
+                )
         })
     }
 }

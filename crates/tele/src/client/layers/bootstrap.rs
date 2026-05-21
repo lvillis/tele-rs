@@ -1,11 +1,16 @@
+use super::retry::backoff_delay;
 use super::*;
 use crate::ErrorClass;
+use crate::util::retry_after_or_backoff;
 
 /// Retry policy for setup/bootstrap helper methods.
 #[derive(Clone, Copy, Debug)]
 pub struct BootstrapRetryPolicy {
     pub max_attempts: usize,
     pub base_backoff: Duration,
+    /// Maximum locally computed exponential backoff.
+    ///
+    /// Provider supplied `Retry-After` values are honored separately and are not clamped by this.
     pub max_backoff: Duration,
     pub jitter_ratio: f32,
     /// When true, exhausting retries downgrades sync/apply failures into warnings.
@@ -297,29 +302,6 @@ where
     }
 }
 
-pub(crate) fn backoff_delay(
-    base: Duration,
-    max: Duration,
-    attempt: usize,
-    jitter_ratio: f32,
-) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(16);
-    let factor = 2u32.saturating_pow(exponent as u32);
-    let delay = base.saturating_mul(factor).min(max);
-    if delay.is_zero() || jitter_ratio <= 0.0 {
-        return delay;
-    }
-
-    let ratio = f64::from(jitter_ratio.clamp(0.0, 1.0));
-    let now_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |value| value.as_nanos());
-    let unit = (now_nanos % 10_000) as f64 / 10_000.0;
-    let multiplier = (1.0 - ratio) + (2.0 * ratio * unit);
-    let jittered = Duration::from_secs_f64(delay.as_secs_f64() * multiplier);
-    jittered.min(max)
-}
-
 pub(crate) fn bootstrap_success_diagnostics(
     status: BootstrapStepStatus,
     phase: BootstrapStepPhase,
@@ -394,7 +376,7 @@ where
                         attempt_count: attempt,
                     };
                 }
-                let delay = error.retry_after().unwrap_or_else(|| {
+                let delay = retry_after_or_backoff(&error, || {
                     backoff_delay(
                         policy.base_backoff,
                         policy.max_backoff,
@@ -402,40 +384,7 @@ where
                         policy.jitter_ratio,
                     )
                 });
-                tokio::time::sleep(delay.min(policy.max_backoff)).await;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "_async")]
-pub(crate) async fn retry_with_config_async<T, F, Fut>(retry: &RetryConfig, mut op: F) -> Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
-{
-    retry.validate()?;
-    let max_attempts = retry.max_attempts;
-    let mut attempt = 0;
-
-    loop {
-        attempt += 1;
-        match op().await {
-            Ok(value) => return Ok(value),
-            Err(error) => {
-                let should_retry = error.is_retryable() && attempt < max_attempts;
-                if !should_retry {
-                    return Err(error);
-                }
-                let delay = error.retry_after().unwrap_or_else(|| {
-                    backoff_delay(
-                        retry.base_backoff,
-                        retry.max_backoff,
-                        attempt,
-                        retry.jitter_ratio as f32,
-                    )
-                });
-                tokio::time::sleep(delay.min(retry.max_backoff)).await;
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -476,7 +425,7 @@ where
                         attempt_count: attempt,
                     };
                 }
-                let delay = error.retry_after().unwrap_or_else(|| {
+                let delay = retry_after_or_backoff(&error, || {
                     backoff_delay(
                         policy.base_backoff,
                         policy.max_backoff,
@@ -484,39 +433,7 @@ where
                         policy.jitter_ratio,
                     )
                 });
-                std::thread::sleep(delay.min(policy.max_backoff));
-            }
-        }
-    }
-}
-
-#[cfg(feature = "_blocking")]
-pub(crate) fn retry_with_config_blocking<T, F>(retry: &RetryConfig, mut op: F) -> Result<T>
-where
-    F: FnMut() -> Result<T>,
-{
-    retry.validate()?;
-    let max_attempts = retry.max_attempts;
-    let mut attempt = 0;
-
-    loop {
-        attempt += 1;
-        match op() {
-            Ok(value) => return Ok(value),
-            Err(error) => {
-                let should_retry = error.is_retryable() && attempt < max_attempts;
-                if !should_retry {
-                    return Err(error);
-                }
-                let delay = error.retry_after().unwrap_or_else(|| {
-                    backoff_delay(
-                        retry.base_backoff,
-                        retry.max_backoff,
-                        attempt,
-                        retry.jitter_ratio as f32,
-                    )
-                });
-                std::thread::sleep(delay.min(retry.max_backoff));
+                std::thread::sleep(delay);
             }
         }
     }

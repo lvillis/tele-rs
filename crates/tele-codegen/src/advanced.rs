@@ -840,13 +840,12 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let uses_items_validator = body.contains("validate_items(");
     let uses_positive_i64_validator = body.contains("validate_positive_i64(");
     let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
-    let uses_error = uses_required_string_validator
+    let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
-        || uses_required_message_ids_validator
-        || uses_required_items_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator;
+    let uses_error = uses_required_message_ids_validator || uses_required_items_validator;
     let uses_result = body.contains("fn validate(&self) -> Result<()>")
         || uses_required_string_validator
         || uses_string_id_validator
@@ -879,106 +878,31 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "use crate::Result;");
         let _ = writeln!(&mut out);
     }
+    if uses_shared_validation {
+        let _ = writeln!(&mut out, "use crate::types::validation::{{");
+        if uses_non_negative_i64_validator {
+            let _ = writeln!(
+                &mut out,
+                "    non_negative_i64 as validate_non_negative_i64,"
+            );
+        }
+        if uses_positive_i64_validator {
+            let _ = writeln!(&mut out, "    positive_i64 as validate_positive_i64,");
+        }
+        if uses_required_vec_validator {
+            let _ = writeln!(&mut out, "    required_len as validate_required_vec,");
+        }
+        if uses_required_string_validator {
+            let _ = writeln!(&mut out, "    required_string as validate_required_string,");
+        }
+        if uses_string_id_validator {
+            let _ = writeln!(&mut out, "    string_id as validate_string_id,");
+        }
+        let _ = writeln!(&mut out, "}};");
+        let _ = writeln!(&mut out);
+    }
     let _ = writeln!(&mut out, "use super::AdvancedRequest;");
     let _ = writeln!(&mut out);
-    if uses_required_string_validator {
-        let _ = writeln!(
-            &mut out,
-            "fn validate_required_string(field: &str, value: &str) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    if value.trim().is_empty() {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} cannot be empty\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    Ok(())");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
-    }
-    if uses_string_id_validator {
-        let _ = writeln!(
-            &mut out,
-            "fn validate_string_id(field: &str, value: &str) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    if value.trim().is_empty() {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} cannot be empty\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out, "    if value.chars().any(char::is_control) {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} must not contain control characters\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    Ok(())");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
-    }
-    if uses_required_vec_validator {
-        let _ = writeln!(
-            &mut out,
-            "fn validate_required_vec(field: &str, len: usize) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    if len == 0 {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} cannot be empty\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    Ok(())");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
-    }
-    if uses_positive_i64_validator {
-        let _ = writeln!(
-            &mut out,
-            "fn validate_positive_i64(field: &str, value: i64) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    if value <= 0 {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} must be greater than 0\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    Ok(())");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
-    }
-    if uses_non_negative_i64_validator {
-        let _ = writeln!(
-            &mut out,
-            "fn validate_non_negative_i64(field: &str, value: i64) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    if value < 0 {{");
-        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
-        let _ = writeln!(
-            &mut out,
-            "            reason: format!(\"{{field}} cannot be negative\"),"
-        );
-        let _ = writeln!(&mut out, "        }});");
-        let _ = writeln!(&mut out, "    }}");
-        let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    Ok(())");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
-    }
     if uses_items_validator || uses_required_items_validator {
         let _ = writeln!(&mut out, "trait GeneratedValidate {{");
         let _ = writeln!(&mut out, "    fn validate_generated(&self) -> Result<()>;");
@@ -1418,8 +1342,8 @@ mod tests {
         };
 
         let generated = generate_domain_module(&[&method]);
-        assert!(generated.contains("fn validate_positive_i64("));
-        assert!(generated.contains("fn validate_non_negative_i64("));
+        assert!(generated.contains("positive_i64 as validate_positive_i64"));
+        assert!(generated.contains("non_negative_i64 as validate_non_negative_i64"));
         assert!(generated.contains("validate_positive_i64(\"star_count\", self.star_count)?;"));
         assert!(generated.contains("validate_positive_i64(\"limit\", value)?;"));
         assert!(generated.contains("validate_non_negative_i64(\"position\", self.position)?;"));

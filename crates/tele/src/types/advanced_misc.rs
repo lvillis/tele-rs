@@ -4,52 +4,12 @@ use serde_json::Value;
 
 use crate::{Error, Result};
 
+use crate::types::validation::{
+    non_negative_i64 as validate_non_negative_i64, positive_i64 as validate_positive_i64,
+    required_string as validate_required_string, string_id as validate_string_id,
+};
+
 use super::AdvancedRequest;
-
-fn validate_required_string(field: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} cannot be empty"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_string_id(field: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} cannot be empty"),
-        });
-    }
-    if value.chars().any(char::is_control) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} must not contain control characters"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
-    if value <= 0 {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} must be greater than 0"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_non_negative_i64(field: &str, value: i64) -> Result<()> {
-    if value < 0 {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} cannot be negative"),
-        });
-    }
-
-    Ok(())
-}
 
 trait GeneratedValidate {
     fn validate_generated(&self) -> Result<()>;

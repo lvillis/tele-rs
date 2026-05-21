@@ -49,6 +49,7 @@ bytes = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
 graviola = { workspace = true }
 http = { workspace = true }
+httpdate = { workspace = true }
 reqx = { workspace = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true }

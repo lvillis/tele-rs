@@ -10,8 +10,8 @@ use tele::types::{
     WebAppData,
 };
 use tele::{
-    BanMemberOptions, BlockingClient, Error, ErrorClass, MenuButtonConfig, RestrictMemberOptions,
-    RetryConfig,
+    BanMemberOptions, BlockingClient, BootstrapPlan, BootstrapRetryPolicy, Error, ErrorClass,
+    MenuButtonConfig, RestrictMemberOptions, RetryConfig,
 };
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -41,6 +41,39 @@ fn spawn_server_with_checks(
     }
     let server = FakeTelegramServer::single(expectation)?;
     Ok((server.base_url().to_owned(), server))
+}
+
+fn spawn_server_script(
+    script: Vec<(&'static str, u16, &'static str)>,
+) -> Result<(String, TestServer), DynError> {
+    let expectations = script
+        .into_iter()
+        .map(|(expected_path, response_status, response_body)| {
+            RequestExpectation::post(expected_path).respond_json(response_status, response_body)
+        })
+        .collect();
+    let server = FakeTelegramServer::start(expectations)?;
+    Ok((server.base_url().to_owned(), server))
+}
+
+fn fast_retry(max_attempts: usize, allow_non_idempotent_retries: bool) -> RetryConfig {
+    let mut retry = RetryConfig::default();
+    retry.max_attempts = max_attempts;
+    retry.base_backoff = Duration::from_millis(1);
+    retry.max_backoff = Duration::from_millis(1);
+    retry.jitter_ratio = 0.0;
+    retry.allow_non_idempotent_retries = allow_non_idempotent_retries;
+    retry
+}
+
+fn fast_bootstrap_retry(max_attempts: usize) -> BootstrapRetryPolicy {
+    BootstrapRetryPolicy {
+        max_attempts,
+        base_backoff: Duration::from_millis(1),
+        max_backoff: Duration::from_millis(1),
+        jitter_ratio: 0.0,
+        continue_on_failure: false,
+    }
 }
 
 fn join_server(server: TestServer) -> Result<(), DynError> {
@@ -289,6 +322,64 @@ async fn blocking_raw_retry_rejects_invalid_policy_before_request() -> Result<()
         Err(error) => error,
     };
     assert!(matches!(error, Error::Configuration { .. }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_raw_retry_does_not_multiply_transport_retries() -> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 502, failure),
+    ])?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(3, true))?
+        .build_blocking()?;
+
+    let error = match client
+        .raw()
+        .call_no_params_with_retry::<tele::types::User>("getMe", fast_retry(2, false))
+    {
+        Ok(_) => return Err("retry unexpectedly succeeded after method retry budget".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(502));
+    assert_eq!(server.finish()?.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_setup_bootstrap_retry_does_not_multiply_transport_retries() -> Result<(), DynError>
+{
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 502, failure),
+    ])?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(3, true))?
+        .build_blocking()?;
+
+    let outcome = client.control().setup().bootstrap_with_retry(
+        &BootstrapPlan::new().fail_fast_get_me(),
+        fast_bootstrap_retry(2),
+    );
+    let error = outcome
+        .error()
+        .ok_or("bootstrap retry unexpectedly succeeded")?;
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(502));
+    assert_eq!(outcome.report.me.diagnostics.attempt_count, 2);
+    assert_eq!(server.finish()?.len(), 2);
 
     Ok(())
 }

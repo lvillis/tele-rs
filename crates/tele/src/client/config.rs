@@ -20,6 +20,9 @@ const DEFAULT_BODY_SNIPPET_LIMIT: usize = 2048;
 pub struct RetryConfig {
     pub max_attempts: usize,
     pub base_backoff: Duration,
+    /// Maximum locally computed exponential backoff.
+    ///
+    /// Provider supplied `Retry-After` values are honored separately and are not clamped by this.
     pub max_backoff: Duration,
     pub jitter_ratio: f64,
     pub allow_non_idempotent_retries: bool,

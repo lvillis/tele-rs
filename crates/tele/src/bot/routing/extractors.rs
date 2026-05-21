@@ -23,16 +23,7 @@ impl CommandData {
     }
 
     pub fn is_addressed_to(&self, bot_username: Option<&str>) -> bool {
-        let Some(mention) = self.mention.as_deref() else {
-            return true;
-        };
-        let Some(bot_username) = bot_username else {
-            return false;
-        };
-        let Some(expected) = normalize_bot_username(bot_username) else {
-            return false;
-        };
-        mention.eq_ignore_ascii_case(expected.as_str())
+        command_is_addressed_to(self.mention.as_deref(), bot_username)
     }
 }
 
@@ -337,6 +328,38 @@ pub fn parse_command_text(text: &str) -> Option<CommandData> {
     parse_command_text_for_bot(text, None)
 }
 
+struct ParsedCommandPrefix<'a> {
+    name: &'a str,
+    mention: Option<String>,
+    args: &'a str,
+}
+
+fn parse_command_prefix(text: &str) -> Option<ParsedCommandPrefix<'_>> {
+    let text = text.trim_start();
+    let token = text.split_whitespace().next()?;
+    let (name, mention) = parse_command_token(token)?;
+    let args = text[token.len()..].trim();
+
+    Some(ParsedCommandPrefix {
+        name,
+        mention,
+        args,
+    })
+}
+
+fn command_is_addressed_to(mention: Option<&str>, bot_username: Option<&str>) -> bool {
+    let Some(mention) = mention else {
+        return true;
+    };
+    let Some(bot_username) = bot_username else {
+        return false;
+    };
+    let Some(expected) = normalize_bot_username(bot_username) else {
+        return false;
+    };
+    mention.eq_ignore_ascii_case(expected.as_str())
+}
+
 /// Parses a slash command from raw message text with optional bot-username targeting.
 ///
 /// When a command contains `@botname`, it is accepted only if `bot_username`
@@ -344,20 +367,16 @@ pub fn parse_command_text(text: &str) -> Option<CommandData> {
 /// Telegram bot mention rules: 5-32 ASCII letters, digits, or underscores, and
 /// an ending `bot` suffix.
 pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Option<CommandData> {
-    let token = text.split_whitespace().next()?;
-    let (name, mention) = parse_command_token(token)?;
-
-    let args = text[token.len()..].trim().to_owned();
-    let command = CommandData {
-        name: name.to_owned(),
-        mention,
-        args,
-    };
-    if command.is_addressed_to(bot_username) {
-        Some(command)
-    } else {
-        None
+    let parsed = parse_command_prefix(text)?;
+    if !command_is_addressed_to(parsed.mention.as_deref(), bot_username) {
+        return None;
     }
+
+    Some(CommandData {
+        name: parsed.name.to_owned(),
+        mention: parsed.mention,
+        args: parsed.args.to_owned(),
+    })
 }
 
 pub(crate) fn normalize_bot_username(value: &str) -> Option<String> {
@@ -387,6 +406,21 @@ pub(crate) fn parse_command_token(token: &str) -> Option<(&str, Option<String>)>
     } else {
         None
     }
+}
+
+pub(crate) fn validate_route_command_name(command: &str) -> Result<String> {
+    if command.starts_with('/') || command.contains('@') {
+        return Err(invalid_request(
+            "command route name must be the bare command without `/` or `@bot`",
+        ));
+    }
+    if !is_valid_command_name(command) {
+        return Err(invalid_request(format!(
+            "invalid command route name `{command}`: expected 1-32 lowercase ASCII letters, digits, or `_`, starting with a lowercase letter"
+        )));
+    }
+
+    Ok(command.to_owned())
 }
 
 fn is_valid_command_name(name: &str) -> bool {
@@ -715,19 +749,8 @@ pub fn extract_command_for_bot<'a>(
     update: &'a Update,
     bot_username: Option<&str>,
 ) -> Option<&'a str> {
-    let text = extract_text(update)?;
-    let token = text.split_whitespace().next()?;
-    let (name, mention) = parse_command_token(token)?;
-    let command = CommandData {
-        name: name.to_owned(),
-        mention,
-        args: text[token.len()..].trim().to_owned(),
-    };
-    if command.is_addressed_to(bot_username) {
-        Some(name)
-    } else {
-        None
-    }
+    let parsed = parse_command_prefix(extract_text(update)?)?;
+    command_is_addressed_to(parsed.mention.as_deref(), bot_username).then_some(parsed.name)
 }
 
 /// Returns command arguments as a trimmed string slice.
@@ -740,19 +763,8 @@ pub fn extract_command_args_for_bot<'a>(
     update: &'a Update,
     bot_username: Option<&str>,
 ) -> Option<&'a str> {
-    let text = extract_text(update)?;
-    let token = text.split_whitespace().next()?;
-    let (name, mention) = parse_command_token(token)?;
-    let command_data = CommandData {
-        name: name.to_owned(),
-        mention,
-        args: text[token.len()..].trim().to_owned(),
-    };
-    if command_data.is_addressed_to(bot_username) {
-        Some(text[token.len()..].trim())
-    } else {
-        None
-    }
+    let parsed = parse_command_prefix(extract_text(update)?)?;
+    command_is_addressed_to(parsed.mention.as_deref(), bot_username).then_some(parsed.args)
 }
 
 /// Returns parsed command with owned command name and args.

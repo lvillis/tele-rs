@@ -38,6 +38,7 @@ mod membership;
 mod menu;
 mod moderation;
 mod raw;
+mod retry;
 mod setup;
 mod support;
 mod typed;

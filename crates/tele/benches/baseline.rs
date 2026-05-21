@@ -176,12 +176,13 @@ fn benchmark_router_dispatch(c: &mut Criterion) {
     };
 
     let mut command_router = Router::new();
-    command_router.command_route("start").handle(
-        |_context: BotContext, update: Update| async move {
-            let _ = black_box(update.update_id);
-            Ok(())
-        },
-    );
+    let Ok(command_route) = command_router.command_route("start") else {
+        return;
+    };
+    command_route.handle(|_context: BotContext, update: Update| async move {
+        let _ = black_box(update.update_id);
+        Ok(())
+    });
 
     let mut middleware_router = Router::new();
     middleware_router.middleware(|context, update, next| async move {

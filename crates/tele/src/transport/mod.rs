@@ -16,7 +16,7 @@ use std::io::Read;
 use bytes::Bytes;
 #[cfg(feature = "_async")]
 use futures_core::Stream;
-use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
+use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
 use http::{HeaderMap, StatusCode};
 use reqx::advanced::RateLimitPolicy;
 use reqx::prelude::{RedirectPolicy, RetryPolicy, StatusPolicy};
@@ -34,6 +34,35 @@ use crate::util::{
 };
 
 static LOCAL_REQUEST_ID_SEQ: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TransportRetryMode {
+    Inherit,
+    Disabled,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TransportRequestConfig<'a> {
+    defaults: &'a RequestDefaults,
+    retry_mode: TransportRetryMode,
+}
+
+impl<'a> TransportRequestConfig<'a> {
+    pub(crate) fn new(defaults: &'a RequestDefaults, retry_mode: TransportRetryMode) -> Self {
+        Self {
+            defaults,
+            retry_mode,
+        }
+    }
+
+    pub(crate) fn defaults(&self) -> &'a RequestDefaults {
+        self.defaults
+    }
+
+    pub(crate) fn retry_mode(&self) -> TransportRetryMode {
+        self.retry_mode
+    }
+}
 
 fn is_configuration_error_code(code: reqx::ErrorCode) -> bool {
     matches!(
@@ -98,6 +127,14 @@ where
         });
     }
 
+    let mut parameters = envelope.parameters;
+    if let Some(retry_after) = retry_after_seconds_from_headers(headers) {
+        let parameters = parameters.get_or_insert_with(ResponseParameters::default);
+        if parameters.retry_after.is_none() {
+            parameters.retry_after = Some(retry_after);
+        }
+    }
+
     Err(Error::Api {
         method: method.to_owned(),
         status: Some(status.as_u16()),
@@ -107,9 +144,24 @@ where
             .description
             .unwrap_or_else(|| "telegram api returned an unknown error".to_owned())
             .into(),
-        parameters: envelope.parameters.map(Box::new),
+        parameters: parameters.map(Box::new),
         body_snippet: snippet.map(Into::into),
     })
+}
+
+fn retry_after_seconds_from_headers(headers: &HeaderMap) -> Option<u64> {
+    retry_after_seconds_from_headers_at(headers, SystemTime::now())
+}
+
+fn retry_after_seconds_from_headers_at(headers: &HeaderMap, now: SystemTime) -> Option<u64> {
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+
+    let deadline = httpdate::parse_http_date(value).ok()?;
+    let delay = deadline.duration_since(now).unwrap_or(Duration::ZERO);
+    Some(delay.as_secs() + u64::from(delay.subsec_nanos() > 0))
 }
 
 pub(crate) fn local_transport_request_id(method: &str) -> String {
@@ -697,7 +749,7 @@ pub(crate) fn build_multipart_payload_many(
             reason: "multipart request requires at least one file part".to_owned(),
         });
     }
-    validate_multipart_file_fields(files)?;
+    validate_multipart_parts(fields, files)?;
 
     let boundary = next_multipart_boundary(fields, files)?;
 
@@ -835,19 +887,43 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window == needle)
 }
 
-fn validate_multipart_file_fields(files: &[(&str, &UploadFile)]) -> Result<(), Error> {
+fn validate_multipart_parts(
+    fields: &[(String, String)],
+    files: &[(&str, &UploadFile)],
+) -> Result<(), Error> {
     let mut names = BTreeSet::new();
-    for (name, _) in files {
-        if name.is_empty() {
+
+    for (name, _) in fields {
+        validate_multipart_part_name("multipart field name", name)?;
+        if !names.insert(name.as_str()) {
             return Err(Error::InvalidRequest {
-                reason: "multipart file field name cannot be empty".to_owned(),
+                reason: format!("duplicate multipart field `{name}`"),
             });
         }
+    }
+
+    for (name, _) in files {
+        validate_multipart_part_name("multipart file field name", name)?;
         if !names.insert(*name) {
             return Err(Error::InvalidRequest {
-                reason: format!("duplicate multipart file field `{name}`"),
+                reason: format!("duplicate multipart field `{name}`"),
             });
         }
+    }
+
+    Ok(())
+}
+
+fn validate_multipart_part_name(label: &str, name: &str) -> Result<(), Error> {
+    if name.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} cannot be empty"),
+        });
+    }
+    if name.chars().any(char::is_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{label} must not contain control characters"),
+        });
     }
 
     Ok(())
@@ -865,12 +941,17 @@ fn escape_quoted_header_value(label: &str, value: &str) -> Result<String, Error>
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    use std::time::{Duration, SystemTime};
 
     use super::{
         build_multipart_payload, build_multipart_payload_many, multipart_boundary_conflicts,
-        serialize_multipart_fields,
+        parse_telegram_response, retry_after_seconds_from_headers_at, serialize_multipart_fields,
     };
+    use crate::Error;
     use crate::types::upload::UploadFile;
+    use http::StatusCode;
+    use http::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+    use serde_json::Value;
 
     #[derive(serde::Serialize)]
     struct Payload {
@@ -901,6 +982,84 @@ mod tests {
                 .iter()
                 .any(|(key, value)| key == "text" && value == "hello")
         );
+    }
+
+    #[test]
+    fn api_error_uses_http_retry_after_header_when_parameters_are_absent() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
+        let body = br#"{"ok":false,"error_code":429,"description":"Too Many Requests"}"#;
+
+        let result = parse_telegram_response::<Value>(
+            "sendMessage",
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        assert!(result.is_err());
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::Api { .. }));
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn api_error_parameters_retry_after_wins_over_http_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
+        let body = br#"{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":3}}"#;
+
+        let result = parse_telegram_response::<Value>(
+            "sendMessage",
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        assert!(result.is_err());
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::Api { .. }));
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn retry_after_header_accepts_http_date() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let retry_at = now + Duration::from_secs(9);
+        let retry_after = httpdate::fmt_http_date(retry_at);
+        let mut headers = HeaderMap::new();
+        let header_value = match HeaderValue::from_str(&retry_after) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        headers.insert(RETRY_AFTER, header_value);
+
+        assert_eq!(retry_after_seconds_from_headers_at(&headers, now), Some(9));
+    }
+
+    #[test]
+    fn retry_after_header_past_http_date_retries_immediately() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let retry_at = now - Duration::from_secs(9);
+        let retry_after = httpdate::fmt_http_date(retry_at);
+        let mut headers = HeaderMap::new();
+        let header_value = match HeaderValue::from_str(&retry_after) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        headers.insert(RETRY_AFTER, header_value);
+
+        assert_eq!(retry_after_seconds_from_headers_at(&headers, now), Some(0));
     }
 
     #[test]
@@ -1009,6 +1168,30 @@ mod tests {
         assert!(
             build_multipart_payload_many(&[("chat_id".to_owned(), "1".to_owned())], &[("", &file)])
                 .is_err()
+        );
+        assert!(
+            build_multipart_payload_many(
+                &[("document".to_owned(), "attach://document".to_owned())],
+                &[("document", &file)]
+            )
+            .is_err()
+        );
+        assert!(
+            build_multipart_payload_many(
+                &[
+                    ("chat_id".to_owned(), "1".to_owned()),
+                    ("chat_id".to_owned(), "2".to_owned())
+                ],
+                &[("document", &file)]
+            )
+            .is_err()
+        );
+        assert!(
+            build_multipart_payload_many(
+                &[("".to_owned(), "1".to_owned())],
+                &[("document", &file)]
+            )
+            .is_err()
         );
     }
 

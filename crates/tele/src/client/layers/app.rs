@@ -1,6 +1,4 @@
-use super::support::{
-    callback_query_id, reply_business_connection_id, reply_chat_id, reply_parameters,
-};
+use super::support::{ReplyContext, callback_query_id, reply_context};
 use super::*;
 
 fn text_send_request(
@@ -11,16 +9,16 @@ fn text_send_request(
 }
 
 trait ReplyContextRequest {
-    fn apply_reply_context(&mut self, update: &Update);
+    fn apply_reply_context(&mut self, context: &ReplyContext);
 }
 
 macro_rules! impl_reply_context_request {
     ($($ty:ty),* $(,)?) => {
         $(
             impl ReplyContextRequest for $ty {
-                fn apply_reply_context(&mut self, update: &Update) {
-                    self.reply_parameters = reply_parameters(update);
-                    self.business_connection_id = reply_business_connection_id(update);
+                fn apply_reply_context(&mut self, context: &ReplyContext) {
+                    self.reply_parameters = context.reply_parameters.clone();
+                    self.business_connection_id = context.business_connection_id.clone();
                 }
             }
         )*
@@ -39,15 +37,28 @@ impl_reply_context_request!(
     SendMediaGroupRequest
 );
 
-fn apply_reply_context(request: &mut impl ReplyContextRequest, update: &Update) {
-    request.apply_reply_context(update);
+fn build_reply_request<R>(update: &Update, build: impl FnOnce(i64) -> R) -> Result<R>
+where
+    R: ReplyContextRequest,
+{
+    let context = reply_context(update)?;
+    let mut request = build(context.chat_id);
+    request.apply_reply_context(&context);
+    Ok(request)
+}
+
+fn try_build_reply_request<R>(update: &Update, build: impl FnOnce(i64) -> Result<R>) -> Result<R>
+where
+    R: ReplyContextRequest,
+{
+    let context = reply_context(update)?;
+    let mut request = build(context.chat_id)?;
+    request.apply_reply_context(&context);
+    Ok(request)
 }
 
 fn reply_text_request(update: &Update, text: impl Into<String>) -> Result<SendMessageRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = text_send_request(chat_id, text)?;
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    try_build_reply_request(update, |chat_id| text_send_request(chat_id, text))
 }
 
 fn photo_send_request(chat_id: impl Into<ChatId>, photo: impl Into<String>) -> SendPhotoRequest {
@@ -59,17 +70,11 @@ fn photo_upload_request(chat_id: impl Into<ChatId>) -> SendPhotoRequest {
 }
 
 fn reply_photo_request(update: &Update, photo: impl Into<String>) -> Result<SendPhotoRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = photo_send_request(chat_id, photo);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| photo_send_request(chat_id, photo))
 }
 
 fn reply_photo_upload_request(update: &Update) -> Result<SendPhotoRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = photo_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, photo_upload_request)
 }
 
 fn document_send_request(
@@ -87,17 +92,11 @@ fn reply_document_request(
     update: &Update,
     document: impl Into<String>,
 ) -> Result<SendDocumentRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = document_send_request(chat_id, document);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| document_send_request(chat_id, document))
 }
 
 fn reply_document_upload_request(update: &Update) -> Result<SendDocumentRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = document_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, document_upload_request)
 }
 
 fn video_send_request(chat_id: impl Into<ChatId>, video: impl Into<String>) -> SendVideoRequest {
@@ -109,17 +108,11 @@ fn video_upload_request(chat_id: impl Into<ChatId>) -> SendVideoRequest {
 }
 
 fn reply_video_request(update: &Update, video: impl Into<String>) -> Result<SendVideoRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = video_send_request(chat_id, video);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| video_send_request(chat_id, video))
 }
 
 fn reply_video_upload_request(update: &Update) -> Result<SendVideoRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = video_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, video_upload_request)
 }
 
 fn audio_send_request(chat_id: impl Into<ChatId>, audio: impl Into<String>) -> SendAudioRequest {
@@ -131,17 +124,11 @@ fn audio_upload_request(chat_id: impl Into<ChatId>) -> SendAudioRequest {
 }
 
 fn reply_audio_request(update: &Update, audio: impl Into<String>) -> Result<SendAudioRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = audio_send_request(chat_id, audio);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| audio_send_request(chat_id, audio))
 }
 
 fn reply_audio_upload_request(update: &Update) -> Result<SendAudioRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = audio_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, audio_upload_request)
 }
 
 fn animation_send_request(
@@ -159,17 +146,11 @@ fn reply_animation_request(
     update: &Update,
     animation: impl Into<String>,
 ) -> Result<SendAnimationRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = animation_send_request(chat_id, animation);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| animation_send_request(chat_id, animation))
 }
 
 fn reply_animation_upload_request(update: &Update) -> Result<SendAnimationRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = animation_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, animation_upload_request)
 }
 
 fn voice_send_request(chat_id: impl Into<ChatId>, voice: impl Into<String>) -> SendVoiceRequest {
@@ -181,17 +162,11 @@ fn voice_upload_request(chat_id: impl Into<ChatId>) -> SendVoiceRequest {
 }
 
 fn reply_voice_request(update: &Update, voice: impl Into<String>) -> Result<SendVoiceRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = voice_send_request(chat_id, voice);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| voice_send_request(chat_id, voice))
 }
 
 fn reply_voice_upload_request(update: &Update) -> Result<SendVoiceRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = voice_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, voice_upload_request)
 }
 
 fn sticker_send_request(
@@ -209,17 +184,11 @@ fn reply_sticker_request(
     update: &Update,
     sticker: impl Into<String>,
 ) -> Result<SendStickerRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = sticker_send_request(chat_id, sticker);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, |chat_id| sticker_send_request(chat_id, sticker))
 }
 
 fn reply_sticker_upload_request(update: &Update) -> Result<SendStickerRequest> {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = sticker_upload_request(chat_id);
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    build_reply_request(update, sticker_upload_request)
 }
 
 fn media_group_send_request<I, M>(
@@ -238,10 +207,7 @@ where
     I: IntoIterator<Item = M>,
     M: Into<InputMedia>,
 {
-    let chat_id = reply_chat_id(update)?;
-    let mut request = media_group_send_request(chat_id, media)?;
-    apply_reply_context(&mut request, update);
-    Ok(request)
+    try_build_reply_request(update, |chat_id| media_group_send_request(chat_id, media))
 }
 
 fn callback_answer_request(

@@ -17,6 +17,8 @@ type ExtractedFilterFn<E> = Arc<dyn Fn(&E, &Update) -> bool + Send + Sync + 'sta
 type ExtractedGuardFn<E> = Arc<dyn Fn(&E, &Update) -> HandlerResult + Send + Sync + 'static>;
 type ExtractedMapFn<E, T> = Arc<dyn Fn(E, &Update) -> Option<T> + Send + Sync + 'static>;
 
+const ROUTE_THROTTLE_GC_INTERVAL: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 struct Route {
     filter: RouteFilterFn,
@@ -277,7 +279,27 @@ pub enum ThrottleScope {
 
 #[derive(Clone, Default)]
 struct RouteThrottleStore {
-    inner: Arc<StdRwLock<HashMap<String, VecDeque<Instant>>>>,
+    inner: Arc<StdRwLock<RouteThrottleState>>,
+}
+
+#[derive(Default)]
+struct RouteThrottleState {
+    entries: HashMap<String, VecDeque<Instant>>,
+    next_gc_at: Option<Instant>,
+}
+
+impl RouteThrottleState {
+    fn prune_expired(&mut self, now: Instant, window: Duration) {
+        if self.next_gc_at.is_some_and(|deadline| now < deadline) {
+            return;
+        }
+
+        self.entries.retain(|_, history| {
+            prune_throttle_history(history, now, window);
+            !history.is_empty()
+        });
+        self.next_gc_at = Some(now + ROUTE_THROTTLE_GC_INTERVAL.min(window));
+    }
 }
 
 impl RouteThrottleStore {
@@ -291,14 +313,10 @@ impl RouteThrottleStore {
             .inner
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        inner.prune_expired(now, window);
         let (allowed, remove_key) = {
-            let history = inner.entry(key.clone()).or_default();
-            while history
-                .front()
-                .is_some_and(|instant| now.saturating_duration_since(*instant) >= window)
-            {
-                let _ = history.pop_front();
-            }
+            let history = inner.entries.entry(key.clone()).or_default();
+            prune_throttle_history(history, now, window);
             let allowed = history.len() < limit;
             if allowed {
                 history.push_back(now);
@@ -306,9 +324,18 @@ impl RouteThrottleStore {
             (allowed, history.is_empty())
         };
         if remove_key {
-            let _ = inner.remove(&key);
+            let _ = inner.entries.remove(&key);
         }
         allowed
+    }
+}
+
+fn prune_throttle_history(history: &mut VecDeque<Instant>, now: Instant, window: Duration) {
+    while history
+        .front()
+        .is_some_and(|instant| now.saturating_duration_since(*instant) >= window)
+    {
+        let _ = history.pop_front();
     }
 }
 
@@ -411,13 +438,13 @@ impl RouteDslConfig {
     }
 
     fn throttle(&mut self, scope: ThrottleScope, limit: u32, window: Duration) {
-        if window.is_zero() {
+        if limit == 0 || window.is_zero() {
             return;
         }
 
         let store = RouteThrottleStore::default();
         let route_label = self.route_label.clone();
-        let limit = limit.max(1) as usize;
+        let limit = limit as usize;
         self.push_guard(move |_context, update| {
             let store = store.clone();
             let route_label = route_label.clone();
@@ -637,7 +664,7 @@ impl Router {
         CommandInputRouteBuilder::new(self)
     }
 
-    pub fn command_route(&mut self, command: impl Into<String>) -> CommandRouteBuilder<'_> {
+    pub fn command_route(&mut self, command: impl Into<String>) -> Result<CommandRouteBuilder<'_>> {
         CommandRouteBuilder::new(self, command.into())
     }
 
@@ -1019,5 +1046,48 @@ impl Router {
         }
 
         wrapped
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn throttle_entry_count(store: &RouteThrottleStore) -> usize {
+        store
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entries
+            .len()
+    }
+
+    #[test]
+    fn route_throttle_zero_limit_is_noop() {
+        let store = RouteThrottleStore::default();
+        let window = Duration::from_secs(60);
+
+        assert!(store.allow("actor:1".to_owned(), 0, window));
+        assert!(store.allow("actor:1".to_owned(), 0, window));
+        assert_eq!(throttle_entry_count(&store), 0);
+    }
+
+    #[test]
+    fn route_throttle_prunes_expired_inactive_keys() {
+        let store = RouteThrottleStore::default();
+        let window = Duration::from_millis(2);
+
+        assert!(store.allow("actor:1".to_owned(), 1, window));
+        assert_eq!(throttle_entry_count(&store), 1);
+
+        std::thread::sleep(Duration::from_millis(3));
+        assert!(store.allow("actor:2".to_owned(), 1, window));
+
+        let state = store
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!state.entries.contains_key("actor:1"));
+        assert!(state.entries.contains_key("actor:2"));
     }
 }

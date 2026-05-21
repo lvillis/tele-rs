@@ -55,7 +55,7 @@ async fn dispatch_webhook_runs_router_handler() -> Result<(), DynError> {
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {

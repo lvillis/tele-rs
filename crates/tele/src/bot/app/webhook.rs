@@ -171,13 +171,34 @@ impl WebhookRunner {
 }
 
 fn constant_time_eq_str(left: &str, right: &str) -> bool {
-    if left.len() != right.len() {
-        return false;
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut diff = left.len() ^ right.len();
+
+    for index in 0..left.len().max(right.len()) {
+        let lhs = left.get(index).copied().unwrap_or_default();
+        let rhs = right.get(index).copied().unwrap_or_default();
+        diff |= usize::from(lhs ^ rhs);
     }
 
-    let mut diff = 0_u8;
-    for (lhs, rhs) in left.as_bytes().iter().zip(right.as_bytes().iter()) {
-        diff |= lhs ^ rhs;
-    }
     diff == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq_str;
+
+    #[test]
+    fn secret_compare_requires_exact_byte_match() {
+        assert!(constant_time_eq_str("secret-token", "secret-token"));
+        assert!(!constant_time_eq_str("secret-token", "secret-tokem"));
+        assert!(!constant_time_eq_str(
+            "secret-token",
+            "secret-token-extended"
+        ));
+        assert!(!constant_time_eq_str(
+            "secret-token-extended",
+            "secret-token"
+        ));
+    }
 }

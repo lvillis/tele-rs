@@ -547,13 +547,14 @@ pub struct CommandRouteBuilder<'a> {
 }
 
 impl<'a> CommandRouteBuilder<'a> {
-    pub(super) fn new(router: &'a mut Router, command: String) -> Self {
+    pub(super) fn new(router: &'a mut Router, command: String) -> Result<Self> {
+        let command = validate_route_command_name(&command)?;
         let route_label = format!("command:{command}");
-        Self {
+        Ok(Self {
             router,
             command,
             config: RouteDslConfig::new(route_label),
-        }
+        })
     }
 
     impl_route_dsl_methods!();

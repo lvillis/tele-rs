@@ -136,9 +136,8 @@ impl Error {
             | Self::InvalidHeaderName { .. }
             | Self::InvalidHeaderValue { .. }
             | Self::Configuration { .. } => ErrorClass::Configuration,
-            Self::InvalidBotToken
-            | Self::MissingBotToken
-            | Self::InvalidRequest { .. }
+            Self::InvalidBotToken | Self::MissingBotToken => ErrorClass::Authentication,
+            Self::InvalidRequest { .. }
             | Self::SerializeRequest { .. }
             | Self::ReadLocalFile { .. } => ErrorClass::Validation,
             Self::DeserializeResponse { .. } => ErrorClass::Decode,
@@ -158,14 +157,18 @@ impl Error {
                 ErrorClass::Transport
             }
             Self::Api {
+                status,
                 error_code,
                 parameters,
                 ..
             } => {
-                if error_code.is_some_and(|code| code == 401 || code == 403) {
+                if status.is_some_and(|code| code == 401 || code == 403)
+                    || error_code.is_some_and(|code| code == 401 || code == 403)
+                {
                     return ErrorClass::Authentication;
                 }
-                if error_code.is_some_and(|code| code == 429)
+                if status.is_some_and(|code| code == 429)
+                    || error_code.is_some_and(|code| code == 429)
                     || parameters
                         .as_deref()
                         .and_then(|parameters| parameters.retry_after)
@@ -228,13 +231,11 @@ impl Error {
             return true;
         }
 
-        if let Some(status) = self.status().map(|status| status.as_u16())
-            && matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504)
-        {
-            return true;
+        if let Some(status) = self.status().map(|status| status.as_u16()) {
+            return matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504);
         }
 
-        matches!(self, Self::Transport { .. })
+        matches!(self, Self::Transport { status: None, .. })
             || matches!(
                 self,
                 Self::Storage {
@@ -251,13 +252,6 @@ impl Error {
 
     /// Whether this error indicates invalid credentials or insufficient permissions.
     pub fn is_auth_error(&self) -> bool {
-        if let Some(status) = self.status().map(|status| status.as_u16())
-            && matches!(status, 401 | 403)
-        {
-            return true;
-        }
-
-        self.error_code()
-            .is_some_and(|code| code == 401 || code == 403)
+        self.classification() == ErrorClass::Authentication
     }
 }

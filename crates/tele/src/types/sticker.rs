@@ -7,20 +7,16 @@ use crate::Error;
 use crate::types::common::{ChatId, UserId};
 use crate::types::message::PhotoSize;
 use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
+use crate::types::validation::{
+    optional_request_positive_i64 as validate_optional_positive_i64,
+    optional_request_string_id as validate_string_id, reply_markup as validate_reply_markup,
+    reply_parameters as validate_reply_parameters, request_non_empty as ensure_non_empty,
+    suggested_post_parameters as validate_suggested_post_parameters,
+};
 
 const MAX_CUSTOM_EMOJI_IDS: usize = 200;
 const MAX_STICKER_EMOJIS: usize = 20;
 const MAX_STICKER_KEYWORDS: usize = 20;
-
-fn ensure_non_empty(method: &str, field: &str, value: &str) -> Result<(), Error> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires non-empty `{field}`"),
-        });
-    }
-
-    Ok(())
-}
 
 fn validate_optional_non_empty(
     method: &str,
@@ -42,19 +38,6 @@ fn validate_message_effect_id(method: &str, value: Option<&str>) -> Result<(), E
     validate_string_id(method, "message_effect_id", value)
 }
 
-fn validate_string_id(method: &str, field: &str, value: Option<&str>) -> Result<(), Error> {
-    if let Some(value) = value {
-        ensure_non_empty(method, field, value)?;
-        if value.chars().any(char::is_control) {
-            return Err(Error::InvalidRequest {
-                reason: format!("{method} requires `{field}` without control characters"),
-            });
-        }
-    }
-
-    Ok(())
-}
-
 fn validate_input_stickers(
     method: &str,
     stickers: &[InputSticker],
@@ -73,48 +56,6 @@ fn validate_input_stickers(
 
     for sticker in stickers {
         sticker.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_reply_parameters(reply_parameters: Option<&ReplyParameters>) -> Result<(), Error> {
-    if let Some(reply_parameters) = reply_parameters {
-        reply_parameters.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_reply_markup(reply_markup: Option<&ReplyMarkup>) -> Result<(), Error> {
-    if let Some(reply_markup) = reply_markup {
-        reply_markup.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_suggested_post_parameters(
-    suggested_post_parameters: Option<&SuggestedPostParameters>,
-) -> Result<(), Error> {
-    if let Some(suggested_post_parameters) = suggested_post_parameters {
-        suggested_post_parameters.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_optional_positive_i64(
-    method: &str,
-    field: &str,
-    value: Option<i64>,
-) -> Result<(), Error> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires `{field}` to be greater than zero"),
-        });
     }
 
     Ok(())

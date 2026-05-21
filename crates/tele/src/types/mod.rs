@@ -12,6 +12,7 @@ pub mod sticker;
 pub mod telegram;
 pub mod update;
 pub mod upload;
+pub(crate) mod validation;
 pub mod webhook;
 
 pub use bot::{GetUserProfilePhotosRequest, User, UserProfilePhotos};

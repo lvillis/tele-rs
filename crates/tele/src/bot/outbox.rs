@@ -1,4 +1,5 @@
 use super::*;
+use crate::util::retry_after_or_backoff;
 
 const MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 
@@ -9,6 +10,9 @@ pub struct OutboxConfig {
     pub queue_capacity: usize,
     pub max_attempts: usize,
     pub base_backoff: Duration,
+    /// Maximum locally computed exponential backoff.
+    ///
+    /// Provider supplied `Retry-After` values are honored separately and are not clamped by this.
     pub max_backoff: Duration,
     pub dedupe_ttl: Duration,
     pub persistence_path: Option<PathBuf>,
@@ -104,6 +108,7 @@ struct OutboxCommand {
     text: String,
     idempotency_key: Option<String>,
     responder: oneshot::Sender<Result<Message>>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -159,12 +164,28 @@ fn default_dead_letter_snapshot_version() -> u8 {
 struct QueuedOutboxCommand {
     payload: PersistedOutboxCommand,
     responder: Option<oneshot::Sender<Result<Message>>>,
+    _permit: OutboxQueuePermit,
+}
+
+enum OutboxQueuePermit {
+    Live(tokio::sync::OwnedSemaphorePermit),
+    Persisted(Arc<Semaphore>),
+}
+
+impl Drop for OutboxQueuePermit {
+    fn drop(&mut self) {
+        match self {
+            Self::Live(_permit) => {}
+            Self::Persisted(semaphore) => semaphore.add_permits(1),
+        }
+    }
 }
 
 /// Asynchronous outbox handle for reliable message delivery.
 #[derive(Clone)]
 pub struct BotOutbox {
     sender: mpsc::Sender<OutboxCommand>,
+    permits: Arc<Semaphore>,
 }
 
 impl BotOutbox {
@@ -172,9 +193,18 @@ impl BotOutbox {
         config.validate()?;
         validate_dead_letter_path(config.dead_letter_path.as_deref())?;
         let persisted_queue = load_outbox_queue(&config)?;
-        let (sender, receiver) = mpsc::channel(config.queue_capacity);
-        tokio::spawn(run_outbox_worker(client, config, persisted_queue, receiver));
-        Ok(Self { sender })
+        let queue_capacity = config.queue_capacity;
+        let available_permits = queue_capacity.saturating_sub(persisted_queue.len());
+        let permits = Arc::new(Semaphore::new(available_permits));
+        let (sender, receiver) = mpsc::channel(queue_capacity);
+        tokio::spawn(run_outbox_worker(
+            client,
+            config,
+            persisted_queue,
+            receiver,
+            Arc::clone(&permits),
+        ));
+        Ok(Self { sender, permits })
     }
 
     pub async fn send_text(
@@ -193,12 +223,17 @@ impl BotOutbox {
     ) -> Result<Message> {
         validate_idempotency_key(idempotency_key.as_deref())?;
         let request = SendMessageRequest::new(chat_id, text)?;
+        let permit = Arc::clone(&self.permits)
+            .acquire_owned()
+            .await
+            .map_err(|_| invalid_request("outbox worker is closed"))?;
         let (responder, receiver) = oneshot::channel();
         let command = OutboxCommand {
             chat_id: request.chat_id,
             text: request.text,
             idempotency_key,
             responder,
+            _permit: permit,
         };
 
         self.sender
@@ -234,6 +269,7 @@ async fn run_outbox_worker(
     config: OutboxConfig,
     persisted_queue: Vec<PersistedOutboxCommand>,
     mut receiver: mpsc::Receiver<OutboxCommand>,
+    permits: Arc<Semaphore>,
 ) {
     let mut dedupe: HashMap<String, (Message, Instant)> = HashMap::new();
     let mut queue = persisted_queue
@@ -241,6 +277,7 @@ async fn run_outbox_worker(
         .map(|payload| QueuedOutboxCommand {
             payload,
             responder: None,
+            _permit: OutboxQueuePermit::Persisted(Arc::clone(&permits)),
         })
         .collect::<VecDeque<_>>();
 
@@ -256,6 +293,7 @@ async fn run_outbox_worker(
                     last_error: None,
                 },
                 responder: Some(command.responder),
+                _permit: OutboxQueuePermit::Live(command._permit),
             });
         }
 
@@ -274,6 +312,7 @@ async fn run_outbox_worker(
                     last_error: None,
                 },
                 responder: Some(command.responder),
+                _permit: OutboxQueuePermit::Live(command._permit),
             });
         }
 
@@ -365,7 +404,7 @@ async fn run_outbox_worker(
                 };
                 let should_retry = error.is_retryable() && attempt < max_attempts;
                 if should_retry {
-                    let delay = error.retry_after().unwrap_or_else(|| {
+                    let delay = retry_after_or_backoff(&error, || {
                         exponential_backoff(config.base_backoff, config.max_backoff, attempt)
                     });
                     if let Err(_error) =
@@ -374,7 +413,7 @@ async fn run_outbox_worker(
                         sleep(outbox_persistence_retry_delay(&config)).await;
                         continue;
                     }
-                    sleep(delay.min(config.max_backoff)).await;
+                    sleep(delay).await;
                     continue;
                 }
 
@@ -483,6 +522,13 @@ fn validate_outbox_snapshot(snapshot: &OutboxSnapshot, config: &OutboxConfig) ->
         return Err(invalid_request(format!(
             "unsupported outbox snapshot version `{}`",
             snapshot.version
+        )));
+    }
+    if snapshot.queue.len() > config.queue_capacity {
+        return Err(invalid_request(format!(
+            "outbox snapshot queue length {} exceeds queue_capacity {}",
+            snapshot.queue.len(),
+            config.queue_capacity
         )));
     }
 
@@ -721,6 +767,7 @@ mod tests {
         let config = OutboxConfig::default()
             .with_persistence_path(queue_path.clone())
             .with_dead_letter_path(dead_letter_path);
+        let permit_source = Arc::new(Semaphore::new(0));
         let mut queue = VecDeque::from([QueuedOutboxCommand {
             payload: PersistedOutboxCommand {
                 chat_id: ChatId::from(12_i64),
@@ -731,6 +778,7 @@ mod tests {
                 last_error: Some("failed".to_owned()),
             },
             responder: None,
+            _permit: OutboxQueuePermit::Persisted(permit_source),
         }]);
 
         let result =

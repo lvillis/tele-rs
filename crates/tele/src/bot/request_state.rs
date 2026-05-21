@@ -85,6 +85,7 @@ where
             return value;
         }
 
+        let value = Arc::new(init());
         let mut state = self
             .state
             .inner
@@ -98,7 +99,6 @@ where
             return value;
         }
 
-        let value = Arc::new(init());
         let _ = state.insert(request_state_slot_id(self.key), value.clone());
         value
     }
@@ -217,5 +217,39 @@ impl RequestState {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_or_insert_with_does_not_hold_state_lock_while_initializing() {
+        let state = RequestState::default();
+
+        let value = state.get_or_insert_with::<String>(|| {
+            let _ = state.insert::<u32>(7);
+            "initialized".to_owned()
+        });
+
+        assert_eq!(value.as_str(), "initialized");
+        assert_eq!(state.get::<u32>().as_deref(), Some(&7));
+    }
+
+    #[test]
+    fn get_or_insert_with_keeps_existing_value_when_raced_by_initializer() {
+        let state = RequestState::default();
+
+        let value = state.get_or_insert_with::<String>(|| {
+            let _ = state.insert("winner".to_owned());
+            "discarded".to_owned()
+        });
+
+        assert_eq!(value.as_str(), "winner");
+        assert_eq!(
+            state.get::<String>().as_deref().map(String::as_str),
+            Some("winner")
+        );
     }
 }

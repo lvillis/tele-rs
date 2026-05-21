@@ -13,6 +13,7 @@ use crate::api::{
 use crate::auth::Auth;
 use crate::transport::async_transport::AsyncTransport;
 use crate::transport::serialize_multipart_fields;
+use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
@@ -118,19 +119,47 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Inherit)
+            .await
+    }
+
+    pub(crate) async fn call_method_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Disabled)
+            .await
+    }
+
+    async fn call_method_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
             .inner
             .transport
-            .execute_json(method, token, payload, &self.inner.defaults)
+            .execute_json(method, token, payload, config)
             .instrument(tracing::debug_span!("tele.client.request", method));
         #[cfg(not(feature = "tracing"))]
-        let request_future =
-            self.inner
-                .transport
-                .execute_json(method, token, payload, &self.inner.defaults);
+        let request_future = self
+            .inner
+            .transport
+            .execute_json(method, token, payload, config);
         let result = request_future.await;
         self.emit_metric(method, started_at.elapsed(), &result);
         result
@@ -140,19 +169,40 @@ impl Client {
     where
         R: DeserializeOwned,
     {
+        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Inherit)
+            .await
+    }
+
+    pub(crate) async fn call_method_no_params_without_transport_retry<R>(
+        &self,
+        method: &str,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
+        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Disabled)
+            .await
+    }
+
+    async fn call_method_no_params_with_transport_retry<R>(
+        &self,
+        method: &str,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
         let token = self.require_token()?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
             .inner
             .transport
-            .execute_empty(method, token, &self.inner.defaults)
+            .execute_empty(method, token, config)
             .instrument(tracing::debug_span!("tele.client.request", method));
         #[cfg(not(feature = "tracing"))]
-        let request_future =
-            self.inner
-                .transport
-                .execute_empty(method, token, &self.inner.defaults);
+        let request_future = self.inner.transport.execute_empty(method, token, config);
         let result = request_future.await;
         self.emit_metric(method, started_at.elapsed(), &result);
         result
@@ -169,21 +219,58 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_multipart_with_transport_retry(
+            method,
+            payload,
+            file_field_name,
+            file,
+            TransportRetryMode::Inherit,
+        )
+        .await
+    }
+
+    pub(crate) async fn call_method_multipart_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        file_field_name: &str,
+        file: &UploadFile,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_multipart_with_transport_retry(
+            method,
+            payload,
+            file_field_name,
+            file,
+            TransportRetryMode::Disabled,
+        )
+        .await
+    }
+
+    async fn call_method_multipart_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        file_field_name: &str,
+        file: &UploadFile,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
             .inner
             .transport
-            .execute_multipart(
-                method,
-                token,
-                &fields,
-                file_field_name,
-                file,
-                &self.inner.defaults,
-            )
+            .execute_multipart(method, token, &fields, file_field_name, file, config)
             .instrument(tracing::debug_span!("tele.client.request", method));
         #[cfg(not(feature = "tracing"))]
         let request_future = self.inner.transport.execute_multipart(
@@ -192,7 +279,7 @@ impl Client {
             &fields,
             file_field_name,
             file,
-            &self.inner.defaults,
+            config,
         );
         let result = request_future.await;
         self.emit_metric(method, started_at.elapsed(), &result);
@@ -210,23 +297,64 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_multipart_files_with_transport_retry(
+            method,
+            payload,
+            skip_fields,
+            files,
+            TransportRetryMode::Inherit,
+        )
+        .await
+    }
+
+    pub(crate) async fn call_method_multipart_files_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_multipart_files_with_transport_retry(
+            method,
+            payload,
+            skip_fields,
+            files,
+            TransportRetryMode::Disabled,
+        )
+        .await
+    }
+
+    async fn call_method_multipart_files_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, skip_fields)?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
             .inner
             .transport
-            .execute_multipart_files(method, token, &fields, files, &self.inner.defaults)
+            .execute_multipart_files(method, token, &fields, files, config)
             .instrument(tracing::debug_span!("tele.client.request", method));
         #[cfg(not(feature = "tracing"))]
-        let request_future = self.inner.transport.execute_multipart_files(
-            method,
-            token,
-            &fields,
-            files,
-            &self.inner.defaults,
-        );
+        let request_future = self
+            .inner
+            .transport
+            .execute_multipart_files(method, token, &fields, files, config);
         let result = request_future.await;
         self.emit_metric(method, started_at.elapsed(), &result);
         result

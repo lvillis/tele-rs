@@ -12,6 +12,7 @@ use crate::api::{
 use crate::auth::Auth;
 use crate::transport::blocking_transport::BlockingTransport;
 use crate::transport::serialize_multipart_fields;
+use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
@@ -117,14 +118,40 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Inherit)
+    }
+
+    pub(crate) fn call_method_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Disabled)
+    }
+
+    fn call_method_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
-        let result =
-            self.inner
-                .transport
-                .execute_json(method, token, payload, &self.inner.defaults);
+        let result = self
+            .inner
+            .transport
+            .execute_json(method, token, payload, config);
         self.emit_metric(method, started_at.elapsed(), &result);
         result
     }
@@ -133,14 +160,30 @@ impl BlockingClient {
     where
         R: DeserializeOwned,
     {
+        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Inherit)
+    }
+
+    pub(crate) fn call_method_no_params_without_transport_retry<R>(&self, method: &str) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
+        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Disabled)
+    }
+
+    fn call_method_no_params_with_transport_retry<R>(
+        &self,
+        method: &str,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
         let token = self.require_token()?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
-        let result = self
-            .inner
-            .transport
-            .execute_empty(method, token, &self.inner.defaults);
+        let result = self.inner.transport.execute_empty(method, token, config);
         self.emit_metric(method, started_at.elapsed(), &result);
         result
     }
@@ -156,8 +199,50 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_multipart_with_transport_retry(
+            method,
+            payload,
+            file_field_name,
+            file,
+            TransportRetryMode::Inherit,
+        )
+    }
+
+    pub(crate) fn call_method_multipart_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        file_field_name: &str,
+        file: &UploadFile,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_multipart_with_transport_retry(
+            method,
+            payload,
+            file_field_name,
+            file,
+            TransportRetryMode::Disabled,
+        )
+    }
+
+    fn call_method_multipart_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        file_field_name: &str,
+        file: &UploadFile,
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
@@ -167,7 +252,7 @@ impl BlockingClient {
             &fields,
             file_field_name,
             file,
-            &self.inner.defaults,
+            config,
         );
         self.emit_metric(method, started_at.elapsed(), &result);
         result
@@ -184,18 +269,57 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
+        self.call_method_multipart_files_with_transport_retry(
+            method,
+            payload,
+            skip_fields,
+            files,
+            TransportRetryMode::Inherit,
+        )
+    }
+
+    pub(crate) fn call_method_multipart_files_without_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
+        self.call_method_multipart_files_with_transport_retry(
+            method,
+            payload,
+            skip_fields,
+            files,
+            TransportRetryMode::Disabled,
+        )
+    }
+
+    fn call_method_multipart_files_with_transport_retry<R, P>(
+        &self,
+        method: &str,
+        payload: &P,
+        skip_fields: &[&str],
+        files: &[UploadPart],
+        retry_mode: TransportRetryMode,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+        P: Serialize + ?Sized,
+    {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, skip_fields)?;
+        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
-        let result = self.inner.transport.execute_multipart_files(
-            method,
-            token,
-            &fields,
-            files,
-            &self.inner.defaults,
-        );
+        let result = self
+            .inner
+            .transport
+            .execute_multipart_files(method, token, &fields, files, config);
         self.emit_metric(method, started_at.elapsed(), &result);
         result
     }

@@ -107,6 +107,39 @@ impl SetupApi {
         Self { client }
     }
 
+    async fn get_me_retry_attempt(&self) -> Result<User> {
+        self.client
+            .call_method_no_params_without_transport_retry("getMe")
+            .await
+    }
+
+    async fn set_my_commands_retry_attempt(&self, request: &SetMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry("setMyCommands", request)
+            .await
+    }
+
+    async fn get_my_commands_retry_attempt(
+        &self,
+        request: &GetMyCommandsRequest,
+    ) -> Result<Vec<BotCommand>> {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry("getMyCommands", request)
+            .await
+    }
+
+    async fn call_advanced_retry_attempt<Q>(&self, request: &Q) -> Result<Q::Response>
+    where
+        Q: AdvancedRequest,
+    {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry(Q::METHOD, request)
+            .await
+    }
+
     pub async fn set_commands(&self, commands: Vec<BotCommand>) -> Result<bool> {
         let request = SetMyCommandsRequest::new(commands)?;
         self.client.bot().set_my_commands(&request).await
@@ -128,7 +161,7 @@ impl SetupApi {
     ) -> Result<bool> {
         let request = SetMyCommandsRequest::new(commands)?;
         retry_async(policy, || async {
-            self.client.bot().set_my_commands(&request).await
+            self.set_my_commands_retry_attempt(&request).await
         })
         .await
     }
@@ -158,7 +191,7 @@ impl SetupApi {
     {
         let request = typed_commands_request::<C>(scope, language_code)?;
         retry_async(policy, || async {
-            self.client.bot().set_my_commands(&request).await
+            self.set_my_commands_retry_attempt(&request).await
         })
         .await
     }
@@ -223,10 +256,7 @@ impl SetupApi {
         let config = config.into();
         let request = set_menu_button_request(&config);
         retry_async(policy, || async {
-            self.client
-                .advanced()
-                .set_chat_menu_button_typed(&request)
-                .await
+            self.call_advanced_retry_attempt(&request).await
         })
         .await
     }
@@ -242,7 +272,7 @@ impl SetupApi {
         }
 
         if !matches!(plan.get_me, BootstrapGetMePolicy::Skip) {
-            match retry_step_async(policy, || async { self.client.bot().get_me().await }).await {
+            match retry_step_async(policy, || async { self.get_me_retry_attempt().await }).await {
                 BootstrapRetryOutcome::Success {
                     value,
                     attempt_count,
@@ -272,7 +302,7 @@ impl SetupApi {
             let get_request = commands_get_request(commands);
             let fetch_attempts = match retry_step_async(policy, || {
                 let get_request = get_request.clone();
-                async move { self.client.bot().get_my_commands(&get_request).await }
+                async move { self.get_my_commands_retry_attempt(&get_request).await }
             })
             .await
             {
@@ -318,7 +348,7 @@ impl SetupApi {
             };
             if fetch_attempts > 0 {
                 match retry_step_async(policy, || async {
-                    self.client.bot().set_my_commands(commands).await
+                    self.set_my_commands_retry_attempt(commands).await
                 })
                 .await
                 {
@@ -368,12 +398,7 @@ impl SetupApi {
                 menu_button.into();
             let fetch_attempts = match retry_step_async(policy, || {
                 let get_request = get_request.clone();
-                async move {
-                    self.client
-                        .advanced()
-                        .get_chat_menu_button_typed(&get_request)
-                        .await
-                }
+                async move { self.call_advanced_retry_attempt(&get_request).await }
             })
             .await
             {
@@ -420,10 +445,7 @@ impl SetupApi {
             if fetch_attempts > 0 {
                 let set_request = set_menu_button_request(menu_button);
                 match retry_step_async(policy, || async {
-                    self.client
-                        .advanced()
-                        .set_chat_menu_button_typed(&set_request)
-                        .await
+                    self.call_advanced_retry_attempt(&set_request).await
                 })
                 .await
                 {
@@ -488,6 +510,35 @@ impl BlockingSetupApi {
         Self { client }
     }
 
+    fn get_me_retry_attempt(&self) -> Result<User> {
+        self.client
+            .call_method_no_params_without_transport_retry("getMe")
+    }
+
+    fn set_my_commands_retry_attempt(&self, request: &SetMyCommandsRequest) -> Result<bool> {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry("setMyCommands", request)
+    }
+
+    fn get_my_commands_retry_attempt(
+        &self,
+        request: &GetMyCommandsRequest,
+    ) -> Result<Vec<BotCommand>> {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry("getMyCommands", request)
+    }
+
+    fn call_advanced_retry_attempt<Q>(&self, request: &Q) -> Result<Q::Response>
+    where
+        Q: AdvancedRequest,
+    {
+        request.validate()?;
+        self.client
+            .call_method_without_transport_retry(Q::METHOD, request)
+    }
+
     pub fn set_commands(&self, commands: Vec<BotCommand>) -> Result<bool> {
         let request = SetMyCommandsRequest::new(commands)?;
         self.client.bot().set_my_commands(&request)
@@ -507,7 +558,7 @@ impl BlockingSetupApi {
         policy: BootstrapRetryPolicy,
     ) -> Result<bool> {
         let request = SetMyCommandsRequest::new(commands)?;
-        retry_blocking(policy, || self.client.bot().set_my_commands(&request))
+        retry_blocking(policy, || self.set_my_commands_retry_attempt(&request))
     }
 
     #[cfg(feature = "bot")]
@@ -534,7 +585,7 @@ impl BlockingSetupApi {
         C: crate::bot::BotCommands,
     {
         let request = typed_commands_request::<C>(scope, language_code)?;
-        retry_blocking(policy, || self.client.bot().set_my_commands(&request))
+        retry_blocking(policy, || self.set_my_commands_retry_attempt(&request))
     }
 
     pub fn get_menu_button(&self) -> Result<MenuButton> {
@@ -585,9 +636,7 @@ impl BlockingSetupApi {
     ) -> Result<bool> {
         let config = config.into();
         let request = set_menu_button_request(&config);
-        retry_blocking(policy, || {
-            self.client.advanced().set_chat_menu_button_typed(&request)
-        })
+        retry_blocking(policy, || self.call_advanced_retry_attempt(&request))
     }
 
     pub fn bootstrap_with_retry(
@@ -601,7 +650,7 @@ impl BlockingSetupApi {
         }
 
         if !matches!(plan.get_me, BootstrapGetMePolicy::Skip) {
-            match retry_step_blocking(policy, || self.client.bot().get_me()) {
+            match retry_step_blocking(policy, || self.get_me_retry_attempt()) {
                 BootstrapRetryOutcome::Success {
                     value,
                     attempt_count,
@@ -630,7 +679,7 @@ impl BlockingSetupApi {
             report.commands = Some(BootstrapSyncStepReport::default());
             let get_request = commands_get_request(commands);
             let fetch_attempts = match retry_step_blocking(policy, || {
-                self.client.bot().get_my_commands(&get_request)
+                self.get_my_commands_retry_attempt(&get_request)
             }) {
                 BootstrapRetryOutcome::Success {
                     value,
@@ -673,7 +722,7 @@ impl BlockingSetupApi {
                 }
             };
             if fetch_attempts > 0 {
-                match retry_step_blocking(policy, || self.client.bot().set_my_commands(commands)) {
+                match retry_step_blocking(policy, || self.set_my_commands_retry_attempt(commands)) {
                     BootstrapRetryOutcome::Success {
                         value,
                         attempt_count,
@@ -719,9 +768,7 @@ impl BlockingSetupApi {
             let get_request: crate::types::advanced::AdvancedGetChatMenuButtonRequest =
                 menu_button.into();
             let fetch_attempts = match retry_step_blocking(policy, || {
-                self.client
-                    .advanced()
-                    .get_chat_menu_button_typed(&get_request)
+                self.call_advanced_retry_attempt(&get_request)
             }) {
                 BootstrapRetryOutcome::Success {
                     value,
@@ -765,11 +812,8 @@ impl BlockingSetupApi {
             };
             if fetch_attempts > 0 {
                 let set_request = set_menu_button_request(menu_button);
-                match retry_step_blocking(policy, || {
-                    self.client
-                        .advanced()
-                        .set_chat_menu_button_typed(&set_request)
-                }) {
+                match retry_step_blocking(policy, || self.call_advanced_retry_attempt(&set_request))
+                {
                     BootstrapRetryOutcome::Success {
                         value,
                         attempt_count,

@@ -570,13 +570,7 @@ where
     S: Clone + Send + Sync + 'static,
     Store: SessionStore<S> + ?Sized,
 {
-    let Some(chat_id) = update_chat_id(update) else {
-        return Err(invalid_request(
-            "update does not contain a chat id for state operations",
-        ));
-    };
-
-    store.load(chat_id).await
+    store.load(chat_id_for_state(update)?).await
 }
 
 /// Saves chat-scoped state into a store.
@@ -585,13 +579,7 @@ where
     S: Clone + Send + Sync + 'static,
     Store: SessionStore<S> + ?Sized,
 {
-    let Some(chat_id) = update_chat_id(update) else {
-        return Err(invalid_request(
-            "update does not contain a chat id for state operations",
-        ));
-    };
-
-    store.save(chat_id, state).await
+    store.save(chat_id_for_state(update)?, state).await
 }
 
 /// Clears chat-scoped state from a store.
@@ -600,13 +588,7 @@ where
     S: Clone + Send + Sync + 'static,
     Store: SessionStore<S> + ?Sized,
 {
-    let Some(chat_id) = update_chat_id(update) else {
-        return Err(invalid_request(
-            "update does not contain a chat id for state operations",
-        ));
-    };
-
-    store.clear(chat_id).await
+    store.clear(chat_id_for_state(update)?).await
 }
 
 /// Applies an FSM transition to chat-scoped state.
@@ -619,11 +601,95 @@ where
     S: Clone + Send + Sync + 'static,
     Store: SessionStore<S> + ?Sized,
 {
+    let chat_id = chat_id_for_state(update)?;
     match transition {
         StateTransition::Keep => Ok(()),
-        StateTransition::Set(state) => save_chat_state(store, update, state).await,
-        StateTransition::Clear => clear_chat_state::<S, Store>(store, update).await,
+        StateTransition::Set(state) => store.save(chat_id, state).await,
+        StateTransition::Clear => store.clear(chat_id).await,
     }
+}
+
+fn chat_id_for_state(update: &Update) -> Result<i64> {
+    update_chat_id(update)
+        .ok_or_else(|| invalid_request("update does not contain a chat id for state operations"))
+}
+
+async fn apply_chat_state_transition_for_chat_id<S, Store>(
+    store: &Store,
+    chat_id: i64,
+    transition: StateTransition<S>,
+) -> Result<()>
+where
+    S: Clone + Send + Sync + 'static,
+    Store: SessionStore<S> + ?Sized,
+{
+    match transition {
+        StateTransition::Keep => Ok(()),
+        StateTransition::Set(state) => store.save(chat_id, state).await,
+        StateTransition::Clear => store.clear(chat_id).await,
+    }
+}
+
+#[derive(Clone)]
+struct ChatSessionLocks {
+    inner: Arc<ChatSessionLockMap>,
+}
+
+type ChatSessionLockMap = Mutex<HashMap<i64, Arc<Mutex<()>>>>;
+type ChatSessionLockRegistry =
+    std::sync::Mutex<HashMap<usize, std::sync::Weak<ChatSessionLockMap>>>;
+
+fn chat_session_lock_registry() -> &'static ChatSessionLockRegistry {
+    static REGISTRY: std::sync::OnceLock<ChatSessionLockRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn chat_session_store_key<Store>(store: &Arc<Store>) -> usize {
+    Arc::as_ptr(store) as *const () as usize
+}
+
+impl ChatSessionLocks {
+    fn for_store<Store>(store: &Arc<Store>) -> Self {
+        let key = chat_session_store_key(store);
+        let mut registry = chat_session_lock_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if let Some(inner) = registry.get(&key).and_then(std::sync::Weak::upgrade) {
+            return Self { inner };
+        }
+
+        registry.retain(|_, locks| locks.strong_count() > 0);
+        let inner = Arc::new(Mutex::new(HashMap::new()));
+        registry.insert(key, Arc::downgrade(&inner));
+        Self { inner }
+    }
+
+    async fn acquire(&self, chat_id: i64) -> ChatSessionLockGuard {
+        let lock = {
+            let mut locks = self.inner.lock().await;
+            locks
+                .entry(chat_id)
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let guard = lock.lock_owned().await;
+        ChatSessionLockGuard { _guard: guard }
+    }
+
+    async fn prune_idle(&self, chat_id: i64) {
+        let mut locks = self.inner.lock().await;
+        if locks
+            .get(&chat_id)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            let _ = locks.remove(&chat_id);
+        }
+    }
+}
+
+struct ChatSessionLockGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 /// High-level chat-scoped session manager for FSM-style bots.
@@ -633,6 +699,7 @@ where
     Store: SessionStore<S>,
 {
     store: Arc<Store>,
+    locks: ChatSessionLocks,
     _state: std::marker::PhantomData<S>,
 }
 
@@ -644,6 +711,7 @@ where
     fn clone(&self) -> Self {
         Self {
             store: Arc::clone(&self.store),
+            locks: self.locks.clone(),
             _state: std::marker::PhantomData,
         }
     }
@@ -655,15 +723,20 @@ where
     Store: SessionStore<S>,
 {
     pub fn new(store: Store) -> Self {
+        let store = Arc::new(store);
+        let locks = ChatSessionLocks::for_store(&store);
         Self {
-            store: Arc::new(store),
+            store,
+            locks,
             _state: std::marker::PhantomData,
         }
     }
 
     pub fn from_shared(store: Arc<Store>) -> Self {
+        let locks = ChatSessionLocks::for_store(&store);
         Self {
             store,
+            locks,
             _state: std::marker::PhantomData,
         }
     }
@@ -681,27 +754,51 @@ where
     }
 
     pub async fn save(&self, update: &Update, state: S) -> Result<()> {
-        save_chat_state(self.store(), update, state).await
+        let chat_id = chat_id_for_state(update)?;
+        let guard = self.locks.acquire(chat_id).await;
+        let result = self.store.save(chat_id, state).await;
+        drop(guard);
+        self.locks.prune_idle(chat_id).await;
+        result
     }
 
     pub async fn clear(&self, update: &Update) -> Result<()> {
-        clear_chat_state::<S, Store>(self.store(), update).await
+        let chat_id = chat_id_for_state(update)?;
+        let guard = self.locks.acquire(chat_id).await;
+        let result = self.store.clear(chat_id).await;
+        drop(guard);
+        self.locks.prune_idle(chat_id).await;
+        result
     }
 
     pub async fn apply(&self, update: &Update, transition: StateTransition<S>) -> Result<()> {
-        apply_chat_state_transition(self.store(), update, transition).await
+        let chat_id = chat_id_for_state(update)?;
+        let guard = self.locks.acquire(chat_id).await;
+        let result =
+            apply_chat_state_transition_for_chat_id(self.store(), chat_id, transition).await;
+        drop(guard);
+        self.locks.prune_idle(chat_id).await;
+        result
     }
 
     /// Loads state, runs transition function, then applies resulting state transition.
+    ///
+    /// Transitions are serialized per chat id, so concurrent updates for the same chat cannot
+    /// overwrite each other's load-modify-save cycle. Different chats still progress independently.
     pub async fn transition<R, F, Fut>(&self, update: &Update, f: F) -> Result<R>
     where
         F: FnOnce(Option<S>) -> Fut + Send,
         Fut: Future<Output = (R, StateTransition<S>)> + Send,
     {
-        let current = self.load(update).await?;
+        let chat_id = chat_id_for_state(update)?;
+        let guard = self.locks.acquire(chat_id).await;
+        let current = self.store.load(chat_id).await?;
         let (output, transition) = f(current).await;
-        self.apply(update, transition).await?;
-        Ok(output)
+        let result =
+            apply_chat_state_transition_for_chat_id(self.store(), chat_id, transition).await;
+        drop(guard);
+        self.locks.prune_idle(chat_id).await;
+        result.map(|()| output)
     }
 }
 

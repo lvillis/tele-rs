@@ -8,6 +8,11 @@ use crate::types::telegram::{
     LinkPreviewOptions, ReplyMarkup, ReplyParameters, SuggestedPostParameters,
 };
 use crate::types::upload::{UploadPart, validate_upload_part_name};
+use crate::types::validation::{
+    optional_positive_i64 as validate_optional_positive_i64, reply_markup as validate_reply_markup,
+    reply_parameters as validate_reply_parameters, required_text as validate_required_text,
+    suggested_post_parameters as validate_suggested_post_parameters,
+};
 
 use super::content::{DiceEmoji, PollKind};
 use super::model::Message;
@@ -2289,18 +2294,6 @@ fn validate_positive_u32(field: &str, value: Option<u32>) -> Result<(), Error> {
     Ok(())
 }
 
-fn validate_optional_positive_i64(field: &str, value: Option<i64>) -> Result<(), Error> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} must be greater than 0"),
-        });
-    }
-
-    Ok(())
-}
-
 fn validate_message_thread_id(value: Option<i64>) -> Result<(), Error> {
     validate_optional_positive_i64("message_thread_id", value)
 }
@@ -2320,31 +2313,6 @@ fn validate_business_connection_id(value: Option<&str>) -> Result<(), Error> {
 fn validate_message_effect_id(value: Option<&str>) -> Result<(), Error> {
     if let Some(value) = value {
         validate_required_text("message_effect_id", value)?;
-    }
-
-    Ok(())
-}
-
-fn validate_suggested_post_parameters(
-    suggested_post_parameters: Option<&SuggestedPostParameters>,
-) -> Result<(), Error> {
-    if let Some(suggested_post_parameters) = suggested_post_parameters {
-        suggested_post_parameters.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_required_text(label: &str, value: &str) -> Result<(), Error> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{label} cannot be empty"),
-        });
-    }
-    if value.chars().any(char::is_control) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{label} must not contain control characters"),
-        });
     }
 
     Ok(())
@@ -2418,22 +2386,6 @@ fn validate_bulk_message_ids(method: &str, message_ids: &[MessageId]) -> Result<
     }
     for message_id in message_ids {
         message_id.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_reply_parameters(reply_parameters: Option<&ReplyParameters>) -> Result<(), Error> {
-    if let Some(reply_parameters) = reply_parameters {
-        reply_parameters.validate()?;
-    }
-
-    Ok(())
-}
-
-fn validate_reply_markup(reply_markup: Option<&ReplyMarkup>) -> Result<(), Error> {
-    if let Some(reply_markup) = reply_markup {
-        reply_markup.validate()?;
     }
 
     Ok(())

@@ -408,7 +408,7 @@ async fn command_router_runs_with_middleware() -> Result<(), DynError> {
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {
@@ -460,6 +460,14 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
             args: "hello world".to_owned()
         })
     );
+    assert_eq!(
+        parse_command_text(" \t/echo hello world"),
+        Some(CommandData {
+            name: "echo".to_owned(),
+            mention: None,
+            args: "hello world".to_owned()
+        })
+    );
     assert_eq!(parse_command_text("/echo@ hello world"), None);
     assert_eq!(parse_command_text("/echo@Bad@Name hello world"), None);
     assert_eq!(
@@ -502,6 +510,19 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert_eq!(update.command_args(), Some("hello world"));
     assert_eq!(update.text(), Some("/echo hello world"));
     assert_eq!(update.chat_id(), Some(1));
+    let Some(spaced_update) = parse_update(message_update(202, 1, " \t/echo spaced args")) else {
+        return Ok(());
+    };
+    assert_eq!(extract_command(&spaced_update), Some("echo"));
+    assert_eq!(extract_command_args(&spaced_update), Some("spaced args"));
+    assert_eq!(
+        extract_command_data(&spaced_update),
+        Some(CommandData {
+            name: "echo".to_owned(),
+            mention: None,
+            args: "spaced args".to_owned()
+        })
+    );
     let Some(invalid_mention_update) = parse_update(message_update(201, 1, "/echo@ hello")) else {
         return Ok(());
     };
@@ -1021,7 +1042,7 @@ async fn command_route_dsl_applies_guards_parse_and_throttle() -> Result<(), Dyn
     {
         let hits = Arc::clone(&hits);
         router
-            .command_route("ban")
+            .command_route("ban")?
             .group_only()
             .admin_only()
             .require_capabilities(&[ChatAdministratorCapability::DeleteMessages])
@@ -1101,7 +1122,7 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
     let mut disabled_auto_router = Router::new();
     let _ = disabled_auto_router.disable_auto_command_target();
     disabled_auto_router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(targeted_this_bot_without_auto) =
         parse_update(message_update(205, 1, "/start@ThisBot hi"))
@@ -1127,7 +1148,7 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
 
     let mut auto_router = Router::new();
     auto_router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(unprepared_targeted_this_bot) =
         parse_update(message_update(206, 1, "/start@ThisBot hi"))
@@ -1173,7 +1194,7 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
         .build()?;
     let mut harness_router = Router::new();
     harness_router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let harness = BotHarness::with_client(harness_client, harness_router);
     let Some(harness_update) = parse_update(message_update(209, 1, "/start@ThisBot hi")) else {
@@ -1189,7 +1210,7 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
     let _ = targeted_router.set_command_target("ThisBot")?;
     let _ = targeted_router.disable_auto_command_target();
     targeted_router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(targeted_this_bot) = parse_update(message_update(210, 1, "/start@ThisBot hi")) else {
         return Ok(());
@@ -1237,7 +1258,7 @@ async fn router_dispatch_prepared_handles_command_mentions() -> Result<(), DynEr
 
     let mut router = Router::new();
     router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
     let Some(update) = parse_update(message_update(212, 1, "/start@ThisBot hi")) else {
         return Ok(());
@@ -1267,7 +1288,7 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
     {
         let hits = Arc::clone(&hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let hits = Arc::clone(&hits);
                 async move {
@@ -1365,7 +1386,7 @@ async fn bootstrap_router_warn_policy_disables_later_auto_get_me() -> Result<(),
     let control = client.control();
     let mut router = Router::new();
     router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let outcome = control
@@ -1736,7 +1757,7 @@ async fn long_polling_source_dispatches_updates() -> Result<(), DynError> {
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {
@@ -1927,7 +1948,7 @@ async fn long_polling_source_dedupes_duplicate_update_ids() -> Result<(), DynErr
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {
@@ -2008,7 +2029,7 @@ async fn long_polling_source_does_not_ack_failed_dispatch() -> Result<(), DynErr
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
     router
-        .command_route("fail")
+        .command_route("fail")?
         .handle(|_context: BotContext, _update: Update| async move {
             Err(HandlerError::internal(Error::InvalidRequest {
                 reason: "handler failed".to_owned(),
@@ -2051,7 +2072,7 @@ async fn long_polling_source_does_not_ack_continued_handler_error() -> Result<()
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
     router
-        .command_route("fail")
+        .command_route("fail")?
         .handle(|_context: BotContext, _update: Update| async move {
             Err(HandlerError::internal(Error::InvalidRequest {
                 reason: "handler failed".to_owned(),
@@ -2080,6 +2101,62 @@ async fn long_polling_source_does_not_ack_continued_handler_error() -> Result<()
 }
 
 #[tokio::test]
+async fn long_polling_commits_successful_prefix_before_fail_fast_handler_error()
+-> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let offset_path =
+        std::env::temp_dir().join(format!("tele-offset-fail-fast-prefix-{timestamp}.json"));
+
+    let response = r#"{"ok":true,"result":[{"update_id":812,"message":{"message_id":1,"date":1710000114,"chat":{"id":1,"type":"private"},"text":"ok"}},{"update_id":813,"message":{"message_id":2,"date":1710000115,"chat":{"id":1,"type":"private"},"text":"fail"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, update: Update| async move {
+            if update.text() == Some("fail") {
+                return Err(HandlerError::internal(Error::InvalidRequest {
+                    reason: "handler failed".to_owned(),
+                }));
+            }
+            Ok(())
+        });
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        persist_offset_path: Some(offset_path.clone()),
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: false,
+        ..EngineConfig::default()
+    });
+
+    let error = match engine.poll_once().await {
+        Ok(outcomes) => return Err(format!("expected handler failure, got {outcomes:?}").into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert_eq!(engine.source_mut().next_offset(), Some(813));
+
+    let raw = fs::read(&offset_path)?;
+    let snapshot: serde_json::Value = serde_json::from_slice(&raw)?;
+    assert_eq!(
+        snapshot
+            .get("next_offset")
+            .and_then(serde_json::Value::as_i64),
+        Some(813)
+    );
+
+    join_server(handle).await?;
+    let _ = fs::remove_file(offset_path);
+    Ok(())
+}
+
+#[tokio::test]
 async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":[{"update_id":888,"message":{"message_id":10,"date":1710000000,"chat":{"id":1,"type":"private"},"text":"/start"}}]}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
@@ -2091,7 +2168,7 @@ async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), 
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {
@@ -2131,7 +2208,7 @@ async fn bot_engine_channel_source_dispatches_updates() -> Result<(), DynError> 
     {
         let hits = Arc::clone(&hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let hits = Arc::clone(&hits);
                 async move {
@@ -2173,6 +2250,7 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
 
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         disable_webhook_on_start: false,
+        poll_timeout_seconds: 0,
         ..PollingConfig::default()
     });
     let mut engine = BotEngine::new(client, source, Router::new())
@@ -2208,6 +2286,48 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
             .iter()
             .any(|metric| matches!(metric, EngineMetric::SourceBackoff { .. }))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_until_stops_on_fail_fast_handler_error_even_when_source_errors_continue()
+-> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::internal(Error::InvalidRequest {
+                reason: "handler failed".to_owned(),
+            }))
+        });
+
+    let (sink, source) = channel_source(1)?;
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: true,
+        continue_on_handler_error: false,
+        error_delay: Duration::from_millis(10),
+        ..EngineConfig::default()
+    });
+
+    sink.send(tele::bot::testing::message_update(820, 1, "fail")?)
+        .await?;
+    drop(sink);
+
+    let result = engine
+        .run_until(async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        })
+        .await;
+    let error = match result {
+        Ok(()) => return Err("handler failure was incorrectly treated as source retry".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("handler failed"));
+
     Ok(())
 }
 
@@ -2255,7 +2375,7 @@ async fn bot_engine_metric_hook_emits_poll_and_dispatch_latency() -> Result<(), 
 
     let mut router = Router::new();
     router
-        .command_route("start")
+        .command_route("start")?
         .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
 
     let (sink, source) = channel_source(1)?;
@@ -2307,7 +2427,7 @@ async fn webhook_runner_validates_secret_and_dispatches_json() -> Result<(), Dyn
     {
         let handler_hits = Arc::clone(&handler_hits);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let handler_hits = Arc::clone(&handler_hits);
                 async move {
@@ -2515,6 +2635,73 @@ async fn chat_session_transition_applies_state() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn chat_session_transition_serializes_concurrent_updates_per_chat() -> Result<(), DynError> {
+    let session = ChatSession::<usize, _>::new(InMemorySessionStore::new());
+    let Some(update) = parse_update(message_update(1004, 23, "state")) else {
+        return Ok(());
+    };
+    session.save(&update, 0).await?;
+
+    let mut tasks = Vec::new();
+    for _ in 0..16 {
+        let session = session.clone();
+        let update = update.clone();
+        tasks.push(tokio::spawn(async move {
+            session
+                .transition(&update, |state| async move {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    ((), StateTransition::Set(state.unwrap_or_default() + 1))
+                })
+                .await
+        }));
+    }
+
+    for task in tasks {
+        task.await??;
+    }
+
+    assert_eq!(session.load(&update).await?, Some(16));
+    Ok(())
+}
+
+#[tokio::test]
+async fn chat_session_from_shared_reuses_per_chat_locks() -> Result<(), DynError> {
+    let store = Arc::new(InMemorySessionStore::<usize>::new());
+    let writer_a = ChatSession::from_shared(Arc::clone(&store));
+    let writer_b = ChatSession::from_shared(store);
+    let Some(update) = parse_update(message_update(1005, 24, "state")) else {
+        return Ok(());
+    };
+    writer_a.save(&update, 0).await?;
+
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let session = if index % 2 == 0 {
+            writer_a.clone()
+        } else {
+            writer_b.clone()
+        };
+        let update = update.clone();
+        tasks.push(tokio::spawn(async move {
+            session
+                .transition(&update, |state| async move {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    ((), StateTransition::Set(state.unwrap_or_default() + 1))
+                })
+                .await
+        }));
+    }
+
+    for task in tasks {
+        task.await??;
+    }
+
+    assert_eq!(writer_a.load(&update).await?, Some(16));
+    assert_eq!(writer_b.load(&update).await?, Some(16));
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_store_helpers_error_without_chat_id() -> Result<(), DynError> {
     let store = InMemorySessionStore::<String>::new();
     let maybe_update = parse_update(json!({
@@ -2556,7 +2743,7 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
         let max_in_flight = Arc::clone(&max_in_flight);
         let handled = Arc::clone(&handled);
         router
-            .command_route("start")
+            .command_route("start")?
             .handle(move |_context: BotContext, _update: Update| {
                 let in_flight = Arc::clone(&in_flight);
                 let max_in_flight = Arc::clone(&max_in_flight);
@@ -2592,7 +2779,7 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
     });
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
-        continue_on_handler_error: false,
+        continue_on_handler_error: true,
         max_handler_concurrency: 3,
         ..EngineConfig::default()
     });
@@ -2602,6 +2789,162 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
     assert_eq!(engine.source_mut().next_offset(), Some(304));
     assert_eq!(handled.load(Ordering::SeqCst), 3);
     assert!(max_in_flight.load(Ordering::SeqCst) >= 2);
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn bot_engine_concurrent_outcomes_preserve_source_order() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, update: Update| async move {
+            let delay = match update.update_id {
+                501 => Duration::from_millis(60),
+                502 => Duration::from_millis(20),
+                _ => Duration::ZERO,
+            };
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            Ok(())
+        });
+
+    let (sink, source) = channel_source(8)?;
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: true,
+        max_handler_concurrency: 3,
+        ..EngineConfig::default()
+    });
+
+    sink.send(tele::bot::testing::message_update(501, 1, "slow")?)
+        .await?;
+    sink.send(tele::bot::testing::message_update(502, 1, "medium")?)
+        .await?;
+    sink.send(tele::bot::testing::message_update(503, 1, "fast")?)
+        .await?;
+
+    let outcomes = engine.poll_once().await?;
+    assert_eq!(
+        outcomes,
+        vec![
+            DispatchOutcome::Handled { update_id: 501 },
+            DispatchOutcome::Handled { update_id: 502 },
+            DispatchOutcome::Handled { update_id: 503 },
+        ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn fail_fast_dispatch_stays_serial_even_when_concurrency_configured() -> Result<(), DynError>
+{
+    let response = r#"{"ok":true,"result":[{"update_id":601,"message":{"message_id":1,"date":1710000001,"chat":{"id":77,"type":"private"},"text":"ok"}},{"update_id":602,"message":{"message_id":2,"date":1710000002,"chat":{"id":77,"type":"private"},"text":"fail"}},{"update_id":603,"message":{"message_id":3,"date":1710000003,"chat":{"id":77,"type":"private"},"text":"must-not-run"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let executed = Arc::new(Mutex::new(Vec::<i64>::new()));
+
+    let mut router = Router::new();
+    {
+        let executed = Arc::clone(&executed);
+        router
+            .message_route()
+            .handle(move |_context: BotContext, update: Update| {
+                let executed = Arc::clone(&executed);
+                async move {
+                    {
+                        let mut executed = executed.lock().map_err(|error| {
+                            HandlerError::internal(Error::InvalidRequest {
+                                reason: error.to_string(),
+                            })
+                        })?;
+                        executed.push(update.update_id);
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    if update.update_id == 602 {
+                        return Err(HandlerError::internal(Error::InvalidRequest {
+                            reason: "intentional handler failure".to_owned(),
+                        }));
+                    }
+                    Ok(())
+                }
+            });
+    }
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: false,
+        max_handler_concurrency: 3,
+        ..EngineConfig::default()
+    });
+
+    let error = match engine.poll_once().await {
+        Ok(_) => return Err("expected fail-fast handler failure".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert_eq!(engine.source_mut().next_offset(), Some(602));
+    assert_eq!(
+        *executed.lock().map_err(|error| error.to_string())?,
+        vec![601, 602]
+    );
+
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn long_polling_commits_successful_prefix_before_failed_update() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":[{"update_id":401,"message":{"message_id":1,"date":1710000001,"chat":{"id":77,"type":"private"},"text":"ok"}},{"update_id":402,"message":{"message_id":2,"date":1710000002,"chat":{"id":77,"type":"private"},"text":"fail"}},{"update_id":403,"message":{"message_id":3,"date":1710000003,"chat":{"id":77,"type":"private"},"text":"ok"}}]}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut router = Router::new();
+    router
+        .message_route()
+        .handle(|_context: BotContext, update: Update| async move {
+            if update.update_id == 402 {
+                return Err(HandlerError::internal(Error::InvalidRequest {
+                    reason: "intentional handler failure".to_owned(),
+                }));
+            }
+            Ok(())
+        });
+
+    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+        disable_webhook_on_start: false,
+        poll_timeout_seconds: 1,
+        ..PollingConfig::default()
+    });
+    let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
+        continue_on_source_error: false,
+        continue_on_handler_error: true,
+        ..EngineConfig::default()
+    });
+
+    let outcomes = engine.poll_once().await?;
+    assert_eq!(
+        outcomes,
+        vec![
+            DispatchOutcome::Handled { update_id: 401 },
+            DispatchOutcome::Failed { update_id: 402 },
+            DispatchOutcome::Handled { update_id: 403 },
+        ]
+    );
+    assert_eq!(engine.source_mut().next_offset(), Some(402));
 
     join_server(handle).await?;
     Ok(())
@@ -2618,7 +2961,7 @@ async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynErr
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
     router
-        .command_route("panic")
+        .command_route("panic")?
         .handle(|_context: BotContext, _update: Update| async move {
             std::panic::resume_unwind(Box::new("intentional handler panic"));
         });
@@ -2650,6 +2993,17 @@ async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynErr
 
     join_server(handle).await?;
     Ok(())
+}
+
+#[test]
+fn command_route_rejects_invalid_registration_names() {
+    for command in ["", "/start", "Start", "start@ThisBot", "bad-command"] {
+        let mut router = Router::new();
+        assert!(matches!(
+            router.command_route(command),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
 }
 
 #[tokio::test]
@@ -2979,7 +3333,7 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut router = Router::new();
-    router.command_route("start").handle_with_policy(
+    router.command_route("start")?.handle_with_policy(
         ErrorPolicy::ReplyUser {
             fallback_message: " \n\t ".to_owned(),
         },
@@ -3051,16 +3405,18 @@ async fn join_request_error_reply_targets_user_chat_id() -> Result<(), DynError>
 
 #[tokio::test]
 async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
-    let retry_response = r#"{"ok":false,"error_code":429,"description":"too many requests","parameters":{"retry_after":1}}"#;
+    let retry_response = r#"{"ok":false,"error_code":502,"description":"bad gateway"}"#;
     let ok_response = r#"{"ok":true,"result":{"message_id":88,"date":1710000010,"chat":{"id":12,"type":"private"},"text":"hello"}}"#;
     let (base_url, handle) = spawn_server_sequence(
         "/bot123:abc/sendMessage",
-        vec![(429, retry_response), (200, ok_response)],
+        vec![(502, retry_response), (200, ok_response)],
     )?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let mut config = OutboxConfig::default();
     config.max_attempts = 3;
+    config.base_backoff = Duration::from_millis(1);
+    config.max_backoff = Duration::from_millis(1);
     config.dedupe_ttl = Duration::from_secs(60);
     let outbox = BotOutbox::spawn(client, config)?;
 
@@ -3171,6 +3527,48 @@ async fn outbox_rejects_invalid_persisted_queue_entry_on_spawn() -> Result<(), D
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
     assert!(error.to_string().contains("queue entry 0"));
+
+    let _ = fs::remove_file(queue_path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_persisted_queue_over_capacity_on_spawn() -> Result<(), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let queue_path =
+        std::env::temp_dir().join(format!("tele-outbox-over-capacity-{timestamp}.json"));
+    let snapshot = serde_json::json!({
+        "version": 1,
+        "queue": [
+            {
+                "chat_id": 12,
+                "text": "first",
+                "idempotency_key": "persisted-1",
+                "enqueued_at_unix_ms": 1,
+                "attempt": 0
+            },
+            {
+                "chat_id": 12,
+                "text": "second",
+                "idempotency_key": "persisted-2",
+                "enqueued_at_unix_ms": 2,
+                "attempt": 0
+            }
+        ]
+    });
+    fs::write(&queue_path, serde_json::to_vec(&snapshot)?)?;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut config = OutboxConfig::default().with_persistence_path(queue_path.clone());
+    config.queue_capacity = 1;
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected over-capacity outbox queue to be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(error.to_string().contains("queue_capacity"));
 
     let _ = fs::remove_file(queue_path);
     Ok(())

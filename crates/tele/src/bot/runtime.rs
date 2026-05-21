@@ -174,6 +174,11 @@ pub struct EngineConfig {
     pub source_error_backoff: Option<SourceErrorBackoffConfig>,
     pub continue_on_source_error: bool,
     pub continue_on_handler_error: bool,
+    /// Maximum number of update handlers to run concurrently.
+    ///
+    /// This is applied only when `continue_on_handler_error` is true. Fail-fast dispatch stays
+    /// source-ordered so later updates cannot perform side effects before an earlier failed update
+    /// blocks offset commits and forces Telegram redelivery.
     pub max_handler_concurrency: usize,
 }
 
@@ -264,8 +269,15 @@ impl LongPollingSource {
         self.next_offset
     }
 
+    /// Overrides the next polling offset and makes the override authoritative.
+    ///
+    /// This also clears the in-memory dedupe window so callers can intentionally rewind or clear
+    /// offsets without stale local state suppressing redelivered updates.
     pub fn set_next_offset(&mut self, offset: Option<i64>) -> &mut Self {
         self.next_offset = offset;
+        self.offset_loaded = true;
+        self.seen_update_ids.clear();
+        self.seen_update_order.clear();
         self
     }
 
@@ -423,11 +435,9 @@ impl UpdateSource for LongPollingSource {
 
     fn commit<'a>(&'a mut self, outcomes: &'a [DispatchOutcome]) -> SourceCommitFuture<'a> {
         Box::pin(async move {
-            if outcomes.iter().any(|outcome| outcome.is_failed()) {
-                return Ok(());
-            }
             let update_ids = outcomes
                 .iter()
+                .take_while(|outcome| !outcome.is_failed())
                 .map(|outcome| outcome.update_id())
                 .collect::<Vec<_>>();
             self.commit_update_ids(&update_ids).await
@@ -615,5 +625,51 @@ mod tests {
             validate_polling_offset_snapshot(&snapshot),
             Err(Error::InvalidRequest { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn explicit_offset_override_skips_persisted_offset_load() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let offset_path = std::env::temp_dir().join(format!(
+            "tele-offset-explicit-override-{}-{timestamp}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&offset_path);
+        persist_polling_offset(&offset_path, Some(42))?;
+
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client).with_offset_persistence_path(&offset_path);
+
+        source.set_next_offset(None);
+        source.ensure_offset_loaded().await?;
+
+        assert_eq!(source.next_offset(), None);
+
+        let _ = fs::remove_file(&offset_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_offset_override_clears_dedupe_window() -> Result<()> {
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client);
+
+        source.commit_update_ids(&[10]).await?;
+        assert_eq!(source.next_offset(), Some(11));
+        assert!(source.is_duplicate_update(10));
+
+        source.set_next_offset(Some(10));
+
+        assert_eq!(source.next_offset(), Some(10));
+        assert!(!source.is_duplicate_update(10));
+        assert!(source.offset_loaded);
+
+        Ok(())
     }
 }

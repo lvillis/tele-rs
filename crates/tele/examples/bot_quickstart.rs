@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outbox = client.control().spawn_outbox(outbox_config)?;
 
     let mut router = Router::new();
-    router.command_route("start").handle_with_policy(
+    router.command_route("start")?.handle_with_policy(
         ErrorPolicy::ReplyUser {
             fallback_message: "failed to process /start".to_owned(),
         },

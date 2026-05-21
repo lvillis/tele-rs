@@ -67,6 +67,26 @@ fn spawn_server_script(
     Ok((server.base_url().to_owned(), server))
 }
 
+fn fast_retry(max_attempts: usize, allow_non_idempotent_retries: bool) -> RetryConfig {
+    let mut retry = RetryConfig::default();
+    retry.max_attempts = max_attempts;
+    retry.base_backoff = Duration::from_millis(1);
+    retry.max_backoff = Duration::from_millis(1);
+    retry.jitter_ratio = 0.0;
+    retry.allow_non_idempotent_retries = allow_non_idempotent_retries;
+    retry
+}
+
+fn fast_bootstrap_retry(max_attempts: usize) -> BootstrapRetryPolicy {
+    BootstrapRetryPolicy {
+        max_attempts,
+        base_backoff: Duration::from_millis(1),
+        max_backoff: Duration::from_millis(1),
+        jitter_ratio: 0.0,
+        continue_on_failure: false,
+    }
+}
+
 fn join_server(server: TestServer) -> Result<(), DynError> {
     let _ = server.finish()?;
     Ok(())
@@ -211,6 +231,68 @@ async fn raw_retry_rejects_invalid_policy_before_request() -> Result<(), DynErro
         Err(error) => error,
     };
     assert!(matches!(error, Error::Configuration { .. }));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_retry_does_not_multiply_transport_retries() -> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 502, failure),
+    ])?;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(3, true))?
+        .build()?;
+
+    let error = match client
+        .raw()
+        .call_no_params_with_retry::<tele::types::User>("getMe", fast_retry(2, false))
+        .await
+    {
+        Ok(_) => return Err("retry unexpectedly succeeded after method retry budget".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(502));
+    assert_eq!(server.finish()?.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_bootstrap_retry_does_not_multiply_transport_retries() -> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 502, failure),
+    ])?;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(3, true))?
+        .build()?;
+
+    let outcome = client
+        .control()
+        .setup()
+        .bootstrap_with_retry(
+            &BootstrapPlan::new().fail_fast_get_me(),
+            fast_bootstrap_retry(2),
+        )
+        .await;
+    let error = outcome
+        .error()
+        .ok_or("bootstrap retry unexpectedly succeeded")?;
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(502));
+    assert_eq!(outcome.report.me.diagnostics.attempt_count, 2);
+    assert_eq!(server.finish()?.len(), 2);
 
     Ok(())
 }
@@ -797,6 +879,41 @@ async fn app_reply_text_supports_business_message_updates() -> Result<(), DynErr
         .send()
         .await?;
     assert_eq!(sent.message_id.0, 10);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_reply_text_preserves_deleted_business_message_context() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":11,"date":1710000004,"chat":{"id":7001,"type":"private","first_name":"customer"},"text":"business cleanup"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendMessage",
+        200,
+        response,
+        &[
+            "\"business_connection_id\":\"business-1\"",
+            "\"chat_id\":7001",
+            "\"text\":\"business cleanup\"",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 49,
+        "deleted_business_messages": {
+            "business_connection_id": "business-1",
+            "chat": {"id": 7001, "type": "private", "first_name": "customer"},
+            "message_ids": [77, 78]
+        }
+    }))?;
+
+    let sent = client
+        .app()
+        .reply(&update, "business cleanup")?
+        .send()
+        .await?;
+    assert_eq!(sent.message_id.0, 11);
 
     join_server(handle)?;
     Ok(())

@@ -2,34 +2,13 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{Error, Result};
+use crate::Result;
+
+use crate::types::validation::{
+    positive_i64 as validate_positive_i64, string_id as validate_string_id,
+};
 
 use super::AdvancedRequest;
-
-fn validate_string_id(field: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} cannot be empty"),
-        });
-    }
-    if value.chars().any(char::is_control) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} must not contain control characters"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_positive_i64(field: &str, value: i64) -> Result<()> {
-    if value <= 0 {
-        return Err(Error::InvalidRequest {
-            reason: format!("{field} must be greater than 0"),
-        });
-    }
-
-    Ok(())
-}
 
 trait GeneratedValidate {
     fn validate_generated(&self) -> Result<()>;

@@ -2,6 +2,74 @@ use super::*;
 #[cfg(feature = "tracing")]
 use tracing::Instrument;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PollFailureKind {
+    Source,
+    Dispatch,
+    Fatal,
+}
+
+#[derive(Debug)]
+struct PollFailure {
+    kind: PollFailureKind,
+    error: Error,
+}
+
+impl PollFailure {
+    fn source(error: Error) -> Self {
+        if error.classification() == ErrorClass::Configuration {
+            return Self::fatal(error);
+        }
+
+        Self {
+            kind: PollFailureKind::Source,
+            error,
+        }
+    }
+
+    fn dispatch(error: Error) -> Self {
+        Self {
+            kind: PollFailureKind::Dispatch,
+            error,
+        }
+    }
+
+    fn fatal(error: Error) -> Self {
+        Self {
+            kind: PollFailureKind::Fatal,
+            error,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DispatchFailure {
+    error: Error,
+    outcomes: Vec<DispatchOutcome>,
+}
+
+impl DispatchFailure {
+    fn new(error: Error, outcomes: Vec<DispatchOutcome>) -> Self {
+        Self { error, outcomes }
+    }
+}
+
+fn completed_source_order_prefix(outcomes: &[Option<DispatchOutcome>]) -> Vec<DispatchOutcome> {
+    let mut prefix = Vec::new();
+
+    for outcome in outcomes {
+        let Some(outcome) = *outcome else {
+            break;
+        };
+        prefix.push(outcome);
+        if outcome.is_failed() {
+            break;
+        }
+    }
+
+    prefix
+}
+
 /// Source-agnostic bot engine that handles dispatching, backpressure and error policy.
 pub struct BotEngine<S>
 where
@@ -155,7 +223,13 @@ where
 
     /// Runs one poll/prepare/dispatch cycle.
     pub async fn poll_once(&mut self) -> Result<Vec<DispatchOutcome>> {
-        self.config.validate()?;
+        self.poll_once_inner()
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    async fn poll_once_inner(&mut self) -> std::result::Result<Vec<DispatchOutcome>, PollFailure> {
+        self.config.validate().map_err(PollFailure::fatal)?;
 
         let poll_started_at = Instant::now();
         self.notify_event(EngineEvent::PollStarted).await;
@@ -180,7 +254,7 @@ where
                     message: error.to_string(),
                 })
                 .await;
-                return Err(error);
+                return Err(PollFailure::source(error));
             }
         };
 
@@ -198,7 +272,7 @@ where
                 message: error.to_string(),
             })
             .await;
-            return Err(error);
+            return Err(PollFailure::source(error));
         }
 
         self.notify_event(EngineEvent::PollCompleted {
@@ -211,14 +285,26 @@ where
         })
         .await;
 
-        let outcomes = self.dispatch_updates(updates).await?;
-        self.source.commit(&outcomes).await?;
+        let outcomes = match self.dispatch_updates(updates).await {
+            Ok(outcomes) => outcomes,
+            Err(failure) => {
+                self.source
+                    .commit(&failure.outcomes)
+                    .await
+                    .map_err(PollFailure::source)?;
+                return Err(PollFailure::dispatch(failure.error));
+            }
+        };
+        self.source
+            .commit(&outcomes)
+            .await
+            .map_err(PollFailure::source)?;
         Ok(outcomes)
     }
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            let poll_result = self.poll_once().await;
+            let poll_result = self.poll_once_inner().await;
             let delay = self.handle_poll_result(poll_result).await?;
             wait_if_needed(delay).await;
         }
@@ -236,7 +322,7 @@ where
         loop {
             tokio::select! {
                 _ = &mut shutdown => return Ok(()),
-                poll_result = self.poll_once() => {
+                poll_result = self.poll_once_inner() => {
                     let delay = self.handle_poll_result(poll_result).await?;
                     if !delay.is_zero() {
                         tokio::select! {
@@ -249,8 +335,11 @@ where
         }
     }
 
-    async fn dispatch_updates(&mut self, updates: Vec<Update>) -> Result<Vec<DispatchOutcome>> {
-        if self.config.max_handler_concurrency <= 1 {
+    async fn dispatch_updates(
+        &mut self,
+        updates: Vec<Update>,
+    ) -> std::result::Result<Vec<DispatchOutcome>, DispatchFailure> {
+        if self.config.max_handler_concurrency <= 1 || !self.config.continue_on_handler_error {
             return self.dispatch_updates_sequential(updates).await;
         }
         self.dispatch_updates_concurrent(updates).await
@@ -259,7 +348,7 @@ where
     async fn dispatch_updates_sequential(
         &mut self,
         updates: Vec<Update>,
-    ) -> Result<Vec<DispatchOutcome>> {
+    ) -> std::result::Result<Vec<DispatchOutcome>, DispatchFailure> {
         let mut outcomes = Vec::with_capacity(updates.len());
 
         for update in updates {
@@ -314,13 +403,13 @@ where
                         latency: dispatch_started_at.elapsed(),
                     })
                     .await;
-                    if !self.config.continue_on_handler_error {
-                        return Err(error);
-                    }
                     let outcome = DispatchOutcome::Failed { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
                     outcomes.push(outcome);
+                    if !self.config.continue_on_handler_error {
+                        return Err(DispatchFailure::new(error, outcomes));
+                    }
                 }
             }
         }
@@ -331,22 +420,25 @@ where
     async fn dispatch_updates_concurrent(
         &mut self,
         updates: Vec<Update>,
-    ) -> Result<Vec<DispatchOutcome>> {
+    ) -> std::result::Result<Vec<DispatchOutcome>, DispatchFailure> {
         let max_concurrency = self.config.max_handler_concurrency;
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
+        let update_count = updates.len();
+        let mut outcomes = vec![None; update_count];
 
-        for update in updates {
+        for (index, update) in updates.into_iter().enumerate() {
             let update_id = update.update_id;
             self.notify_unknown_kinds(&update).await;
             self.notify_event(EngineEvent::DispatchStarted { update_id })
                 .await;
 
-            let permit = semaphore
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|_| invalid_request("handler semaphore closed unexpectedly"))?;
+            let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
+                DispatchFailure::new(
+                    invalid_request("handler semaphore closed unexpectedly"),
+                    completed_source_order_prefix(&outcomes),
+                )
+            })?;
 
             let router = self.router.clone();
             let context = BotContext::new(self.client.clone());
@@ -360,16 +452,15 @@ where
                 #[cfg(not(feature = "tracing"))]
                 let dispatch_future = router.dispatch(context, update);
                 let result = dispatch_future.await;
-                (update_id, dispatch_started_at.elapsed(), result)
+                (index, update_id, dispatch_started_at.elapsed(), result)
             });
         }
 
-        let mut outcomes = Vec::new();
         let mut first_error: Option<Error> = None;
 
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
-                Ok((update_id, latency, Ok(true))) => {
+                Ok((index, update_id, latency, Ok(true))) => {
                     let outcome = DispatchOutcome::Handled { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
@@ -379,9 +470,9 @@ where
                         latency,
                     })
                     .await;
-                    outcomes.push(outcome);
+                    outcomes[index] = Some(outcome);
                 }
-                Ok((update_id, latency, Ok(false))) => {
+                Ok((index, update_id, latency, Ok(false))) => {
                     let outcome = DispatchOutcome::Ignored { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
@@ -391,9 +482,9 @@ where
                         latency,
                     })
                     .await;
-                    outcomes.push(outcome);
+                    outcomes[index] = Some(outcome);
                 }
-                Ok((update_id, latency, Err(error))) => {
+                Ok((index, update_id, latency, Err(error))) => {
                     self.notify_handler_error(update_id, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id,
@@ -406,14 +497,14 @@ where
                         latency,
                     })
                     .await;
+                    let outcome = DispatchOutcome::Failed { update_id };
+                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                        .await;
+                    outcomes[index] = Some(outcome);
                     if !self.config.continue_on_handler_error {
                         first_error = Some(error);
                         break;
                     }
-                    let outcome = DispatchOutcome::Failed { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    outcomes.push(outcome);
                 }
                 Err(join_error) => {
                     let error = invalid_request(format!("bot handler task failed: {join_error}"));
@@ -432,15 +523,26 @@ where
         if let Some(error) = first_error {
             join_set.abort_all();
             while join_set.join_next().await.is_some() {}
-            return Err(error);
+            return Err(DispatchFailure::new(
+                error,
+                completed_source_order_prefix(&outcomes),
+            ));
         }
 
-        Ok(outcomes)
+        outcomes
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                DispatchFailure::new(
+                    invalid_request("bot dispatch task completed without an outcome"),
+                    Vec::new(),
+                )
+            })
     }
 
     async fn handle_poll_result(
         &mut self,
-        poll_result: Result<Vec<DispatchOutcome>>,
+        poll_result: std::result::Result<Vec<DispatchOutcome>, PollFailure>,
     ) -> Result<Duration> {
         match poll_result {
             Ok(outcomes) if outcomes.is_empty() => {
@@ -451,17 +553,17 @@ where
                 self.source_error_streak = 0;
                 Ok(Duration::ZERO)
             }
-            Err(error) => {
-                self.notify_source_error(&error).await;
+            Err(failure) if failure.kind == PollFailureKind::Source => {
+                self.notify_source_error(&failure.error).await;
                 let streak = self.source_error_streak.saturating_add(1);
                 self.notify_metric(EngineMetric::SourceError {
-                    classification: error.classification(),
-                    retryable: error.is_retryable(),
+                    classification: failure.error.classification(),
+                    retryable: failure.error.is_retryable(),
                     streak,
                 })
                 .await;
                 if !self.config.continue_on_source_error {
-                    return Err(error);
+                    return Err(failure.error);
                 }
                 self.source_error_streak = streak;
                 if let Some(backoff) = self.config.source_error_backoff.as_ref() {
@@ -481,6 +583,7 @@ where
                 }
                 Ok(self.config.error_delay)
             }
+            Err(failure) => Err(failure.error),
         }
     }
 

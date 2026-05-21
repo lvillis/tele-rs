@@ -3,21 +3,18 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 use crate::types::common::ChatId;
 use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
+use crate::types::validation::{
+    optional_request_positive_i64 as validate_optional_positive_i64,
+    optional_request_positive_u32 as validate_optional_positive_u32,
+    optional_request_string_id as validate_optional_id, request_non_empty as ensure_non_empty,
+    request_string_id as validate_id,
+    suggested_post_parameters as validate_suggested_post_parameters,
+};
 
 const INVOICE_TITLE_MAX_CHARS: usize = 32;
 const INVOICE_DESCRIPTION_MAX_CHARS: usize = 255;
 const INVOICE_PAYLOAD_MAX_BYTES: usize = 128;
 const TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS: u32 = 2_592_000;
-
-fn ensure_non_empty(method: &str, field: &str, value: &str) -> Result<(), Error> {
-    if value.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires non-empty `{field}`"),
-        });
-    }
-
-    Ok(())
-}
 
 fn validate_bounded_text(
     method: &str,
@@ -43,35 +40,6 @@ fn validate_payload(method: &str, payload: &str) -> Result<(), Error> {
                 "{method} requires `payload` to be at most {INVOICE_PAYLOAD_MAX_BYTES} bytes"
             ),
         });
-    }
-
-    Ok(())
-}
-
-fn validate_id(method: &str, field: &str, value: &str) -> Result<(), Error> {
-    ensure_non_empty(method, field, value)?;
-    if value.chars().any(char::is_control) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires `{field}` without control characters"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_optional_id(method: &str, field: &str, value: Option<&str>) -> Result<(), Error> {
-    if let Some(value) = value {
-        validate_id(method, field, value)?;
-    }
-
-    Ok(())
-}
-
-fn validate_suggested_post_parameters(
-    suggested_post_parameters: Option<&SuggestedPostParameters>,
-) -> Result<(), Error> {
-    if let Some(suggested_post_parameters) = suggested_post_parameters {
-        suggested_post_parameters.validate()?;
     }
 
     Ok(())
@@ -190,36 +158,6 @@ fn validate_tip_configuration(
             });
         }
         previous = *amount;
-    }
-
-    Ok(())
-}
-
-fn validate_optional_positive_i64(
-    method: &str,
-    field: &str,
-    value: Option<i64>,
-) -> Result<(), Error> {
-    if let Some(value) = value
-        && value <= 0
-    {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires `{field}` to be greater than zero"),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_optional_positive_u32(
-    method: &str,
-    field: &str,
-    value: Option<u32>,
-) -> Result<(), Error> {
-    if matches!(value, Some(0)) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires `{field}` to be greater than zero"),
-        });
     }
 
     Ok(())
