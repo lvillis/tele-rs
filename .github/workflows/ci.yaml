@@ -5,31 +5,88 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.95.0
+  NEXTEST_VERSION: 0.9.136
+
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.95.0
-          components: rustfmt, clippy
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustup show
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.cargo/bin"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          install_archive_bin() {
+            local url="$1"
+            local checksum_file="$2"
+            local archive="$3"
+            local bin_name="$4"
+
+            curl --fail --location --show-error --silent "$url" --output "$tmpdir/$archive"
+            (
+              cd "$tmpdir"
+              sha256sum --check "$checksum_file"
+              mkdir "$archive.d"
+              tar --no-same-owner -xzf "$archive" -C "$archive.d"
+              install -m 0755 "$(find "$archive.d" -type f -name "$bin_name" -print -quit)" "$HOME/.cargo/bin/$bin_name"
+            )
+          }
+
+          nextest_archive="cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --location --show-error --silent \
+            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.sha256" \
+            --output "$tmpdir/${nextest_archive}.sha256"
+          install_archive_bin \
+            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/${nextest_archive}" \
+            "$tmpdir/${nextest_archive}.sha256" \
+            "$nextest_archive" \
+            cargo-nextest
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          cargo nextest --version
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          cache-targets: "false"
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Verify generated advanced API files
+        run: cargo run -p tele-codegen -- check-advanced
+
+      - name: Check feature combinations
+        shell: bash
         run: |
-          python3 scripts/gen_advanced.py
-          cargo fmt --all
-          git diff --exit-code -- crates/tele/src/types/advanced.rs crates/tele/src/api/advanced.rs
+          set -euo pipefail
+          cargo check -p tele --all-targets
+          cargo check -p tele --all-targets --no-default-features --features async-tls-rustls-ring
+          cargo check -p tele --all-targets --no-default-features --features blocking-tls-rustls-ring
+          cargo check -p tele --all-targets --no-default-features --features bot,async-tls-rustls-ring
+          cargo check -p tele --all-targets --no-default-features --features axum,macros,redis-session,postgres-session,async-tls-rustls-ring
 
       - name: Format
         run: cargo fmt --all --check
