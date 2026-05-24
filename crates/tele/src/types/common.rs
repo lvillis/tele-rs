@@ -113,6 +113,11 @@ fn validate_chat_username(username: &str) -> Result<()> {
     if handle.is_empty() {
         return Err(invalid_request("chat_id username cannot be empty"));
     }
+    if !(5..=32).contains(&handle.len()) {
+        return Err(invalid_request(
+            "chat_id username must be 5-32 ASCII characters after `@`",
+        ));
+    }
     if !handle
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
@@ -168,8 +173,10 @@ mod tests {
             ChatId::from(0_i64),
             ChatId::from("channel"),
             ChatId::from("@"),
+            ChatId::from("@abcd"),
             ChatId::from("@bad-name"),
             ChatId::from("@bad name"),
+            ChatId::from("@abcdefghijklmnopqrstuvwxyzabcdefg"),
         ] {
             assert!(matches!(
                 chat_id.validate(),

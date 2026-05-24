@@ -847,6 +847,17 @@ impl SetStickerSetThumbnailRequest {
             self.thumbnail.as_deref(),
         )
     }
+
+    pub(crate) fn validate_upload(&self) -> Result<(), Error> {
+        ensure_non_empty("setStickerSetThumbnail", "name", &self.name)?;
+        self.user_id.validate()?;
+        if self.thumbnail.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "thumbnail must be omitted for multipart upload requests".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// `setCustomEmojiStickerSetThumbnail` request.
@@ -962,6 +973,16 @@ mod tests {
             custom.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        let mut thumbnail_upload =
+            SetStickerSetThumbnailRequest::new("set_name", UserId(1), StickerFormat::Static);
+        thumbnail_upload.thumbnail = Some("existing-thumbnail-file-id".to_owned());
+        assert!(matches!(
+            thumbnail_upload.validate_upload(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        thumbnail_upload.thumbnail = None;
+        thumbnail_upload.validate_upload()?;
 
         let custom_emoji_ids = vec!["emoji-id".to_owned(); MAX_CUSTOM_EMOJI_IDS + 1];
         assert!(matches!(

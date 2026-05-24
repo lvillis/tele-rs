@@ -209,6 +209,9 @@ pub struct EngineConfig {
     ///
     /// When enabled, this takes precedence over `error_delay`.
     pub source_error_backoff: Option<SourceErrorBackoffConfig>,
+    /// Keep the engine running after retryable source-side polling errors.
+    ///
+    /// Non-retryable source errors remain fatal even when this is enabled.
     pub continue_on_source_error: bool,
     pub continue_on_handler_error: bool,
     /// Maximum number of update handlers to run concurrently.

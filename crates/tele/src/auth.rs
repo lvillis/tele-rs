@@ -49,6 +49,7 @@ pub fn parse_web_app_init_data(init_data: &str) -> Result<BTreeMap<String, Strin
     let mut fields = BTreeMap::new();
     for (key, value) in form_urlencoded::parse(init_data.as_bytes()) {
         let key = key.into_owned();
+        validate_init_data_key(&key)?;
         let value = value.into_owned();
         if fields.insert(key.clone(), value).is_some() {
             return Err(Error::InvalidRequest {
@@ -64,6 +65,24 @@ pub fn parse_web_app_init_data(init_data: &str) -> Result<BTreeMap<String, Strin
     }
 
     Ok(fields)
+}
+
+fn validate_init_data_key(key: &str) -> Result<(), Error> {
+    if key.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "initData contains an empty key".to_owned(),
+        });
+    }
+    if !key
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("initData contains invalid key `{key}`"),
+        });
+    }
+
+    Ok(())
 }
 
 /// Verifies Mini App `initData` signature and optional max age.
@@ -480,6 +499,25 @@ mod tests {
         };
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("duplicate key `auth_date`"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_init_data_keys() -> std::result::Result<(), Box<dyn StdError>> {
+        for init_data in [
+            "=value&hash=deadbeef",
+            "bad-key=value&hash=deadbeef",
+            "bad%0Akey=value&hash=deadbeef",
+            "bad%3Dkey=value&hash=deadbeef",
+        ] {
+            let error = match parse_web_app_init_data(init_data) {
+                Ok(_) => return Err(format!("malformed key should fail: {init_data}").into()),
+                Err(error) => error,
+            };
+            assert!(matches!(error, Error::InvalidRequest { .. }));
+        }
+
+        assert!(parse_web_app_init_data("auth_date=1&query_id=q-1&hash=deadbeef").is_ok());
         Ok(())
     }
 }

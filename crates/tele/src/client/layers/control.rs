@@ -55,17 +55,31 @@ impl ControlApi {
             return outcome;
         }
 
-        // Do not trigger a second `getMe`; router prep should honor the bootstrap step policy.
         if let Some(me) = outcome.report.me.value.as_ref()
             && let Err(error) = router.prepare_with_user(me)
         {
             outcome.error = Some(error);
-        } else if outcome.report.me.value.is_none() {
+        } else if should_disable_auto_command_target_after_bootstrap(plan, &outcome) {
             let _ = router.disable_auto_command_target();
         }
 
         outcome
     }
+}
+
+#[cfg(all(feature = "_async", feature = "bot"))]
+fn should_disable_auto_command_target_after_bootstrap(
+    plan: &BootstrapPlan,
+    outcome: &BootstrapOutcome,
+) -> bool {
+    matches!(
+        plan.get_me,
+        BootstrapGetMePolicy::WarnAndContinueOnRetryable
+    ) && outcome.report.me.value.is_none()
+        && matches!(
+            outcome.report.me.diagnostics.status,
+            BootstrapStepStatus::Warned
+        )
 }
 
 /// Blocking control-plane facade for setup orchestration.

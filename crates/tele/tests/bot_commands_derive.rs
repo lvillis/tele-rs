@@ -38,6 +38,7 @@ fn derive_parses_commands_and_builds_descriptions() -> Result<(), DynError> {
         DemoCommand::parse("echo", "hello world"),
         Some(DemoCommand::Echo("hello world".to_owned()))
     );
+    assert_eq!(DemoCommand::parse("echo", ""), None);
     assert_eq!(
         DemoCommand::parse("repeat", "\"hello world\""),
         Some(DemoCommand::Echo("hello world".to_owned()))
@@ -64,6 +65,7 @@ fn derive_parses_commands_and_builds_descriptions() -> Result<(), DynError> {
             text: "team standup in 10 minutes".to_owned()
         })
     );
+    assert_eq!(DemoCommand::parse("remind", "15"), None);
     assert_eq!(
         DemoCommand::parse("maybe", ""),
         Some(DemoCommand::Maybe(None))

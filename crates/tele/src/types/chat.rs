@@ -715,6 +715,7 @@ pub struct CreateChatInviteLinkRequest {
 impl CreateChatInviteLinkRequest {
     pub fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
+        validate_optional_unix_timestamp("expire_date", self.expire_date)?;
         validate_invite_link_options(
             self.name.as_deref(),
             self.member_limit,
@@ -741,6 +742,7 @@ impl EditChatInviteLinkRequest {
     pub fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
         validate_required_text("invite_link", &self.invite_link)?;
+        validate_optional_unix_timestamp("expire_date", self.expire_date)?;
         validate_invite_link_options(
             self.name.as_deref(),
             self.member_limit,
@@ -920,13 +922,27 @@ impl_chat_id_validate!(
 
 impl_chat_and_user_validate!(
     GetChatMemberRequest,
-    BanChatMemberRequest,
     UnbanChatMemberRequest,
-    RestrictChatMemberRequest,
     PromoteChatMemberRequest,
 );
 
 impl_chat_and_sender_chat_validate!(BanChatSenderChatRequest, UnbanChatSenderChatRequest,);
+
+impl BanChatMemberRequest {
+    pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        validate_optional_unix_timestamp("until_date", self.until_date)
+    }
+}
+
+impl RestrictChatMemberRequest {
+    pub fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.user_id.validate()?;
+        validate_optional_unix_timestamp("until_date", self.until_date)
+    }
+}
 
 impl PinChatMessageRequest {
     pub fn validate(&self) -> Result<()> {
@@ -983,6 +999,16 @@ fn validate_invite_link_options(
     if creates_join_request == Some(true) && member_limit.is_some() {
         return Err(Error::InvalidRequest {
             reason: "creates_join_request cannot be combined with member_limit".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_optional_unix_timestamp(field: &str, value: Option<i64>) -> Result<()> {
+    if value.is_some_and(|value| value < 0) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not be negative"),
         });
     }
 
@@ -1145,6 +1171,20 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
+        let invalid_ban_until_date = BanChatMemberRequest::new(1, UserId::from(2)).until_date(-1);
+        assert!(matches!(
+            invalid_ban_until_date.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_restrict_until_date =
+            RestrictChatMemberRequest::new(1, UserId::from(2), ChatPermissions::deny_all())
+                .until_date(-1);
+        assert!(matches!(
+            invalid_restrict_until_date.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let invalid_sender_chat = BanChatSenderChatRequest {
             chat_id: ChatId::from(1),
             sender_chat_id: 0,
@@ -1201,6 +1241,15 @@ mod tests {
         };
         assert!(matches!(
             invalid_limit.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_expire_date = CreateChatInviteLinkRequest {
+            expire_date: Some(-1),
+            ..valid.clone()
+        };
+        assert!(matches!(
+            invalid_expire_date.validate(),
             Err(Error::InvalidRequest { .. })
         ));
 

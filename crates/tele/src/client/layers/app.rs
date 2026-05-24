@@ -17,6 +17,7 @@ macro_rules! impl_reply_context_request {
         $(
             impl ReplyContextRequest for $ty {
                 fn apply_reply_context(&mut self, context: &ReplyContext) {
+                    self.message_thread_id = context.message_thread_id;
                     self.reply_parameters = context.reply_parameters.clone();
                     self.business_connection_id = context.business_connection_id.clone();
                 }

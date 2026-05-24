@@ -635,7 +635,7 @@ struct ChatSessionLocks {
     inner: Arc<ChatSessionLockMap>,
 }
 
-type ChatSessionLockMap = Mutex<HashMap<i64, Arc<Mutex<()>>>>;
+type ChatSessionLockMap = std::sync::Mutex<HashMap<i64, Arc<Mutex<()>>>>;
 type ChatSessionLockRegistry =
     std::sync::Mutex<HashMap<usize, std::sync::Weak<ChatSessionLockMap>>>;
 
@@ -660,25 +660,35 @@ impl ChatSessionLocks {
         }
 
         registry.retain(|_, locks| locks.strong_count() > 0);
-        let inner = Arc::new(Mutex::new(HashMap::new()));
+        let inner = Arc::new(std::sync::Mutex::new(HashMap::new()));
         registry.insert(key, Arc::downgrade(&inner));
         Self { inner }
     }
 
     async fn acquire(&self, chat_id: i64) -> ChatSessionLockGuard {
         let lock = {
-            let mut locks = self.inner.lock().await;
+            let mut locks = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             locks
                 .entry(chat_id)
                 .or_insert_with(|| Arc::new(Mutex::new(())))
                 .clone()
         };
         let guard = lock.lock_owned().await;
-        ChatSessionLockGuard { _guard: guard }
+        ChatSessionLockGuard {
+            locks: self.clone(),
+            chat_id,
+            guard: Some(guard),
+        }
     }
 
-    async fn prune_idle(&self, chat_id: i64) {
-        let mut locks = self.inner.lock().await;
+    fn prune_idle(&self, chat_id: i64) {
+        let mut locks = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if locks
             .get(&chat_id)
             .is_some_and(|lock| Arc::strong_count(lock) == 1)
@@ -689,7 +699,16 @@ impl ChatSessionLocks {
 }
 
 struct ChatSessionLockGuard {
-    _guard: tokio::sync::OwnedMutexGuard<()>,
+    locks: ChatSessionLocks,
+    chat_id: i64,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for ChatSessionLockGuard {
+    fn drop(&mut self) {
+        drop(self.guard.take());
+        self.locks.prune_idle(self.chat_id);
+    }
 }
 
 /// High-level chat-scoped session manager for FSM-style bots.
@@ -755,30 +774,20 @@ where
 
     pub async fn save(&self, update: &Update, state: S) -> Result<()> {
         let chat_id = chat_id_for_state(update)?;
-        let guard = self.locks.acquire(chat_id).await;
-        let result = self.store.save(chat_id, state).await;
-        drop(guard);
-        self.locks.prune_idle(chat_id).await;
-        result
+        let _guard = self.locks.acquire(chat_id).await;
+        self.store.save(chat_id, state).await
     }
 
     pub async fn clear(&self, update: &Update) -> Result<()> {
         let chat_id = chat_id_for_state(update)?;
-        let guard = self.locks.acquire(chat_id).await;
-        let result = self.store.clear(chat_id).await;
-        drop(guard);
-        self.locks.prune_idle(chat_id).await;
-        result
+        let _guard = self.locks.acquire(chat_id).await;
+        self.store.clear(chat_id).await
     }
 
     pub async fn apply(&self, update: &Update, transition: StateTransition<S>) -> Result<()> {
         let chat_id = chat_id_for_state(update)?;
-        let guard = self.locks.acquire(chat_id).await;
-        let result =
-            apply_chat_state_transition_for_chat_id(self.store(), chat_id, transition).await;
-        drop(guard);
-        self.locks.prune_idle(chat_id).await;
-        result
+        let _guard = self.locks.acquire(chat_id).await;
+        apply_chat_state_transition_for_chat_id(self.store(), chat_id, transition).await
     }
 
     /// Loads state, runs transition function, then applies resulting state transition.
@@ -791,14 +800,71 @@ where
         Fut: Future<Output = (R, StateTransition<S>)> + Send,
     {
         let chat_id = chat_id_for_state(update)?;
-        let guard = self.locks.acquire(chat_id).await;
+        let _guard = self.locks.acquire(chat_id).await;
         let current = self.store.load(chat_id).await?;
         let (output, transition) = f(current).await;
         let result =
             apply_chat_state_transition_for_chat_id(self.store(), chat_id, transition).await;
-        drop(guard);
-        self.locks.prune_idle(chat_id).await;
         result.map(|()| output)
+    }
+}
+
+#[cfg(test)]
+mod chat_session_tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct FailingLoadStore;
+
+    impl SessionStore<String> for FailingLoadStore {
+        fn load<'a>(&'a self, _chat_id: i64) -> SessionFuture<'a, Option<String>> {
+            Box::pin(async {
+                Err(storage_error(
+                    "test load",
+                    "load failed before transition",
+                    true,
+                ))
+            })
+        }
+
+        fn save<'a>(&'a self, _chat_id: i64, _state: String) -> SessionFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn clear<'a>(&'a self, _chat_id: i64) -> SessionFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_session_prunes_idle_lock_after_transition_load_error() -> Result<()> {
+        let session = ChatSession::<String, _>::new(FailingLoadStore);
+        let update: Update = serde_json::from_value(serde_json::json!({
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "date": 1,
+                "chat": {"id": 42, "type": "private"},
+                "text": "state"
+            }
+        }))
+        .map_err(|source| invalid_request(format!("failed to build test update: {source}")))?;
+        let chat_id = chat_id_for_state(&update)?;
+
+        let result = session
+            .transition(&update, |_state| async {
+                ((), StateTransition::Set("unreachable".to_owned()))
+            })
+            .await;
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        let locks = session
+            .locks
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!locks.contains_key(&chat_id));
+        Ok(())
     }
 }
 

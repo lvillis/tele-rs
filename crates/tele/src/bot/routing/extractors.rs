@@ -52,13 +52,21 @@ pub trait BotCommands: Sized {
 }
 
 /// Route-level parser for a command's trailing argument string.
+///
+/// Built-in implementations distinguish required and optional semantics:
+/// `String` requires non-empty trailing text, `Vec<String>` accepts zero or more shell-like tokens,
+/// and `Option<T>` treats empty input as `None`.
 pub trait CommandArgs: Sized {
     fn parse(args: &str) -> std::result::Result<Self, String>;
 }
 
 impl CommandArgs for String {
     fn parse(args: &str) -> std::result::Result<Self, String> {
-        Ok(args.trim().to_owned())
+        let args = args.trim();
+        if args.is_empty() {
+            return Err("missing required command argument".to_owned());
+        }
+        Ok(args.to_owned())
     }
 }
 
@@ -68,6 +76,22 @@ impl CommandArgs for Vec<String> {
             return Ok(Vec::new());
         }
         tokenize_command_args(args).ok_or_else(|| "invalid quoted command arguments".to_owned())
+    }
+}
+
+impl<T> CommandArgs for Option<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    fn parse(args: &str) -> std::result::Result<Self, String> {
+        let args = args.trim();
+        if args.is_empty() {
+            return Ok(None);
+        }
+        args.parse::<T>()
+            .map(Some)
+            .map_err(|source| format!("invalid optional command argument: {source}"))
     }
 }
 
@@ -116,7 +140,7 @@ impl TextInput {
 
 impl UpdateExtractor for TextInput {
     fn extract(update: &Update) -> Option<Self> {
-        extract_text(update).map(|text| Self(text.to_owned()))
+        extract_message_update_text(update).map(|text| Self(text.to_owned()))
     }
 
     fn describe() -> &'static str {
@@ -220,7 +244,10 @@ impl WebAppInput {
 
 impl UpdateExtractor for WebAppInput {
     fn extract(update: &Update) -> Option<Self> {
-        extract_web_app_data(update).cloned().map(Self)
+        extract_message_update(update)?
+            .web_app_data()
+            .cloned()
+            .map(Self)
     }
 
     fn describe() -> &'static str {
@@ -240,7 +267,10 @@ impl WriteAccessAllowedInput {
 
 impl UpdateExtractor for WriteAccessAllowedInput {
     fn extract(update: &Update) -> Option<Self> {
-        extract_write_access_allowed(update).cloned().map(Self)
+        extract_message_update(update)?
+            .write_access_allowed()
+            .cloned()
+            .map(Self)
     }
 
     fn describe() -> &'static str {
@@ -666,6 +696,18 @@ pub fn tokenize_command_args(args: &str) -> Option<Vec<String>> {
 
 /// Returns canonical message object from update, prioritizing incoming message variants.
 pub fn extract_message(update: &Update) -> Option<&Message> {
+    if let Some(message) = extract_message_update(update) {
+        return Some(message);
+    }
+
+    update
+        .callback_query
+        .as_ref()
+        .and_then(|query| query.message.as_deref())
+        .and_then(|message| message.accessible())
+}
+
+pub(super) fn extract_message_update(update: &Update) -> Option<&Message> {
     if let Some(message) = update.message.as_deref() {
         return Some(message);
     }
@@ -688,11 +730,11 @@ pub fn extract_message(update: &Update) -> Option<&Message> {
         return Some(message);
     }
 
-    update
-        .callback_query
-        .as_ref()
-        .and_then(|query| query.message.as_deref())
-        .and_then(|message| message.accessible())
+    None
+}
+
+pub(super) fn extract_message_update_text(update: &Update) -> Option<&str> {
+    extract_message_update(update)?.text.as_deref()
 }
 
 /// Returns canonical chat extracted from the update.
@@ -1018,7 +1060,7 @@ pub fn extract_command_for_bot<'a>(
     update: &'a Update,
     bot_username: Option<&str>,
 ) -> Option<&'a str> {
-    let parsed = parse_command_prefix(extract_text(update)?)?;
+    let parsed = parse_command_prefix(extract_message_update_text(update)?)?;
     command_is_addressed_to(parsed.mention.as_deref(), bot_username).then_some(parsed.name)
 }
 
@@ -1032,7 +1074,7 @@ pub fn extract_command_args_for_bot<'a>(
     update: &'a Update,
     bot_username: Option<&str>,
 ) -> Option<&'a str> {
-    let parsed = parse_command_prefix(extract_text(update)?)?;
+    let parsed = parse_command_prefix(extract_message_update_text(update)?)?;
     command_is_addressed_to(parsed.mention.as_deref(), bot_username).then_some(parsed.args)
 }
 
@@ -1046,7 +1088,7 @@ pub fn extract_command_data_for_bot(
     update: &Update,
     bot_username: Option<&str>,
 ) -> Option<CommandData> {
-    parse_command_text_for_bot(extract_text(update)?, bot_username)
+    parse_command_text_for_bot(extract_message_update_text(update)?, bot_username)
 }
 
 /// Parses typed command from incoming update using a `BotCommands` implementation.

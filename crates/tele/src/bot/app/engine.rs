@@ -17,10 +17,6 @@ struct PollFailure {
 
 impl PollFailure {
     fn source(error: Error) -> Self {
-        if error.classification() == ErrorClass::Configuration {
-            return Self::fatal(error);
-        }
-
         Self {
             kind: PollFailureKind::Source,
             error,
@@ -562,7 +558,7 @@ where
                     streak,
                 })
                 .await;
-                if !self.config.continue_on_source_error {
+                if !self.config.continue_on_source_error || !failure.error.is_retryable() {
                     return Err(failure.error);
                 }
                 self.source_error_streak = streak;

@@ -139,6 +139,7 @@ fn parse_arm_for_variant(
                 let is_last = index + 1 == field_count;
                 let ty = &field.ty;
                 validate_field_type(ty, field)?;
+                validate_field_position(ty, is_last, field)?;
                 let value_expr = parse_value_expr(ty, is_last);
 
                 value_bindings.push(quote! {
@@ -181,6 +182,7 @@ fn parse_arm_for_variant(
                 let is_last = index + 1 == field_count;
                 let ty = &field.ty;
                 validate_field_type(ty, field)?;
+                validate_field_position(ty, is_last, field)?;
                 let value_expr = parse_value_expr(ty, is_last);
 
                 value_bindings.push(quote! {
@@ -212,9 +214,10 @@ fn parse_value_expr(ty: &Type, is_last: bool) -> TokenStream2 {
     if is_string_type(ty) {
         if is_last {
             return quote! {
-                if __cursor >= __tokens.len() {
-                    String::new()
-                } else {
+                {
+                    if __cursor >= __tokens.len() {
+                        return None;
+                    }
                     let value = __tokens[__cursor..].join(" ");
                     __cursor = __tokens.len();
                     value
@@ -430,6 +433,17 @@ fn validate_field_type(ty: &Type, span: &impl ToTokens) -> syn::Result<()> {
         return Err(syn::Error::new_spanned(
             span,
             "borrowed command argument types inside `Option` are unsupported; use `Option<String>`",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_field_position(ty: &Type, is_last: bool, span: &impl ToTokens) -> syn::Result<()> {
+    if option_inner_type(ty).is_some() && !is_last {
+        return Err(syn::Error::new_spanned(
+            span,
+            "optional command arguments must be the final field to avoid ambiguous positional parsing",
         ));
     }
 

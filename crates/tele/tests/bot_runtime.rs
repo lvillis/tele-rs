@@ -18,18 +18,18 @@ use tele::bot::{
     BotApp, BotContext, BotEngine, BotOutbox, BusinessConnectionInput,
     BusinessMessagesDeletedInput, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
     CallbackInput, CallbackQueryInput, ChatBoostInput, ChatJoinRequestInput,
-    ChatMemberUpdatedInput, ChatSession, CommandData, DispatchMetricOutcome, DispatchOutcome,
-    EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError, InMemorySessionStore,
-    InlineQueryInput, JsonFileSessionStore, LongPollingSource, ManagedBotInput,
-    MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig, PollAnswerInput, PollingConfig,
-    RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig, StateTransition,
-    TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner, WriteAccessAllowedInput,
-    apply_chat_state_transition, channel_source, clear_chat_state, extract_callback_data,
-    extract_callback_json, extract_chat_join_request, extract_chat_member_update, extract_command,
-    extract_command_args, extract_command_data, extract_compact_callback, extract_message,
-    extract_my_chat_member_update, extract_text, extract_typed_callback, extract_web_app_data,
-    extract_write_access_allowed, load_chat_state, parse_command_text, parse_command_text_for_bot,
-    save_chat_state, tokenize_command_args,
+    ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandData, DispatchMetricOutcome,
+    DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError,
+    InMemorySessionStore, InlineQueryInput, JsonFileSessionStore, LongPollingSource,
+    ManagedBotInput, MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig, PollAnswerInput,
+    PollingConfig, RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig,
+    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
+    WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
+    extract_callback_data, extract_callback_json, extract_chat_join_request,
+    extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
+    extract_compact_callback, extract_message, extract_my_chat_member_update, extract_text,
+    extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
+    parse_command_text, parse_command_text_for_bot, save_chat_state, tokenize_command_args,
 };
 use tele::types::advanced::AdvancedSetChatMenuButtonRequest;
 use tele::types::telegram::{
@@ -68,6 +68,19 @@ impl CompactCallbackPayload for DemoCallbackPayload {
             target: decoder.next_parse("target")?,
         })
     }
+}
+
+#[test]
+fn command_args_contract_distinguishes_required_and_optional() {
+    assert_eq!(
+        <String as CommandArgs>::parse("  hello world  "),
+        Ok("hello world".to_owned())
+    );
+    assert!(<String as CommandArgs>::parse("   ").is_err());
+    assert_eq!(<Vec<String> as CommandArgs>::parse("   "), Ok(Vec::new()));
+    assert_eq!(<Option<i64> as CommandArgs>::parse("   "), Ok(None));
+    assert_eq!(<Option<i64> as CommandArgs>::parse(" 42 "), Ok(Some(42)));
+    assert!(<Option<i64> as CommandArgs>::parse("oops").is_err());
 }
 
 fn accept_with_timeout(
@@ -553,6 +566,32 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     };
     assert_eq!(extract_command(&invalid_mention_update), None);
     assert_eq!(extract_command_args(&invalid_mention_update), None);
+
+    let Some(callback_with_command_message) = parse_update(json!({
+        "update_id": 2042,
+        "callback_query": {
+            "id": "cb-command-message",
+            "from": {"id": 99, "is_bot": false, "first_name": "tester"},
+            "message": {
+                "message_id": 2042,
+                "date": 1700002042,
+                "chat": {"id": 1, "type": "private"},
+                "text": "/echo hidden"
+            },
+            "data": "clicked"
+        }
+    })) else {
+        return Ok(());
+    };
+    assert!(extract_message(&callback_with_command_message).is_some());
+    assert_eq!(
+        extract_text(&callback_with_command_message),
+        Some("/echo hidden")
+    );
+    assert_eq!(extract_command(&callback_with_command_message), None);
+    assert_eq!(extract_command_args(&callback_with_command_message), None);
+    assert_eq!(extract_command_data(&callback_with_command_message), None);
+
     assert_eq!(
         tokenize_command_args(r#"hello "quoted world" again"#),
         Some(vec![
@@ -643,6 +682,28 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
             .and_then(|input| input.0.web_app_name.as_deref()),
         Some("mini_app_sample")
     );
+
+    let Some(callback_web_app_message) = parse_update(serde_json::json!({
+        "update_id": 204,
+        "callback_query": {
+            "id": "cb-web-app-message",
+            "from": {"id": 99, "is_bot": false, "first_name": "tester"},
+            "message": {
+                "message_id": 4,
+                "date": 1700000004,
+                "chat": {"id": 1, "type": "private"},
+                "web_app_data": {
+                    "data": "{\"query_id\":\"q-from-callback\"}",
+                    "button_text": "Old Mini App"
+                }
+            },
+            "data": "clicked"
+        }
+    })) else {
+        return Ok(());
+    };
+    assert!(extract_web_app_data(&callback_web_app_message).is_some());
+    assert!(WebAppInput::extract(&callback_web_app_message).is_none());
 
     let maybe_callback = parse_update(callback_update(201, 1, "btn-1"));
     assert!(maybe_callback.is_some());
@@ -1346,6 +1407,80 @@ async fn command_routes_respect_bot_target_and_canonical_message() -> Result<(),
             .await?
     );
 
+    let command_hits = Arc::new(AtomicUsize::new(0));
+    let mut callback_command_router = Router::new();
+    {
+        let command_hits = Arc::clone(&command_hits);
+        callback_command_router.command_route("start")?.handle(
+            move |_context: BotContext, _update: Update| {
+                let command_hits = Arc::clone(&command_hits);
+                async move {
+                    command_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        );
+    }
+    let Some(callback_command_update) = parse_update(json!({
+        "update_id": 2101,
+        "callback_query": {
+            "id": "cb-start-message",
+            "from": {"id": 99, "is_bot": false, "first_name": "tester"},
+            "message": {
+                "message_id": 2101,
+                "date": 1700002101,
+                "chat": {"id": 1, "type": "private"},
+                "text": "/start"
+            },
+            "data": "clicked"
+        }
+    })) else {
+        return Ok(());
+    };
+    assert!(
+        !callback_command_router
+            .dispatch(
+                BotContext::new(
+                    Client::builder("http://127.0.0.1:9")?
+                        .bot_token("123:abc")?
+                        .build()?
+                ),
+                callback_command_update,
+            )
+            .await?
+    );
+    assert_eq!(command_hits.load(Ordering::SeqCst), 0);
+
+    let Some(callback_mentioned_command_update) = parse_update(json!({
+        "update_id": 2102,
+        "callback_query": {
+            "id": "cb-mentioned-start-message",
+            "from": {"id": 99, "is_bot": false, "first_name": "tester"},
+            "message": {
+                "message_id": 2102,
+                "date": 1700002102,
+                "chat": {"id": 1, "type": "private"},
+                "text": "/start@ThisBot"
+            },
+            "data": "clicked"
+        }
+    })) else {
+        return Ok(());
+    };
+    assert!(
+        !callback_command_router
+            .dispatch_prepared(
+                BotContext::new(
+                    Client::builder("http://127.0.0.1:9")?
+                        .bot_token("123:abc")?
+                        .build()?
+                ),
+                callback_mentioned_command_update,
+            )
+            .await?
+    );
+    assert_eq!(command_hits.load(Ordering::SeqCst), 0);
+
     let Some(edited_update) = parse_update(json!({
         "update_id": 211,
         "edited_message": {
@@ -1442,6 +1577,55 @@ async fn bootstrap_router_reuses_get_me_for_command_target_prepare() -> Result<(
     };
     assert!(router.dispatch(BotContext::new(client), update).await?);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_router_skip_get_me_preserves_lazy_command_target_prepare() -> Result<(), DynError>
+{
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele","username":"ThisBot"}}"#,
+    )?;
+    let client = Client::builder(&base_url)?.bot_token("123:abc")?.build()?;
+    let control = client.control();
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let hits = Arc::clone(&hits);
+        router
+            .command_route("start")?
+            .handle(move |_context: BotContext, _update: Update| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+    }
+
+    let outcome = control
+        .bootstrap_router(&router, &tele::BootstrapPlan::new().skip_get_me())
+        .await;
+    assert!(outcome.is_success());
+    assert_eq!(
+        outcome.report.me.diagnostics.status,
+        BootstrapStepStatus::Skipped
+    );
+
+    let Some(update) = parse_update(message_update(214, 1, "/start@ThisBot hi")) else {
+        return Ok(());
+    };
+    assert!(
+        router
+            .dispatch_prepared(BotContext::new(client), update)
+            .await?
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    join_server(handle).await?;
     Ok(())
 }
 
@@ -2417,6 +2601,65 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
 }
 
 #[tokio::test]
+async fn run_until_stops_on_non_retryable_source_error() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let (sink, source) = channel_source(1)?;
+    drop(sink);
+    let source_errors = Arc::new(AtomicUsize::new(0));
+    let metrics = Arc::new(Mutex::new(Vec::<EngineMetric>::new()));
+
+    let mut engine = BotEngine::new(client, source, Router::new())
+        .with_config(EngineConfig {
+            continue_on_source_error: true,
+            error_delay: Duration::from_secs(60),
+            ..EngineConfig::default()
+        })
+        .on_source_error({
+            let source_errors = Arc::clone(&source_errors);
+            move |_error| {
+                source_errors.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .on_metric({
+            let metrics = Arc::clone(&metrics);
+            move |metric| {
+                if let Ok(mut captured) = metrics.lock() {
+                    captured.push(metric.clone());
+                }
+            }
+        });
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.run_until(std::future::pending::<()>()),
+    )
+    .await;
+    let error = match result {
+        Ok(Err(error)) => error,
+        Ok(Ok(())) => return Err("closed source unexpectedly completed cleanly".into()),
+        Err(_) => return Err("closed source was incorrectly retried until timeout".into()),
+    };
+
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(!error.is_retryable());
+    assert_eq!(source_errors.load(Ordering::SeqCst), 1);
+    let metrics = metrics.lock().map_err(|_| "engine metric mutex poisoned")?;
+    assert!(
+        metrics.iter().any(|metric| matches!(
+            metric,
+            EngineMetric::SourceError {
+                retryable: false,
+                ..
+            }
+        )),
+        "non-retryable source errors should still emit source-error metrics"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_until_stops_on_fail_fast_handler_error_even_when_source_errors_continue()
 -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
@@ -3144,20 +3387,6 @@ async fn extractor_routes_dispatch_text_and_callback_inputs() -> Result<(), DynE
 
     let mut router = Router::new();
     {
-        let callback_hits = Arc::clone(&callback_hits);
-        router.extracted_route::<CallbackInput>().handle(
-            move |_context: BotContext, _update: Update, callback| {
-                let callback_hits = Arc::clone(&callback_hits);
-                async move {
-                    if callback.into_inner() == r#"{"action":"ok"}"# {
-                        callback_hits.fetch_add(1, Ordering::SeqCst);
-                    }
-                    Ok(())
-                }
-            },
-        );
-    }
-    {
         let text_hits = Arc::clone(&text_hits);
         router.extracted_route::<TextInput>().handle(
             move |_context: BotContext, _update: Update, text| {
@@ -3165,6 +3394,20 @@ async fn extractor_routes_dispatch_text_and_callback_inputs() -> Result<(), DynE
                 async move {
                     if text.into_inner() == "hello" {
                         text_hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let callback_hits = Arc::clone(&callback_hits);
+        router.extracted_route::<CallbackInput>().handle(
+            move |_context: BotContext, _update: Update, callback| {
+                let callback_hits = Arc::clone(&callback_hits);
+                async move {
+                    if callback.into_inner() == r#"{"action":"ok"}"# {
+                        callback_hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
                 }
@@ -3808,6 +4051,31 @@ async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
         .await?;
 
     assert_eq!(first.message_id, second.message_id);
+    join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_idempotency_key_reuse_with_different_payload() -> Result<(), DynError> {
+    let ok_response = r#"{"ok":true,"result":{"message_id":89,"date":1710000011,"chat":{"id":12,"type":"private"},"text":"hello"}}"#;
+    let (base_url, handle) = spawn_server("/bot123:abc/sendMessage", 200, ok_response)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut config = OutboxConfig::default();
+    config.max_attempts = 1;
+    config.dedupe_ttl = Duration::from_secs(60);
+    let outbox = BotOutbox::spawn(client, config)?;
+
+    let first = outbox
+        .send_text_with_key(12_i64, "hello", Some("msg-reused".to_owned()))
+        .await?;
+    assert_eq!(first.message_id.0, 89);
+
+    let second = outbox
+        .send_text_with_key(12_i64, "different", Some("msg-reused".to_owned()))
+        .await;
+    assert!(matches!(second, Err(Error::InvalidRequest { .. })));
+
     join_server(handle).await?;
     Ok(())
 }

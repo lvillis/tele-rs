@@ -167,6 +167,13 @@ struct QueuedOutboxCommand {
     _permit: OutboxQueuePermit,
 }
 
+struct DedupeEntry {
+    chat_id: ChatId,
+    text: String,
+    message: Message,
+    expires_at: Instant,
+}
+
 enum OutboxQueuePermit {
     Live(tokio::sync::OwnedSemaphorePermit),
     Persisted(Arc<Semaphore>),
@@ -271,7 +278,7 @@ async fn run_outbox_worker(
     mut receiver: mpsc::Receiver<OutboxCommand>,
     permits: Arc<Semaphore>,
 ) {
-    let mut dedupe: HashMap<String, (Message, Instant)> = HashMap::new();
+    let mut dedupe: HashMap<String, DedupeEntry> = HashMap::new();
     let mut queue = persisted_queue
         .into_iter()
         .map(|payload| QueuedOutboxCommand {
@@ -355,9 +362,32 @@ async fn run_outbox_worker(
         prune_dedupe_cache(&mut dedupe);
 
         if let Some(key) = front_payload.idempotency_key.as_deref()
-            && let Some((cached, expires_at)) = dedupe.get(key)
-            && *expires_at > Instant::now()
+            && let Some(cached) = dedupe.get(key)
+            && cached.expires_at > Instant::now()
         {
+            if cached.chat_id != front_payload.chat_id || cached.text != front_payload.text {
+                let entry = match dead_letter_front_and_commit(
+                    &config,
+                    &mut queue,
+                    "idempotency key reused with different outbox payload".to_owned(),
+                )
+                .await
+                {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => continue,
+                    Err(_error) => {
+                        sleep(outbox_persistence_retry_delay(&config)).await;
+                        continue;
+                    }
+                };
+                if let Some(responder) = entry.responder {
+                    let _ = responder.send(Err(invalid_request(
+                        "outbox idempotency key was reused with a different message payload",
+                    )));
+                }
+                continue;
+            }
+
             let entry = match commit_outbox_front(&config, &mut queue).await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => continue,
@@ -367,7 +397,7 @@ async fn run_outbox_worker(
                 }
             };
             if let Some(responder) = entry.responder {
-                let _ = responder.send(Ok(cached.clone()));
+                let _ = responder.send(Ok(cached.message.clone()));
             }
             continue;
         }
@@ -377,7 +407,15 @@ async fn run_outbox_worker(
             Ok(message) => {
                 if let Some(key) = front_payload.idempotency_key.clone() {
                     let expires_at = Instant::now() + config.dedupe_ttl;
-                    dedupe.insert(key, (message.clone(), expires_at));
+                    dedupe.insert(
+                        key,
+                        DedupeEntry {
+                            chat_id: front_payload.chat_id.clone(),
+                            text: front_payload.text.clone(),
+                            message: message.clone(),
+                            expires_at,
+                        },
+                    );
                 }
 
                 let entry = match commit_outbox_front(&config, &mut queue).await {
@@ -479,9 +517,9 @@ async fn commit_outbox_front(
     Ok(Some(entry))
 }
 
-fn prune_dedupe_cache(dedupe: &mut HashMap<String, (Message, Instant)>) {
+fn prune_dedupe_cache(dedupe: &mut HashMap<String, DedupeEntry>) {
     let now = Instant::now();
-    dedupe.retain(|_, (_message, expires_at)| *expires_at > now);
+    dedupe.retain(|_, entry| entry.expires_at > now);
 }
 
 fn unix_timestamp_millis_now() -> i64 {

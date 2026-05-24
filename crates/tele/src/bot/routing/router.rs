@@ -76,7 +76,7 @@ fn command_mention_from_text(text: &str) -> Option<String> {
 }
 
 fn update_mentions_command(update: &Update) -> bool {
-    extract_text(update)
+    extract_message_update_text(update)
         .and_then(command_mention_from_text)
         .is_some()
 }

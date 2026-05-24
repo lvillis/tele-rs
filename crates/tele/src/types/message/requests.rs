@@ -2384,8 +2384,14 @@ fn validate_bulk_message_ids(method: &str, message_ids: &[MessageId]) -> Result<
             reason: format!("{method} accepts at most {MAX_BULK_MESSAGE_IDS} message ids"),
         });
     }
+    let mut unique = BTreeSet::new();
     for message_id in message_ids {
         message_id.validate()?;
+        if !unique.insert(*message_id) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{method} message ids must be unique"),
+            });
+        }
     }
 
     Ok(())
@@ -3029,6 +3035,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(matches!(
             DeleteMessagesRequest::new(1_i64, too_many_ids),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            CopyMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(10)]),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            DeleteMessagesRequest::new(1_i64, vec![MessageId(20), MessageId(20)]),
             Err(Error::InvalidRequest { .. })
         ));
         Ok(())

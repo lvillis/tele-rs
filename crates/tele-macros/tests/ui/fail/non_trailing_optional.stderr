@@ -1,0 +1,5 @@
+error: optional command arguments must be the final field to avoid ambiguous positional parsing
+ --> tests/ui/fail/non_trailing_optional.rs:6:12
+  |
+6 |     Search(Option<i64>, String),
+  |            ^^^^^^^^^^^

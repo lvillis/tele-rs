@@ -177,7 +177,7 @@ impl StickersService {
         request: &SetStickerSetThumbnailRequest,
         file: &UploadFile,
     ) -> Result<bool> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("setStickerSetThumbnail", request, "thumbnail", file)
             .await
@@ -332,7 +332,7 @@ impl BlockingStickersService {
         request: &SetStickerSetThumbnailRequest,
         file: &UploadFile,
     ) -> Result<bool> {
-        request.validate()?;
+        request.validate_upload()?;
         self.client
             .call_method_multipart("setStickerSetThumbnail", request, "thumbnail", file)
     }

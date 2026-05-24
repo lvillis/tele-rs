@@ -12,12 +12,13 @@ use tele::types::advanced::{
     AdvancedSetStickerKeywordsRequest,
 };
 use tele::types::{
-    AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, CreateInvoiceLinkRequest,
-    GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton, InlineKeyboardMarkup,
-    InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto, InputMediaVideo,
-    LabeledPrice, MessageId, ParseMode, SendDocumentRequest, SendMediaGroupRequest,
-    SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest,
-    ShippingOption, StickerFormat, Update, UploadStickerFileRequest, WebAppData,
+    AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
+    CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton,
+    InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto,
+    InputMediaVideo, LabeledPrice, MessageId, ParseMode, SendDocumentRequest,
+    SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest,
+    SetMyCommandsRequest, ShippingOption, StickerFormat, Update, UploadStickerFileRequest,
+    WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -954,6 +955,37 @@ async fn app_reply_text_quotes_source_message() -> Result<(), DynError> {
     assert_eq!(sent.message_id.0, 9);
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[test]
+fn app_reply_text_preserves_source_message_thread() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 4401,
+        "message": {
+            "message_id": 55,
+            "message_thread_id": 88,
+            "date": 1710000001,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "/start"
+        }
+    }))?;
+
+    let request = client.app().reply(&update, "quoted")?.into_request();
+
+    assert_eq!(request.chat_id, ChatId::Id(-10010));
+    assert_eq!(request.message_thread_id, Some(88));
+    assert_eq!(
+        request
+            .reply_parameters
+            .as_ref()
+            .map(|parameters| parameters.message_id),
+        Some(MessageId(55))
+    );
     Ok(())
 }
 
