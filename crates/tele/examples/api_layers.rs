@@ -25,11 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("raw: bot username = {:?}", me.username);
 
     let request = AdvancedGetAvailableGiftsRequest::new();
-    let gifts: serde_json::Value = client.typed().call(&request).await?;
-    println!(
-        "typed: getAvailableGifts keys = {}",
-        gifts.as_object().map_or(0, |obj| obj.len())
-    );
+    let gifts = client.typed().call(&request).await?;
+    println!("typed: available gifts = {}", gifts.gifts.len());
 
     let sent = client
         .app()

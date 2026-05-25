@@ -867,10 +867,10 @@ pub fn extract_actor(update: &Update) -> Option<&User> {
 /// Returns the subject user this update is primarily about when available.
 pub fn extract_subject(update: &Update) -> Option<&User> {
     if let Some(member_update) = update.chat_member.as_ref() {
-        return Some(member_update.subject());
+        return member_update.subject();
     }
     if let Some(member_update) = update.my_chat_member.as_ref() {
-        return Some(member_update.subject());
+        return member_update.subject();
     }
     if let Some(managed_bot) = update.managed_bot.as_ref() {
         return Some(&managed_bot.bot);

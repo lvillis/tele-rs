@@ -4,6 +4,7 @@ use serde::Serialize;
 use crate::{Error, Result};
 
 use crate::types::validation::{
+    control_free_string as validate_control_free_string,
     non_negative_i64 as validate_non_negative_i64, positive_i64 as validate_positive_i64,
     required_len as validate_required_vec, required_string as validate_required_string,
     string_id as validate_string_id,
@@ -47,9 +48,23 @@ fn validate_string_items(field: &str, values: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn validate_required_string_items(field: &str, values: &[String]) -> Result<()> {
-    validate_required_vec(field, values.len())?;
+fn validate_limited_string_items(field: &str, values: &[String], max_items: usize) -> Result<()> {
+    if values.len() > max_items {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} accepts at most {max_items} items"),
+        });
+    }
+
     validate_string_items(field, values)
+}
+
+fn validate_required_limited_string_items(
+    field: &str,
+    values: &[String],
+    max_items: usize,
+) -> Result<()> {
+    validate_required_vec(field, values.len())?;
+    validate_limited_string_items(field, values, max_items)
 }
 
 /// Auto-generated request for `setUserEmojiStatus`.
@@ -156,6 +171,11 @@ impl AdvancedRequest for AdvancedSendStickerRequest {
             validate_positive_i64("direct_messages_topic_id", value)?;
         }
         validate_required_string("sticker", &self.sticker)?;
+        validate_control_free_string("sticker", &self.sticker)?;
+        if let Some(value) = self.emoji.as_deref() {
+            validate_required_string("emoji", value)?;
+            validate_control_free_string("emoji", value)?;
+        }
         if let Some(value) = self.message_effect_id.as_deref() {
             validate_string_id("message_effect_id", value)?;
         }
@@ -190,6 +210,7 @@ impl AdvancedRequest for AdvancedGetStickerSetRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         Ok(())
     }
 }
@@ -211,7 +232,11 @@ impl AdvancedRequest for AdvancedGetCustomEmojiStickersRequest {
     const METHOD: &'static str = "getCustomEmojiStickers";
 
     fn validate(&self) -> Result<()> {
-        validate_required_string_items("custom_emoji_ids", &self.custom_emoji_ids)?;
+        validate_required_limited_string_items(
+            "custom_emoji_ids",
+            &self.custom_emoji_ids,
+            crate::types::sticker::MAX_CUSTOM_EMOJI_IDS,
+        )?;
         Ok(())
     }
 }
@@ -254,7 +279,9 @@ impl AdvancedRequest for AdvancedCreateNewStickerSetRequest {
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         validate_required_string("title", &self.title)?;
+        validate_control_free_string("title", &self.title)?;
         validate_required_items::<crate::types::sticker::InputSticker>("stickers", &self.stickers)?;
         Ok(())
     }
@@ -289,6 +316,7 @@ impl AdvancedRequest for AdvancedAddStickerToSetRequest {
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         self.sticker.validate()?;
         Ok(())
     }
@@ -316,6 +344,7 @@ impl AdvancedRequest for AdvancedSetStickerPositionInSetRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
+        validate_control_free_string("sticker", &self.sticker)?;
         validate_non_negative_i64("position", self.position)?;
         Ok(())
     }
@@ -341,6 +370,7 @@ impl AdvancedRequest for AdvancedDeleteStickerFromSetRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
+        validate_control_free_string("sticker", &self.sticker)?;
         Ok(())
     }
 }
@@ -377,7 +407,9 @@ impl AdvancedRequest for AdvancedReplaceStickerInSetRequest {
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         validate_required_string("old_sticker", &self.old_sticker)?;
+        validate_control_free_string("old_sticker", &self.old_sticker)?;
         self.sticker.validate()?;
         Ok(())
     }
@@ -405,7 +437,12 @@ impl AdvancedRequest for AdvancedSetStickerEmojiListRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
-        validate_required_string_items("emoji_list", &self.emoji_list)?;
+        validate_control_free_string("sticker", &self.sticker)?;
+        validate_required_limited_string_items(
+            "emoji_list",
+            &self.emoji_list,
+            crate::types::sticker::MAX_STICKER_EMOJIS,
+        )?;
         Ok(())
     }
 }
@@ -433,8 +470,13 @@ impl AdvancedRequest for AdvancedSetStickerKeywordsRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
+        validate_control_free_string("sticker", &self.sticker)?;
         if let Some(values) = self.keywords.as_deref() {
-            validate_string_items("keywords", values)?;
+            validate_limited_string_items(
+                "keywords",
+                values,
+                crate::types::sticker::MAX_STICKER_KEYWORDS,
+            )?;
         }
         Ok(())
     }
@@ -463,6 +505,7 @@ impl AdvancedRequest for AdvancedSetStickerMaskPositionRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("sticker", &self.sticker)?;
+        validate_control_free_string("sticker", &self.sticker)?;
         if let Some(value) = self.mask_position.as_ref() {
             value.validate()?;
         }
@@ -492,7 +535,9 @@ impl AdvancedRequest for AdvancedSetStickerSetTitleRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         validate_required_string("title", &self.title)?;
+        validate_control_free_string("title", &self.title)?;
         Ok(())
     }
 }
@@ -528,7 +573,12 @@ impl AdvancedRequest for AdvancedSetStickerSetThumbnailRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         self.user_id.validate()?;
+        if let Some(value) = self.thumbnail.as_deref() {
+            validate_required_string("thumbnail", value)?;
+            validate_control_free_string("thumbnail", value)?;
+        }
         Ok(())
     }
 }
@@ -556,6 +606,7 @@ impl AdvancedRequest for AdvancedSetCustomEmojiStickerSetThumbnailRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         if let Some(value) = self.custom_emoji_id.as_deref() {
             validate_string_id("custom_emoji_id", value)?;
         }
@@ -581,6 +632,7 @@ impl AdvancedRequest for AdvancedDeleteStickerSetRequest {
 
     fn validate(&self) -> Result<()> {
         validate_required_string("name", &self.name)?;
+        validate_control_free_string("name", &self.name)?;
         Ok(())
     }
 }

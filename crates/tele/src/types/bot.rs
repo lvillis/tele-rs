@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::common::UserId;
-use crate::types::message::PhotoSize;
+use crate::types::message::{Audio, PhotoSize};
 use crate::{Error, Result};
 
 const MAX_USER_PROFILE_PHOTOS_LIMIT: u8 = 100;
@@ -32,6 +32,16 @@ pub struct User {
 pub struct UserProfilePhotos {
     pub total_count: u64,
     pub photos: Vec<Vec<PhotoSize>>,
+}
+
+/// Telegram user profile audios object.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct UserProfileAudios {
+    pub total_count: u64,
+    pub audios: Vec<Audio>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// `getUserProfilePhotos` request.

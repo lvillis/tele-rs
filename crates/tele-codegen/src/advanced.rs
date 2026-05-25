@@ -412,7 +412,9 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
         "sendPoll" => "crate::types::message::Message",
         "sendChecklist" => "crate::types::message::Message",
         "sendDice" => "crate::types::message::Message",
+        "sendGame" => "crate::types::message::Message",
         "getUserProfilePhotos" => "crate::types::bot::UserProfilePhotos",
+        "getUserProfileAudios" => "crate::types::bot::UserProfileAudios",
         "getFile" => "crate::types::file::File",
         "exportChatInviteLink" => "String",
         "createChatInviteLink" => "crate::types::chat::ChatInviteLink",
@@ -423,13 +425,16 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
         "getChatAdministrators" => "Vec<crate::types::chat::ChatMember>",
         "getChatMemberCount" => "u64",
         "getChatMember" => "crate::types::chat::ChatMember",
+        "getUserChatBoosts" => "crate::types::update::UserChatBoosts",
         "getForumTopicIconStickers" => "Vec<crate::types::sticker::Sticker>",
+        "createForumTopic" => "crate::types::message::ForumTopic",
         "getChatMenuButton" => "crate::types::telegram::MenuButton",
         "getMyCommands" => "Vec<crate::types::command::BotCommand>",
         "getMyName" => "crate::types::command::BotName",
         "getMyDescription" => "crate::types::command::BotDescription",
         "getMyShortDescription" => "crate::types::command::BotShortDescription",
         "getMyDefaultAdministratorRights" => "crate::types::chat::ChatAdministratorRights",
+        "getAvailableGifts" => "crate::types::gift::Gifts",
         "editMessageText" => "crate::types::message::EditMessageResult",
         "editMessageCaption" => "crate::types::message::EditMessageResult",
         "editMessageMedia" => "crate::types::message::EditMessageResult",
@@ -440,11 +445,25 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
         "stopPoll" => "crate::types::message::Poll",
         "sendSticker" => "crate::types::message::Message",
         "answerWebAppQuery" => "crate::types::message::SentWebAppMessage",
+        "answerShippingQuery" => "bool",
+        "answerPreCheckoutQuery" => "bool",
         "getStickerSet" => "crate::types::sticker::StickerSet",
         "getCustomEmojiStickers" => "Vec<crate::types::sticker::Sticker>",
         "uploadStickerFile" => "crate::types::file::File",
         "sendInvoice" => "crate::types::message::Message",
         "createInvoiceLink" => "String",
+        "getBusinessConnection" => "crate::types::update::BusinessConnection",
+        "getBusinessAccountGifts" | "getUserGifts" | "getChatGifts" => {
+            "crate::types::gift::OwnedGifts"
+        }
+        "getBusinessAccountStarBalance" => "crate::types::message::StarAmount",
+        "getMyStarBalance" => "crate::types::message::StarAmount",
+        "getStarTransactions" => "crate::types::gift::StarTransactions",
+        "savePreparedInlineMessage" => "crate::types::telegram::PreparedInlineMessage",
+        "savePreparedKeyboardButton" => "crate::types::telegram::PreparedKeyboardButton",
+        "setGameScore" => "crate::types::message::EditMessageResult",
+        "getGameHighScores" => "Vec<crate::types::message::GameHighScore>",
+        "postStory" | "repostStory" | "editStory" => "crate::types::message::Story",
         _ if return_desc.contains("True") => "bool",
         _ if return_desc.contains("String") => "String",
         _ if return_desc.contains("Array of") && return_desc.contains("Sticker") => {
@@ -556,6 +575,64 @@ fn ordered_message_ids_field(method: &MethodSpec, param: &ParamSpec) -> bool {
     )
 }
 
+fn string_cursor_field(field_name: &str) -> bool {
+    matches!(field_name, "offset")
+}
+
+fn non_empty_control_free_string_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    if matches!(param.field_name.as_str(), "emoji" | "thumbnail") {
+        return true;
+    }
+
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        (
+            "getStickerSet"
+                | "createNewStickerSet"
+                | "addStickerToSet"
+                | "replaceStickerInSet"
+                | "setStickerSetTitle"
+                | "setStickerSetThumbnail"
+                | "setCustomEmojiStickerSetThumbnail"
+                | "deleteStickerSet",
+            "name"
+        ) | ("createNewStickerSet" | "setStickerSetTitle", "title")
+            | (
+                "sendSticker"
+                    | "setStickerPositionInSet"
+                    | "deleteStickerFromSet"
+                    | "setStickerEmojiList"
+                    | "setStickerKeywords"
+                    | "setStickerMaskPosition",
+                "sticker"
+            )
+            | ("replaceStickerInSet", "old_sticker")
+    )
+}
+
+fn invoice_string_validator(method: &MethodSpec, param: &ParamSpec) -> Option<&'static str> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("sendInvoice" | "createInvoiceLink", "title") => Some("validate_invoice_title"),
+        ("sendInvoice" | "createInvoiceLink", "description") => {
+            Some("validate_invoice_description")
+        }
+        ("sendInvoice" | "createInvoiceLink", "payload") => Some("validate_invoice_payload"),
+        ("sendInvoice" | "createInvoiceLink", "currency") => Some("validate_invoice_currency"),
+        _ => None,
+    }
+}
+
+fn string_items_limit(method: &MethodSpec, param: &ParamSpec) -> Option<&'static str> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("getCustomEmojiStickers", "custom_emoji_ids") => {
+            Some("crate::types::sticker::MAX_CUSTOM_EMOJI_IDS")
+        }
+        ("setStickerEmojiList", "emoji_list") => Some("crate::types::sticker::MAX_STICKER_EMOJIS"),
+        ("setStickerKeywords", "keywords") => Some("crate::types::sticker::MAX_STICKER_KEYWORDS"),
+        _ => None,
+    }
+}
+
 fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
     let field_ty = resolve_param_type(param);
     if type_has_validate(&field_ty) {
@@ -591,6 +668,20 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
     }
 
     if field_ty == "Vec<String>" {
+        if let Some(max_items) = string_items_limit(method, param) {
+            if param.required {
+                return Some(format!(
+                    "        validate_required_limited_string_items(\"{}\", &self.{}, {})?;",
+                    param.name, param.field_name, max_items
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(values) = self.{}.as_deref() {{\n            validate_limited_string_items(\"{}\", values, {})?;\n        }}",
+                param.field_name, param.name, max_items
+            ));
+        }
+
         if param.required {
             return Some(format!(
                 "        validate_required_string_items(\"{}\", &self.{})?;",
@@ -662,6 +753,50 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
         ));
     }
 
+    if field_ty == "String"
+        && let Some(validator) = invoice_string_validator(method, param)
+    {
+        if param.required {
+            return Some(format!(
+                "        {validator}(\"{}\", &self.{})?;",
+                method.method, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            {validator}(\"{}\", value)?;\n        }}",
+            param.field_name, method.method
+        ));
+    }
+
+    if field_ty == "String" && string_cursor_field(&param.field_name) {
+        if param.required {
+            return Some(format!(
+                "        validate_control_free_string(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_control_free_string(\"{}\", value)?;\n        }}",
+            param.field_name, param.name
+        ));
+    }
+
+    if field_ty == "String" && non_empty_control_free_string_field(method, param) {
+        if param.required {
+            return Some(format!(
+                "        validate_required_string(\"{}\", &self.{})?;\n        validate_control_free_string(\"{}\", &self.{})?;",
+                param.name, param.field_name, param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_required_string(\"{}\", value)?;\n            validate_control_free_string(\"{}\", value)?;\n        }}",
+            param.field_name, param.name, param.name
+        ));
+    }
+
     if !param.required {
         return None;
     }
@@ -686,11 +821,34 @@ fn method_specific_validation_owns_param(method: &MethodSpec, param: &ParamSpec)
     matches!(
         (method.method.as_str(), param.field_name.as_str()),
         ("answerShippingQuery", "shipping_options")
+            | (
+                "sendInvoice" | "createInvoiceLink",
+                "max_tip_amount" | "suggested_tip_amounts"
+            )
+            | ("createInvoiceLink", "subscription_period")
     )
 }
 
 fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
     match method.method.as_str() {
+        "sendInvoice" => vec![
+            r#"        validate_invoice_tip_configuration(
+            "sendInvoice",
+            self.max_tip_amount,
+            self.suggested_tip_amounts.as_deref(),
+        )?;"#
+                .to_owned(),
+        ],
+        "createInvoiceLink" => vec![
+            r#"        validate_invoice_tip_configuration(
+            "createInvoiceLink",
+            self.max_tip_amount,
+            self.suggested_tip_amounts.as_deref(),
+        )?;"#
+                .to_owned(),
+            r#"        validate_invoice_subscription_period("createInvoiceLink", self.subscription_period)?;"#
+                .to_owned(),
+        ],
         "answerShippingQuery" => vec![
             r#"        if self.ok {
             if self.error_message.is_some() {
@@ -751,8 +909,70 @@ fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
         }"#
             .to_owned(),
         ],
+        "sendGift" => vec![
+            r#"        match (self.user_id.is_some(), self.chat_id.is_some()) {
+            (true, false) | (false, true) => {}
+            (false, false) => {
+                return Err(Error::InvalidRequest {
+                    reason: "sendGift requires either `user_id` or `chat_id`".to_owned(),
+                });
+            }
+            (true, true) => {
+                return Err(Error::InvalidRequest {
+                    reason: "sendGift accepts either `user_id` or `chat_id`, not both".to_owned(),
+                });
+            }
+        }"#
+            .to_owned(),
+        ],
         _ => Vec::new(),
     }
+}
+
+fn target_arg_expr(
+    method: &MethodSpec,
+    field: &str,
+    required_expr: &str,
+    optional_expr: &str,
+) -> String {
+    match param_by_field(method, field) {
+        Some(param) if param.required => required_expr.to_owned(),
+        Some(_) => optional_expr.to_owned(),
+        None => "None".to_owned(),
+    }
+}
+
+fn chat_or_inline_message_target_validation_rules(method: &MethodSpec) -> Vec<String> {
+    if param_by_field(method, "chat_id").is_none()
+        || param_by_field(method, "message_id").is_none()
+        || param_by_field(method, "inline_message_id").is_none()
+    {
+        return Vec::new();
+    }
+
+    let chat_id = target_arg_expr(
+        method,
+        "chat_id",
+        "Some(&self.chat_id)",
+        "self.chat_id.as_ref()",
+    );
+    let message_id = target_arg_expr(
+        method,
+        "message_id",
+        "Some(&self.message_id)",
+        "self.message_id.as_ref()",
+    );
+    let inline_message_id = target_arg_expr(
+        method,
+        "inline_message_id",
+        "Some(self.inline_message_id.as_str())",
+        "self.inline_message_id.as_deref()",
+    );
+
+    vec![format!(
+        "        validate_chat_or_inline_message_target(\"{}\", {chat_id}, {message_id}, {inline_message_id})?;",
+        method.method
+    )]
 }
 
 fn param_by_field<'a>(method: &'a MethodSpec, field: &str) -> Option<&'a ParamSpec> {
@@ -877,6 +1097,7 @@ fn render_request(method: &MethodSpec) -> String {
         .filter(|param| !method_specific_validation_owns_param(method, param))
         .filter_map(|param| validation_rule(method, param))
         .chain(formatting_validation_rules(method))
+        .chain(chat_or_inline_message_target_validation_rules(method))
         .chain(method_specific_validation_rules(method))
         .collect::<Vec<_>>();
     let derive = if required_params.is_empty() {
@@ -1047,12 +1268,17 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         .join("\n\n");
     let uses_value = body.contains("Value");
     let uses_required_string_validator = body.contains("validate_required_string(");
-    let uses_string_items_validator =
-        body.contains("validate_string_items(") || body.contains("validate_required_string_items(");
+    let uses_required_string_items_validator = body.contains("validate_required_string_items(");
+    let uses_limited_string_items_validator = body.contains("validate_limited_string_items(")
+        || body.contains("validate_required_limited_string_items(");
+    let uses_string_items_validator = body.contains("validate_string_items(")
+        || uses_required_string_items_validator
+        || uses_limited_string_items_validator;
     let uses_string_id_validator =
         body.contains("validate_string_id(") || uses_string_items_validator;
-    let uses_required_vec_validator =
-        body.contains("validate_required_vec(") || body.contains("validate_required_string_items(");
+    let uses_required_vec_validator = body.contains("validate_required_vec(")
+        || uses_required_string_items_validator
+        || body.contains("validate_required_limited_string_items(");
     let uses_required_ordered_message_ids_validator =
         body.contains("validate_required_ordered_message_ids(");
     let uses_required_message_ids_validator = body.contains("validate_required_message_ids(")
@@ -1063,17 +1289,36 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let uses_items_validator = body.contains("validate_items(");
     let uses_positive_i64_validator = body.contains("validate_positive_i64(");
     let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
+    let uses_control_free_string_validator = body.contains("validate_control_free_string(");
+    let uses_invoice_currency_validator = body.contains("validate_invoice_currency(");
+    let uses_invoice_description_validator = body.contains("validate_invoice_description(");
+    let uses_invoice_payload_validator = body.contains("validate_invoice_payload(");
+    let uses_invoice_subscription_period_validator =
+        body.contains("validate_invoice_subscription_period(");
+    let uses_invoice_tip_configuration_validator =
+        body.contains("validate_invoice_tip_configuration(");
+    let uses_invoice_title_validator = body.contains("validate_invoice_title(");
+    let uses_payment_validation = uses_invoice_currency_validator
+        || uses_invoice_description_validator
+        || uses_invoice_payload_validator
+        || uses_invoice_subscription_period_validator
+        || uses_invoice_tip_configuration_validator
+        || uses_invoice_title_validator;
     let uses_text_formatting_validator = body.contains("validate_text_formatting(")
         || body.contains("validate_optional_text_formatting(");
+    let uses_message_target_validator = body.contains("validate_chat_or_inline_message_target(");
     let generated_validate_types = generated_validate_types(methods);
     let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator
+        || uses_control_free_string_validator
         || uses_text_formatting_validator;
     let uses_error = uses_message_ids_validator
         || uses_required_items_validator
+        || uses_message_target_validator
+        || uses_limited_string_items_validator
         || body.contains("Error::InvalidRequest");
     let uses_result = body.contains("fn validate(&self) -> Result<()>")
         || uses_required_string_validator
@@ -1085,6 +1330,7 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         || uses_items_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator
+        || uses_control_free_string_validator
         || uses_text_formatting_validator;
 
     let mut out = String::new();
@@ -1119,6 +1365,12 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         if uses_positive_i64_validator {
             let _ = writeln!(&mut out, "    positive_i64 as validate_positive_i64,");
         }
+        if uses_control_free_string_validator {
+            let _ = writeln!(
+                &mut out,
+                "    control_free_string as validate_control_free_string,"
+            );
+        }
         if body.contains("validate_optional_text_formatting(") {
             let _ = writeln!(
                 &mut out,
@@ -1140,8 +1392,73 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "}};");
         let _ = writeln!(&mut out);
     }
+    if uses_payment_validation {
+        let _ = writeln!(&mut out, "use crate::types::payment::{{");
+        if uses_invoice_currency_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_currency,");
+        }
+        if uses_invoice_description_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_description,");
+        }
+        if uses_invoice_payload_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_payload,");
+        }
+        if uses_invoice_subscription_period_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_subscription_period,");
+        }
+        if uses_invoice_tip_configuration_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_tip_configuration,");
+        }
+        if uses_invoice_title_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_title,");
+        }
+        let _ = writeln!(&mut out, "}};");
+        let _ = writeln!(&mut out);
+    }
     let _ = writeln!(&mut out, "use super::AdvancedRequest;");
     let _ = writeln!(&mut out);
+    if uses_message_target_validator {
+        let _ = writeln!(&mut out, "fn validate_chat_or_inline_message_target<T>(");
+        let _ = writeln!(&mut out, "    method: &str,");
+        let _ = writeln!(&mut out, "    chat_id: Option<&T>,");
+        let _ = writeln!(
+            &mut out,
+            "    message_id: Option<&crate::types::common::MessageId>,"
+        );
+        let _ = writeln!(&mut out, "    inline_message_id: Option<&str>,");
+        let _ = writeln!(&mut out, ") -> Result<()> {{");
+        let _ = writeln!(&mut out, "    if inline_message_id.is_some() {{");
+        let _ = writeln!(
+            &mut out,
+            "        if chat_id.is_some() || message_id.is_some() {{"
+        );
+        let _ = writeln!(&mut out, "            return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "                reason: format!(\"{{method}} accepts either `chat_id` with `message_id` or `inline_message_id`, not both\"),"
+        );
+        let _ = writeln!(&mut out, "            }});");
+        let _ = writeln!(&mut out, "        }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "        return Ok(());");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(
+            &mut out,
+            "    if chat_id.is_some() && message_id.is_some() {{"
+        );
+        let _ = writeln!(&mut out, "        return Ok(());");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "        reason: format!(\"{{method}} requires either `chat_id` with `message_id` or `inline_message_id\"),"
+        );
+        let _ = writeln!(&mut out, "    }})");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
     if uses_items_validator || uses_required_items_validator {
         let _ = writeln!(&mut out, "trait GeneratedValidate {{");
         let _ = writeln!(&mut out, "    fn validate_generated(&self) -> Result<()>;");
@@ -1244,14 +1561,45 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "    Ok(())");
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
-        let _ = writeln!(
-            &mut out,
-            "fn validate_required_string_items(field: &str, values: &[String]) -> Result<()> {{"
-        );
-        let _ = writeln!(&mut out, "    validate_required_vec(field, values.len())?;");
-        let _ = writeln!(&mut out, "    validate_string_items(field, values)");
-        let _ = writeln!(&mut out, "}}");
-        let _ = writeln!(&mut out);
+        if uses_limited_string_items_validator {
+            let _ = writeln!(
+                &mut out,
+                "fn validate_limited_string_items(field: &str, values: &[String], max_items: usize) -> Result<()> {{"
+            );
+            let _ = writeln!(&mut out, "    if values.len() > max_items {{");
+            let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+            let _ = writeln!(
+                &mut out,
+                "            reason: format!(\"{{field}} accepts at most {{max_items}} items\"),"
+            );
+            let _ = writeln!(&mut out, "        }});");
+            let _ = writeln!(&mut out, "    }}");
+            let _ = writeln!(&mut out);
+            let _ = writeln!(&mut out, "    validate_string_items(field, values)");
+            let _ = writeln!(&mut out, "}}");
+            let _ = writeln!(&mut out);
+            let _ = writeln!(
+                &mut out,
+                "fn validate_required_limited_string_items(field: &str, values: &[String], max_items: usize) -> Result<()> {{"
+            );
+            let _ = writeln!(&mut out, "    validate_required_vec(field, values.len())?;");
+            let _ = writeln!(
+                &mut out,
+                "    validate_limited_string_items(field, values, max_items)"
+            );
+            let _ = writeln!(&mut out, "}}");
+            let _ = writeln!(&mut out);
+        }
+        if uses_required_string_items_validator {
+            let _ = writeln!(
+                &mut out,
+                "fn validate_required_string_items(field: &str, values: &[String]) -> Result<()> {{"
+            );
+            let _ = writeln!(&mut out, "    validate_required_vec(field, values.len())?;");
+            let _ = writeln!(&mut out, "    validate_string_items(field, values)");
+            let _ = writeln!(&mut out, "}}");
+            let _ = writeln!(&mut out);
+        }
     }
     if uses_required_message_ids_validator {
         let _ = writeln!(
@@ -1364,6 +1712,84 @@ mod tests {
             "crate::types::telegram::MenuButton"
         );
         assert_eq!(response_type("unknown", "Returns True on success"), "bool");
+        assert_eq!(
+            response_type("getBusinessConnection", ""),
+            "crate::types::update::BusinessConnection"
+        );
+        assert_eq!(
+            response_type("getUserChatBoosts", ""),
+            "crate::types::update::UserChatBoosts"
+        );
+        assert_eq!(
+            response_type("getUserProfileAudios", ""),
+            "crate::types::bot::UserProfileAudios"
+        );
+        assert_eq!(
+            response_type("getAvailableGifts", ""),
+            "crate::types::gift::Gifts"
+        );
+        assert_eq!(
+            response_type("getUserGifts", ""),
+            "crate::types::gift::OwnedGifts"
+        );
+        assert_eq!(
+            response_type("getBusinessAccountGifts", ""),
+            "crate::types::gift::OwnedGifts"
+        );
+        assert_eq!(
+            response_type("getChatGifts", ""),
+            "crate::types::gift::OwnedGifts"
+        );
+        assert_eq!(
+            response_type("getMyStarBalance", ""),
+            "crate::types::message::StarAmount"
+        );
+        assert_eq!(
+            response_type("getStarTransactions", ""),
+            "crate::types::gift::StarTransactions"
+        );
+        assert_eq!(
+            response_type("savePreparedInlineMessage", ""),
+            "crate::types::telegram::PreparedInlineMessage"
+        );
+        assert_eq!(
+            response_type("savePreparedKeyboardButton", ""),
+            "crate::types::telegram::PreparedKeyboardButton"
+        );
+        assert_eq!(
+            response_type("getBusinessAccountStarBalance", ""),
+            "crate::types::message::StarAmount"
+        );
+        assert_eq!(
+            response_type("createForumTopic", ""),
+            "crate::types::message::ForumTopic"
+        );
+        assert_eq!(
+            response_type("sendGame", ""),
+            "crate::types::message::Message"
+        );
+        assert_eq!(
+            response_type("setGameScore", ""),
+            "crate::types::message::EditMessageResult"
+        );
+        assert_eq!(
+            response_type("getGameHighScores", ""),
+            "Vec<crate::types::message::GameHighScore>"
+        );
+        assert_eq!(
+            response_type("postStory", ""),
+            "crate::types::message::Story"
+        );
+        assert_eq!(
+            response_type("repostStory", ""),
+            "crate::types::message::Story"
+        );
+        assert_eq!(
+            response_type("editStory", ""),
+            "crate::types::message::Story"
+        );
+        assert_eq!(response_type("answerShippingQuery", ""), "bool");
+        assert_eq!(response_type("answerPreCheckoutQuery", ""), "bool");
     }
 
     #[test]
@@ -1650,6 +2076,92 @@ mod tests {
     }
 
     #[test]
+    fn generated_validation_requires_chat_or_inline_message_target() {
+        let method = MethodSpec {
+            fn_name: "edit_message_media".to_owned(),
+            method: "editMessageMedia".to_owned(),
+            return_desc: "Returns Message or True".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "chat_id".to_owned(),
+                    field_name: "chat_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer or String".to_owned(),
+                    type_rust: "ChatId".to_owned(),
+                },
+                ParamSpec {
+                    name: "message_id".to_owned(),
+                    field_name: "message_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "MessageId".to_owned(),
+                },
+                ParamSpec {
+                    name: "inline_message_id".to_owned(),
+                    field_name: "inline_message_id".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "media".to_owned(),
+                    field_name: "media".to_owned(),
+                    required: true,
+                    type_raw: "InputMedia".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("fn validate_chat_or_inline_message_target<T>("));
+        assert!(generated.contains(
+            "validate_chat_or_inline_message_target(\"editMessageMedia\", self.chat_id.as_ref(), self.message_id.as_ref(), self.inline_message_id.as_deref())?;"
+        ));
+        assert!(generated.contains("requires either"));
+        assert!(generated.contains(
+            "accepts either `chat_id` with `message_id` or `inline_message_id`, not both"
+        ));
+    }
+
+    #[test]
+    fn generated_send_gift_requires_exactly_one_target() {
+        let method = MethodSpec {
+            fn_name: "send_gift".to_owned(),
+            method: "sendGift".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "user_id".to_owned(),
+                    field_name: "user_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "UserId".to_owned(),
+                },
+                ParamSpec {
+                    name: "chat_id".to_owned(),
+                    field_name: "chat_id".to_owned(),
+                    required: false,
+                    type_raw: "Integer or String".to_owned(),
+                    type_rust: "ChatId".to_owned(),
+                },
+                ParamSpec {
+                    name: "gift_id".to_owned(),
+                    field_name: "gift_id".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("match (self.user_id.is_some(), self.chat_id.is_some())"));
+        assert!(generated.contains("sendGift requires either `user_id` or `chat_id`"));
+        assert!(generated.contains("sendGift accepts either `user_id` or `chat_id`, not both"));
+    }
+
+    #[test]
     fn generated_formatting_fields_use_shared_validation() {
         let draft = MethodSpec {
             fn_name: "send_message_draft".to_owned(),
@@ -1861,6 +2373,86 @@ mod tests {
     }
 
     #[test]
+    fn generated_invoice_requests_reuse_payment_invariants() {
+        let send_invoice = MethodSpec {
+            fn_name: "send_invoice".to_owned(),
+            method: "sendInvoice".to_owned(),
+            return_desc: "Returns Message on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "title".to_owned(),
+                    field_name: "title".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "description".to_owned(),
+                    field_name: "description".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "payload".to_owned(),
+                    field_name: "payload".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "currency".to_owned(),
+                    field_name: "currency".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "max_tip_amount".to_owned(),
+                    field_name: "max_tip_amount".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "suggested_tip_amounts".to_owned(),
+                    field_name: "suggested_tip_amounts".to_owned(),
+                    required: false,
+                    type_raw: "Array of Integer".to_owned(),
+                    type_rust: "Vec<i64>".to_owned(),
+                },
+            ],
+        };
+        let create_invoice_link = MethodSpec {
+            fn_name: "create_invoice_link".to_owned(),
+            method: "createInvoiceLink".to_owned(),
+            return_desc: "Returns String on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "subscription_period".to_owned(),
+                field_name: "subscription_period".to_owned(),
+                required: false,
+                type_raw: "Integer".to_owned(),
+                type_rust: "i64".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&send_invoice, &create_invoice_link]);
+        assert!(generated.contains("validate_invoice_title(\"sendInvoice\", &self.title)?;"));
+        assert!(
+            generated
+                .contains("validate_invoice_description(\"sendInvoice\", &self.description)?;")
+        );
+        assert!(generated.contains("validate_invoice_payload(\"sendInvoice\", &self.payload)?;"));
+        assert!(generated.contains("validate_invoice_currency(\"sendInvoice\", &self.currency)?;"));
+        assert!(generated.contains("validate_invoice_tip_configuration("));
+        assert!(generated.contains(
+            "validate_invoice_subscription_period(\"createInvoiceLink\", self.subscription_period)?;"
+        ));
+        assert!(!generated.contains("validate_positive_i64(\"max_tip_amount\""));
+        assert!(!generated.contains("validate_positive_i64(\"subscription_period\""));
+    }
+
+    #[test]
     fn generated_integer_chat_ids_use_numeric_wrapper() {
         let method = MethodSpec {
             fn_name: "demo".to_owned(),
@@ -1948,6 +2540,167 @@ mod tests {
         assert!(generated.contains("validate_positive_i64(\"limit\", value)?;"));
         assert!(generated.contains("validate_non_negative_i64(\"position\", self.position)?;"));
         assert!(generated.contains("validate_non_negative_i64(\"offset\", value)?;"));
+    }
+
+    #[test]
+    fn generated_string_offsets_reject_control_characters() {
+        let method = MethodSpec {
+            fn_name: "get_user_gifts".to_owned(),
+            method: "getUserGifts".to_owned(),
+            return_desc: String::new(),
+            params: vec![ParamSpec {
+                name: "offset".to_owned(),
+                field_name: "offset".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("control_free_string as validate_control_free_string"));
+        assert!(!generated.contains("fn validate_control_free_string("));
+        assert!(generated.contains(
+            "if let Some(value) = self.offset.as_deref() {\n            validate_control_free_string(\"offset\", value)?;\n        }"
+        ));
+    }
+
+    #[test]
+    fn generated_optional_plain_strings_reject_empty_and_control_characters() {
+        let method = MethodSpec {
+            fn_name: "send_sticker".to_owned(),
+            method: "sendSticker".to_owned(),
+            return_desc: "Returns Message".to_owned(),
+            params: vec![ParamSpec {
+                name: "emoji".to_owned(),
+                field_name: "emoji".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("required_string as validate_required_string"));
+        assert!(generated.contains("control_free_string as validate_control_free_string"));
+        assert!(generated.contains(
+            "if let Some(value) = self.emoji.as_deref() {\n            validate_required_string(\"emoji\", value)?;\n            validate_control_free_string(\"emoji\", value)?;\n        }"
+        ));
+    }
+
+    #[test]
+    fn generated_sticker_strings_reject_control_characters() {
+        let get_sticker_set = MethodSpec {
+            fn_name: "get_sticker_set".to_owned(),
+            method: "getStickerSet".to_owned(),
+            return_desc: "Returns StickerSet".to_owned(),
+            params: vec![ParamSpec {
+                name: "name".to_owned(),
+                field_name: "name".to_owned(),
+                required: true,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+        let set_title = MethodSpec {
+            fn_name: "set_sticker_set_title".to_owned(),
+            method: "setStickerSetTitle".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "name".to_owned(),
+                    field_name: "name".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "title".to_owned(),
+                    field_name: "title".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+        let replace = MethodSpec {
+            fn_name: "replace_sticker_in_set".to_owned(),
+            method: "replaceStickerInSet".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "old_sticker".to_owned(),
+                field_name: "old_sticker".to_owned(),
+                required: true,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&get_sticker_set, &set_title, &replace]);
+        assert!(generated.contains("control_free_string as validate_control_free_string"));
+        assert!(generated.contains(
+            "validate_required_string(\"name\", &self.name)?;\n        validate_control_free_string(\"name\", &self.name)?;"
+        ));
+        assert!(generated.contains(
+            "validate_required_string(\"title\", &self.title)?;\n        validate_control_free_string(\"title\", &self.title)?;"
+        ));
+        assert!(generated.contains(
+            "validate_required_string(\"old_sticker\", &self.old_sticker)?;\n        validate_control_free_string(\"old_sticker\", &self.old_sticker)?;"
+        ));
+    }
+
+    #[test]
+    fn generated_sticker_string_lists_use_api_limits() {
+        let custom_emoji = MethodSpec {
+            fn_name: "get_custom_emoji_stickers".to_owned(),
+            method: "getCustomEmojiStickers".to_owned(),
+            return_desc: "Returns Array of Sticker".to_owned(),
+            params: vec![ParamSpec {
+                name: "custom_emoji_ids".to_owned(),
+                field_name: "custom_emoji_ids".to_owned(),
+                required: true,
+                type_raw: "Array of String".to_owned(),
+                type_rust: "Vec<String>".to_owned(),
+            }],
+        };
+        let emoji_list = MethodSpec {
+            fn_name: "set_sticker_emoji_list".to_owned(),
+            method: "setStickerEmojiList".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "emoji_list".to_owned(),
+                field_name: "emoji_list".to_owned(),
+                required: true,
+                type_raw: "Array of String".to_owned(),
+                type_rust: "Vec<String>".to_owned(),
+            }],
+        };
+        let keywords = MethodSpec {
+            fn_name: "set_sticker_keywords".to_owned(),
+            method: "setStickerKeywords".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "keywords".to_owned(),
+                field_name: "keywords".to_owned(),
+                required: false,
+                type_raw: "Array of String".to_owned(),
+                type_rust: "Vec<String>".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&custom_emoji, &emoji_list, &keywords]);
+        assert!(generated.contains("fn validate_limited_string_items("));
+        assert!(generated.contains(
+            "validate_required_limited_string_items(\"custom_emoji_ids\", &self.custom_emoji_ids, crate::types::sticker::MAX_CUSTOM_EMOJI_IDS)?;"
+        ));
+        assert!(generated.contains(
+            "validate_required_limited_string_items(\"emoji_list\", &self.emoji_list, crate::types::sticker::MAX_STICKER_EMOJIS)?;"
+        ));
+        assert!(generated.contains(
+            "validate_limited_string_items(\"keywords\", values, crate::types::sticker::MAX_STICKER_KEYWORDS)?;"
+        ));
+        assert!(!generated.contains("fn validate_required_string_items("));
+        assert!(generated.contains("accepts at most {max_items} items"));
     }
 
     #[test]

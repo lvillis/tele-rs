@@ -32,7 +32,20 @@ fn validate_bounded_text(
     Ok(())
 }
 
-fn validate_payload(method: &str, payload: &str) -> Result<(), Error> {
+pub(crate) fn validate_invoice_title(method: &str, title: &str) -> Result<(), Error> {
+    validate_bounded_text(method, "title", title, INVOICE_TITLE_MAX_CHARS)
+}
+
+pub(crate) fn validate_invoice_description(method: &str, description: &str) -> Result<(), Error> {
+    validate_bounded_text(
+        method,
+        "description",
+        description,
+        INVOICE_DESCRIPTION_MAX_CHARS,
+    )
+}
+
+pub(crate) fn validate_invoice_payload(method: &str, payload: &str) -> Result<(), Error> {
     ensure_non_empty(method, "payload", payload)?;
     if payload.len() > INVOICE_PAYLOAD_MAX_BYTES {
         return Err(Error::InvalidRequest {
@@ -45,7 +58,7 @@ fn validate_payload(method: &str, payload: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn validate_currency(method: &str, currency: &str) -> Result<(), Error> {
+pub(crate) fn validate_invoice_currency(method: &str, currency: &str) -> Result<(), Error> {
     ensure_non_empty(method, "currency", currency)?;
 
     let is_valid = currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_uppercase());
@@ -95,7 +108,7 @@ fn validate_shipping_options(
     Ok(())
 }
 
-fn validate_tip_configuration(
+pub(crate) fn validate_invoice_tip_configuration(
     method: &str,
     max_tip_amount: Option<i64>,
     suggested_tip_amounts: Option<&[i64]>,
@@ -159,9 +172,12 @@ fn validate_tip_configuration(
     Ok(())
 }
 
-fn validate_subscription_period(method: &str, value: Option<u32>) -> Result<(), Error> {
+pub(crate) fn validate_invoice_subscription_period(
+    method: &str,
+    value: Option<i64>,
+) -> Result<(), Error> {
     if let Some(value) = value
-        && value != TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS
+        && value != i64::from(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS)
     {
         return Err(Error::InvalidRequest {
             reason: format!(
@@ -302,15 +318,10 @@ impl SendInvoiceRequest {
         let payload = payload.into();
         let currency = currency.into();
 
-        validate_bounded_text("sendInvoice", "title", &title, INVOICE_TITLE_MAX_CHARS)?;
-        validate_bounded_text(
-            "sendInvoice",
-            "description",
-            &description,
-            INVOICE_DESCRIPTION_MAX_CHARS,
-        )?;
-        validate_payload("sendInvoice", &payload)?;
-        validate_currency("sendInvoice", &currency)?;
+        validate_invoice_title("sendInvoice", &title)?;
+        validate_invoice_description("sendInvoice", &description)?;
+        validate_invoice_payload("sendInvoice", &payload)?;
+        validate_invoice_currency("sendInvoice", &currency)?;
         validate_prices("sendInvoice", &prices)?;
 
         let request = Self {
@@ -364,17 +375,12 @@ impl SendInvoiceRequest {
         if let Some(reply_markup) = self.reply_markup.as_ref() {
             reply_markup.validate()?;
         }
-        validate_bounded_text("sendInvoice", "title", &self.title, INVOICE_TITLE_MAX_CHARS)?;
-        validate_bounded_text(
-            "sendInvoice",
-            "description",
-            &self.description,
-            INVOICE_DESCRIPTION_MAX_CHARS,
-        )?;
-        validate_payload("sendInvoice", &self.payload)?;
-        validate_currency("sendInvoice", &self.currency)?;
+        validate_invoice_title("sendInvoice", &self.title)?;
+        validate_invoice_description("sendInvoice", &self.description)?;
+        validate_invoice_payload("sendInvoice", &self.payload)?;
+        validate_invoice_currency("sendInvoice", &self.currency)?;
         validate_prices("sendInvoice", &self.prices)?;
-        validate_tip_configuration(
+        validate_invoice_tip_configuration(
             "sendInvoice",
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
@@ -467,20 +473,10 @@ impl CreateInvoiceLinkRequest {
         let payload = payload.into();
         let currency = currency.into();
 
-        validate_bounded_text(
-            "createInvoiceLink",
-            "title",
-            &title,
-            INVOICE_TITLE_MAX_CHARS,
-        )?;
-        validate_bounded_text(
-            "createInvoiceLink",
-            "description",
-            &description,
-            INVOICE_DESCRIPTION_MAX_CHARS,
-        )?;
-        validate_payload("createInvoiceLink", &payload)?;
-        validate_currency("createInvoiceLink", &currency)?;
+        validate_invoice_title("createInvoiceLink", &title)?;
+        validate_invoice_description("createInvoiceLink", &description)?;
+        validate_invoice_payload("createInvoiceLink", &payload)?;
+        validate_invoice_currency("createInvoiceLink", &currency)?;
         validate_prices("createInvoiceLink", &prices)?;
 
         let request = Self {
@@ -517,27 +513,20 @@ impl CreateInvoiceLinkRequest {
             "business_connection_id",
             self.business_connection_id.as_deref(),
         )?;
-        validate_bounded_text(
-            "createInvoiceLink",
-            "title",
-            &self.title,
-            INVOICE_TITLE_MAX_CHARS,
-        )?;
-        validate_bounded_text(
-            "createInvoiceLink",
-            "description",
-            &self.description,
-            INVOICE_DESCRIPTION_MAX_CHARS,
-        )?;
-        validate_payload("createInvoiceLink", &self.payload)?;
-        validate_currency("createInvoiceLink", &self.currency)?;
+        validate_invoice_title("createInvoiceLink", &self.title)?;
+        validate_invoice_description("createInvoiceLink", &self.description)?;
+        validate_invoice_payload("createInvoiceLink", &self.payload)?;
+        validate_invoice_currency("createInvoiceLink", &self.currency)?;
         validate_prices("createInvoiceLink", &self.prices)?;
-        validate_tip_configuration(
+        validate_invoice_tip_configuration(
             "createInvoiceLink",
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
-        validate_subscription_period("createInvoiceLink", self.subscription_period)?;
+        validate_invoice_subscription_period(
+            "createInvoiceLink",
+            self.subscription_period.map(i64::from),
+        )?;
         validate_optional_positive_u32("createInvoiceLink", "photo_size", self.photo_size)?;
         validate_optional_positive_u32("createInvoiceLink", "photo_width", self.photo_width)?;
         validate_optional_positive_u32("createInvoiceLink", "photo_height", self.photo_height)?;

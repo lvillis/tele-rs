@@ -90,9 +90,12 @@ pub struct InaccessibleMessage {
     pub chat: Chat,
     pub message_id: MessageId,
     pub date: i64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum MaybeInaccessibleMessage {
     Accessible(Box<Message>),
     Inaccessible(InaccessibleMessage),
@@ -137,18 +140,44 @@ impl MaybeInaccessibleMessage {
         matches!(self, Self::Accessible(_))
     }
 
-    pub fn accessible(&self) -> Option<&Message> {
+    pub fn is_inaccessible(&self) -> bool {
+        matches!(self, Self::Inaccessible(_))
+    }
+
+    pub fn as_accessible(&self) -> Option<&Message> {
         match self {
             Self::Accessible(message) => Some(message.as_ref()),
             Self::Inaccessible(_) => None,
         }
     }
 
-    pub fn inaccessible(&self) -> Option<&InaccessibleMessage> {
+    pub fn into_accessible(self) -> Option<Message> {
+        match self {
+            Self::Accessible(message) => Some(*message),
+            Self::Inaccessible(_) => None,
+        }
+    }
+
+    pub fn as_inaccessible(&self) -> Option<&InaccessibleMessage> {
         match self {
             Self::Accessible(_) => None,
             Self::Inaccessible(message) => Some(message),
         }
+    }
+
+    pub fn into_inaccessible(self) -> Option<InaccessibleMessage> {
+        match self {
+            Self::Accessible(_) => None,
+            Self::Inaccessible(message) => Some(message),
+        }
+    }
+
+    pub fn accessible(&self) -> Option<&Message> {
+        self.as_accessible()
+    }
+
+    pub fn inaccessible(&self) -> Option<&InaccessibleMessage> {
+        self.as_inaccessible()
     }
 
     pub fn chat(&self) -> &Chat {
@@ -170,5 +199,64 @@ impl MaybeInaccessibleMessage {
             Self::Accessible(message) => message.date,
             Self::Inaccessible(message) => message.date,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::MaybeInaccessibleMessage;
+
+    #[test]
+    fn inaccessible_message_preserves_future_fields() -> Result<(), Box<dyn std::error::Error>> {
+        let input = json!({
+            "message_id": 55,
+            "date": 0,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "future": {"kept": true}
+        });
+
+        let message: MaybeInaccessibleMessage = serde_json::from_value(input.clone())?;
+
+        assert!(!message.is_accessible());
+        assert!(message.is_inaccessible());
+        assert!(message.as_accessible().is_none());
+        assert_eq!(
+            message
+                .as_inaccessible()
+                .and_then(|message| message.extra.get("future")),
+            Some(&json!({"kept": true}))
+        );
+        assert_eq!(serde_json::to_value(message.clone())?, input);
+        assert_eq!(
+            message
+                .into_inaccessible()
+                .and_then(|message| message.extra.get("future").cloned()),
+            Some(json!({"kept": true}))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accessible_message_can_be_consumed() -> Result<(), Box<dyn std::error::Error>> {
+        let message: MaybeInaccessibleMessage = serde_json::from_value(json!({
+            "message_id": 56,
+            "date": 1700000000,
+            "chat": {"id": 1, "type": "private"},
+            "text": "hello"
+        }))?;
+
+        assert!(message.is_accessible());
+        assert!(!message.is_inaccessible());
+        assert!(message.as_inaccessible().is_none());
+        assert_eq!(
+            message
+                .into_accessible()
+                .and_then(|message| message.text)
+                .as_deref(),
+            Some("hello")
+        );
+        Ok(())
     }
 }

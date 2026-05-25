@@ -13,6 +13,7 @@ use crate::types::message::{
 use crate::types::telegram::{
     InlineQueryResult, InlineQueryResultsButton, ReactionType, WebAppData,
 };
+use crate::types::validation::control_free_string as validate_control_free_string;
 use crate::{Error, Result};
 
 const MAX_GET_UPDATES_LIMIT: u8 = 100;
@@ -501,6 +502,15 @@ pub struct ChatBoost {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Telegram list of boosts added to a chat by a user.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct UserChatBoosts {
+    pub boosts: Vec<ChatBoost>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Telegram chat boost update payload.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -616,15 +626,15 @@ impl ChatMemberUpdated {
         &self.new_chat_member
     }
 
-    pub fn subject(&self) -> &User {
+    pub fn subject(&self) -> Option<&User> {
         self.new_chat_member.user()
     }
 
-    pub fn subject_id(&self) -> i64 {
-        self.subject().id.0
+    pub fn subject_id(&self) -> Option<i64> {
+        self.subject().map(|user| user.id.0)
     }
 
-    pub fn member_user(&self) -> &User {
+    pub fn member_user(&self) -> Option<&User> {
         self.subject()
     }
 }
@@ -1047,11 +1057,7 @@ impl AnswerInlineQueryRequest {
                     "next_offset exceeds {MAX_INLINE_NEXT_OFFSET_BYTES} bytes"
                 )));
             }
-            if next_offset.chars().any(char::is_control) {
-                return Err(invalid_request(
-                    "next_offset must not contain control characters",
-                ));
-            }
+            validate_control_free_string("next_offset", next_offset)?;
         }
         if let Some(button) = self.button.as_ref() {
             button.validate()?;
@@ -1086,13 +1092,7 @@ fn validate_optional_text_limit(field: &str, value: &str, max_chars: usize) -> R
             "{field} must be at most {max_chars} characters"
         )));
     }
-    if value.chars().any(char::is_control) {
-        return Err(invalid_request(format!(
-            "{field} must not contain control characters"
-        )));
-    }
-
-    Ok(())
+    validate_control_free_string(field, value)
 }
 
 fn validate_http_url(field: &str, value: &str) -> Result<()> {
@@ -1721,7 +1721,7 @@ mod tests {
         };
         assert_eq!(chat_member.chat_id(), -1001);
         assert_eq!(chat_member.actor_id(), 1);
-        assert_eq!(chat_member.subject_id(), 55);
+        assert_eq!(chat_member.subject_id(), Some(55));
         assert!(chat_member.via_join_request);
 
         let Some(my_chat_member) = my_member_update.my_chat_member() else {

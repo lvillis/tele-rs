@@ -29,8 +29,7 @@ pub(crate) fn required_string(field: &str, value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn string_id(field: &str, value: &str) -> Result<(), Error> {
-    required_string(field, value)?;
+pub(crate) fn control_free_string(field: &str, value: &str) -> Result<(), Error> {
     if value.chars().any(char::is_control) {
         return Err(Error::InvalidRequest {
             reason: format!("{field} must not contain control characters"),
@@ -38,6 +37,11 @@ pub(crate) fn string_id(field: &str, value: &str) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+pub(crate) fn string_id(field: &str, value: &str) -> Result<(), Error> {
+    required_string(field, value)?;
+    control_free_string(field, value)
 }
 
 pub(crate) fn required_len(field: &str, len: usize) -> Result<(), Error> {

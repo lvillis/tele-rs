@@ -18,13 +18,16 @@ mod service;
 #[cfg(test)]
 mod tests;
 
-pub use common::{Chat, ChatType, MessageEntity, MessageEntityKind, MessageOrigin, PhotoSize};
+pub use common::{
+    Chat, ChatType, MessageEntity, MessageEntityKind, MessageOrigin, MessageOriginChannel,
+    MessageOriginChat, MessageOriginHiddenUser, MessageOriginUser, PhotoSize,
+};
 pub use content::{
-    Checklist, ChecklistTask, Contact, Dice, DiceEmoji, Game, Location, Poll, PollKind, PollOption,
-    Venue,
+    Checklist, ChecklistTask, Contact, Dice, DiceEmoji, Game, GameHighScore, Location, Poll,
+    PollKind, PollOption, Venue,
 };
 pub use forum::{
-    ForumTopicClosed, ForumTopicCreated, ForumTopicEdited, ForumTopicReopened,
+    ForumTopic, ForumTopicClosed, ForumTopicCreated, ForumTopicEdited, ForumTopicReopened,
     GeneralForumTopicHidden, GeneralForumTopicUnhidden,
 };
 pub use media::{

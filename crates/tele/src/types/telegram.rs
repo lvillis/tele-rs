@@ -888,6 +888,25 @@ json_payload_wrapper!(
     validate_typed_object_payload
 );
 
+/// Prepared inline message that can be sent by a Mini App user.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct PreparedInlineMessage {
+    pub id: String,
+    pub expiration_date: i64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Prepared keyboard button that can be used by a Mini App user.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct PreparedKeyboardButton {
+    pub id: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Typed menu button union.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]

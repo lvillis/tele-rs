@@ -235,3 +235,14 @@ pub struct Game {
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
+
+/// Telegram game high score entry.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct GameHighScore {
+    pub position: i64,
+    pub user: User,
+    pub score: i64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}

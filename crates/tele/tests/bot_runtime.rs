@@ -796,7 +796,7 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert_eq!(chat_member_update.actor_id(), Some(12));
     assert_eq!(chat_member_update.subject_id(), Some(78));
     assert_eq!(
-        extract_chat_member_update(&chat_member_update).map(|update| update.subject().id.0),
+        extract_chat_member_update(&chat_member_update).and_then(|update| update.subject_id()),
         Some(78)
     );
     assert!(
@@ -842,7 +842,8 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
     assert_eq!(my_chat_member_update.actor_id(), Some(13));
     assert_eq!(my_chat_member_update.subject_id(), Some(999));
     assert_eq!(
-        extract_my_chat_member_update(&my_chat_member_update).map(|update| update.subject().id.0),
+        extract_my_chat_member_update(&my_chat_member_update)
+            .and_then(|update| update.subject_id()),
         Some(999)
     );
     assert!(
@@ -3575,7 +3576,8 @@ async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
             move |_context: BotContext, _update: Update, member_update: ChatMemberUpdatedInput| {
                 let chat_member_hits = Arc::clone(&chat_member_hits);
                 async move {
-                    if member_update.0.subject().id.0 == 601 && member_update.0.chat.id == -2101 {
+                    if member_update.0.subject_id() == Some(601) && member_update.0.chat.id == -2101
+                    {
                         chat_member_hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -3591,7 +3593,8 @@ async fn member_update_routes_dispatch_typed_input() -> Result<(), DynError> {
                   member_update: MyChatMemberUpdatedInput| {
                 let my_chat_member_hits = Arc::clone(&my_chat_member_hits);
                 async move {
-                    if member_update.0.subject().id.0 == 999 && member_update.0.chat.id == -2102 {
+                    if member_update.0.subject_id() == Some(999) && member_update.0.chat.id == -2102
+                    {
                         my_chat_member_hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -4793,7 +4796,7 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
             "message_id": 4303,
             "date": 1700004303,
             "chat": {"id": 1, "type": "private"},
-            "gift": {"kind": "mystery"}
+            "passport_data": {"kind": "mystery"}
         }
     }));
     assert!(maybe_update.is_some());

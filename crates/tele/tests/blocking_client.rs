@@ -448,8 +448,8 @@ async fn blocking_typed_layer_advanced_request_success() -> Result<(), DynError>
         .build_blocking()?;
 
     let request = AdvancedGetAvailableGiftsRequest::new();
-    let value: serde_json::Value = client.typed().call(&request)?;
-    assert!(value.is_object());
+    let gifts = client.typed().call(&request)?;
+    assert!(gifts.gifts.is_empty());
 
     join_server(handle)?;
     Ok(())
@@ -1014,7 +1014,7 @@ async fn blocking_membership_facade_handles_bot_member_and_capabilities() -> Res
     let membership = client.app().membership();
 
     let bot_member = membership.bot_member(-10010_i64)?;
-    assert_eq!(bot_member.user().id.0, 999);
+    assert_eq!(bot_member.user().map(|user| user.id.0), Some(999));
     assert!(bot_member.has_capability(ChatAdministratorCapability::ManageChat));
 
     let missing = membership.bot_missing_capabilities(

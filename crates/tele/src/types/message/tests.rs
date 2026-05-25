@@ -52,7 +52,7 @@ fn marks_unmodeled_content_as_unknown() -> std::result::Result<(), Box<dyn StdEr
         "message_id": 3,
         "date": 1700000002,
         "chat": {"id": 1, "type": "private"},
-        "gift": {"kind": "mystery"}
+        "passport_data": {"kind": "mystery"}
     }))?;
 
     assert_eq!(message.kind(), MessageKind::Unknown);
@@ -68,7 +68,7 @@ fn keeps_unknown_alongside_modeled_kind() -> std::result::Result<(), Box<dyn Std
         "date": 1700000003,
         "chat": {"id": 1, "type": "private"},
         "text": "hello",
-        "gift": {"kind": "mystery"}
+        "passport_data": {"kind": "mystery"}
     }))?;
 
     assert_eq!(message.kind(), MessageKind::Text);
@@ -86,6 +86,55 @@ fn base_message_payload() -> serde_json::Map<String, Value> {
     object.insert("date".to_owned(), json!(1700000999));
     object.insert("chat".to_owned(), json!({"id": 1, "type": "private"}));
     object
+}
+
+fn sticker_payload() -> Value {
+    json!({
+        "file_id": "sticker-1",
+        "file_unique_id": "sticker-u-1",
+        "type": "regular",
+        "width": 64,
+        "height": 64,
+        "is_animated": false,
+        "is_video": false
+    })
+}
+
+fn gift_payload() -> Value {
+    json!({
+        "id": "gift-1",
+        "sticker": sticker_payload(),
+        "star_count": 25
+    })
+}
+
+fn unique_gift_payload() -> Value {
+    json!({
+        "gift_id": "gift-1",
+        "base_name": "Base Gift",
+        "name": "BaseGift-1",
+        "number": 1,
+        "model": {
+            "name": "Model",
+            "sticker": sticker_payload(),
+            "rarity_per_mille": 500
+        },
+        "symbol": {
+            "name": "Symbol",
+            "sticker": sticker_payload(),
+            "rarity_per_mille": 250
+        },
+        "backdrop": {
+            "name": "Backdrop",
+            "colors": {
+                "center_color": 1,
+                "edge_color": 2,
+                "symbol_color": 3,
+                "text_color": 4
+            },
+            "rarity_per_mille": 125
+        }
+    })
 }
 
 fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn StdError>> {
@@ -205,6 +254,33 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
                     "total_amount": 100,
                     "invoice_payload": "inv-1",
                     "telegram_payment_charge_id": "tg-1"
+                }),
+            );
+        }
+        MessageKind::Gift => {
+            object.insert(
+                "gift".to_owned(),
+                json!({
+                    "gift": gift_payload(),
+                    "text": "thanks"
+                }),
+            );
+        }
+        MessageKind::UniqueGift => {
+            object.insert(
+                "unique_gift".to_owned(),
+                json!({
+                    "gift": unique_gift_payload(),
+                    "origin": "upgrade"
+                }),
+            );
+        }
+        MessageKind::GiftUpgradeSent => {
+            object.insert(
+                "gift_upgrade_sent".to_owned(),
+                json!({
+                    "gift": gift_payload(),
+                    "is_upgrade_separate": true
                 }),
             );
         }
@@ -691,7 +767,7 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
             object.insert("caption".to_owned(), json!("preview"));
         }
         MessageKind::Unknown => {
-            object.insert("gift".to_owned(), json!({"kind": "mystery"}));
+            object.insert("passport_data".to_owned(), json!({"kind": "mystery"}));
         }
     }
 
@@ -736,7 +812,8 @@ fn parses_forward_origin_and_automatic_forward_flag() -> std::result::Result<(),
             "date": 1700000000,
             "chat": {"id": -1002, "type": "channel", "title": "announcements"},
             "message_id": 777,
-            "author_signature": "admin"
+            "author_signature": "admin",
+            "future": {"kept": true}
         }
     }))?;
 
@@ -744,11 +821,53 @@ fn parses_forward_origin_and_automatic_forward_flag() -> std::result::Result<(),
     let Some(origin) = message.forward_origin() else {
         return Err("missing forward origin".into());
     };
-    assert_eq!(origin.date(), 1_700_000_000);
+    assert_eq!(origin.kind(), Some("channel"));
+    assert_eq!(origin.date(), Some(1_700_000_000));
     assert_eq!(origin.sender_name(), Some("announcements"));
     assert_eq!(origin.message_id(), Some(MessageId(777)));
     assert_eq!(origin.author_signature(), Some("admin"));
+    assert_eq!(
+        origin
+            .as_channel_origin()
+            .and_then(|origin| origin.extra.get("future")),
+        Some(&json!({"kept": true}))
+    );
+    assert_eq!(
+        origin
+            .clone()
+            .into_channel_origin()
+            .and_then(|origin| origin.extra.get("future").cloned()),
+        Some(json!({"kept": true}))
+    );
 
+    Ok(())
+}
+
+#[test]
+fn preserves_unknown_forward_origin() -> std::result::Result<(), Box<dyn StdError>> {
+    let origin_payload = json!({
+        "type": "future_origin",
+        "date": 1700000001,
+        "payload": {"kept": true}
+    });
+    let message: Message = serde_json::from_value(json!({
+        "message_id": 43,
+        "date": 1700000043,
+        "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+        "forward_origin": origin_payload
+    }))?;
+
+    let origin = message.forward_origin().ok_or("missing forward origin")?;
+    assert_eq!(origin.kind(), Some("future_origin"));
+    assert_eq!(origin.as_unknown_value(), Some(&origin_payload));
+    assert_eq!(
+        origin.clone().into_unknown_value(),
+        Some(origin_payload.clone())
+    );
+    assert_eq!(
+        serde_json::to_value(message)?["forward_origin"],
+        origin_payload
+    );
     Ok(())
 }
 

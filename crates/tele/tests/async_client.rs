@@ -6,19 +6,26 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{
     AdvancedAnswerPreCheckoutQueryRequest, AdvancedAnswerShippingQueryRequest,
-    AdvancedAnswerWebAppQueryRequest, AdvancedCreateInvoiceLinkRequest,
+    AdvancedAnswerWebAppQueryRequest, AdvancedCreateForumTopicRequest,
+    AdvancedCreateInvoiceLinkRequest, AdvancedEditMessageMediaRequest,
     AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest,
-    AdvancedGetCustomEmojiStickersRequest, AdvancedSendStickerRequest,
-    AdvancedSetStickerKeywordsRequest,
+    AdvancedGetBusinessAccountStarBalanceRequest, AdvancedGetCustomEmojiStickersRequest,
+    AdvancedGetGameHighScoresRequest, AdvancedGetStarTransactionsRequest,
+    AdvancedGetStickerSetRequest, AdvancedGetUserChatBoostsRequest, AdvancedGetUserGiftsRequest,
+    AdvancedGetUserProfileAudiosRequest, AdvancedPostStoryRequest,
+    AdvancedSavePreparedInlineMessageRequest, AdvancedSavePreparedKeyboardButtonRequest,
+    AdvancedSendGameRequest, AdvancedSendGiftRequest, AdvancedSendInvoiceRequest,
+    AdvancedSendStickerRequest, AdvancedSetStickerEmojiListRequest,
+    AdvancedSetStickerKeywordsRequest, AdvancedSetStickerSetTitleRequest,
 };
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
     CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton,
     InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMediaGroupItem,
-    InputMediaPhoto, InputMediaVideo, LabeledPrice, MessageId, ParseMode, SendDocumentRequest,
-    SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest,
-    SetMyCommandsRequest, ShippingOption, StickerFormat, SuggestedPostParameters, Update,
-    UploadStickerFileRequest, WebAppData,
+    InputMediaPhoto, InputMediaVideo, InputStoryContent, KeyboardButton, LabeledPrice, MessageId,
+    ParseMode, SendDocumentRequest, SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest,
+    SetChatPhotoRequest, SetMyCommandsRequest, ShippingOption, StickerFormat,
+    SuggestedPostParameters, Update, UploadStickerFileRequest, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -164,8 +171,8 @@ async fn typed_layer_advanced_request_success() -> Result<(), DynError> {
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let request = AdvancedGetAvailableGiftsRequest::new();
-    let value: serde_json::Value = client.typed().call(&request).await?;
-    assert!(value.is_object());
+    let gifts = client.typed().call(&request).await?;
+    assert!(gifts.gifts.is_empty());
 
     join_server(handle)?;
     Ok(())
@@ -196,6 +203,30 @@ async fn typed_layer_validates_advanced_request_before_transport() -> Result<(),
         AdvancedForwardMessagesRequest::new(1_i64, 2_i64, vec![MessageId(9), MessageId(9)]);
     let error = match client.typed().call(&request).await {
         Ok(_) => return Err("duplicate message ids must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedSendGiftRequest::new("gift-id");
+    let error = match client
+        .advanced()
+        .send_gift::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sendGift requires a user or chat target".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSendGiftRequest::new("gift-id");
+    request.user_id = Some(tele::types::UserId(1));
+    request.chat_id = Some(1_i64.into());
+    let error = match client
+        .advanced()
+        .send_gift::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sendGift must reject ambiguous targets".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -244,6 +275,40 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let mut request = AdvancedSendStickerRequest::new(1_i64, "sticker-file-id");
+    request.emoji = Some("bad\nemoji".to_owned());
+    let error = match client
+        .advanced()
+        .send_sticker::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("invalid generated sticker emoji must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedGetStickerSetRequest::new("bad\nset-name");
+    let error = match client
+        .advanced()
+        .get_sticker_set::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("invalid generated sticker set names must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedSetStickerSetTitleRequest::new("set-name", "bad\ntitle");
+    let error = match client
+        .advanced()
+        .set_sticker_set_title::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("invalid generated sticker set titles must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     let request = AdvancedCreateInvoiceLinkRequest::new(
         "title",
         "description",
@@ -257,6 +322,77 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("invalid generated payment price entries must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedSendInvoiceRequest::new(
+        1_i64,
+        "t".repeat(33),
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    let error = match client
+        .advanced()
+        .send_invoice::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice titles must enforce API limits".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "usd",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice currency must use ISO uppercase format".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    request.suggested_tip_amounts = Some(vec![1]);
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice tips must require max_tip_amount".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    request.subscription_period = Some(1);
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice subscriptions must enforce Telegram period".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -339,6 +475,41 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let request = AdvancedGetCustomEmojiStickersRequest::new(vec!["emoji-id".to_owned(); 201]);
+    let error = match client
+        .advanced()
+        .get_custom_emoji_stickers::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated custom emoji id lists must enforce API limits".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetUserGiftsRequest::new(tele::types::UserId(1));
+    request.offset = Some("bad\noffset".to_owned());
+    let error = match client
+        .advanced()
+        .get_user_gifts::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated string offsets must reject control characters".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedSetStickerEmojiListRequest::new("sticker-file-id", vec!["😀".to_owned(); 21]);
+    let error = match client
+        .advanced()
+        .set_sticker_emoji_list::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sticker emoji lists must enforce API limits".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     let mut request = AdvancedSetStickerKeywordsRequest::new("sticker-file-id");
     request.keywords = Some(vec!["ok".to_owned(), "\n".to_owned()]);
     let error = match client
@@ -349,6 +520,45 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         Ok(_) => {
             return Err("invalid optional generated string array entries must be rejected".into());
         }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetStickerKeywordsRequest::new("sticker-file-id");
+    request.keywords = Some(vec!["tag".to_owned(); 21]);
+    let error = match client
+        .advanced()
+        .set_sticker_keywords::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sticker keyword lists must enforce API limits".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedEditMessageMediaRequest::new(InputMediaPhoto::new("photo-file-id").into());
+    let error = match client
+        .advanced()
+        .edit_message_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated editMessageMedia requires a message target".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request =
+        AdvancedEditMessageMediaRequest::new(InputMediaPhoto::new("photo-file-id").into());
+    request.chat_id = Some(1_i64.into());
+    request.message_id = Some(MessageId(1));
+    request.inline_message_id = Some("inline-message".to_owned());
+    let error = match client
+        .advanced()
+        .edit_message_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated editMessageMedia must reject ambiguous targets".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -1915,7 +2125,7 @@ async fn app_membership_facade_handles_bot_member_and_capabilities() -> Result<(
     let membership = client.app().membership();
 
     let bot_member = membership.bot_member(-10010_i64).await?;
-    assert_eq!(bot_member.user().id.0, 999);
+    assert_eq!(bot_member.user().map(|user| user.id.0), Some(999));
     assert!(bot_member.has_capability(ChatAdministratorCapability::ManageChat));
 
     let missing = membership
@@ -2328,16 +2538,93 @@ async fn send_media_group_upload_multipart_success() -> Result<(), DynError> {
 
 #[tokio::test]
 async fn advanced_get_available_gifts_success() -> Result<(), DynError> {
-    let response = r#"{"ok":true,"result":{"gifts":[]}}"#;
+    let response = r#"{"ok":true,"result":{"gifts":[{"id":"gift-1","sticker":{"file_id":"sticker","file_unique_id":"sticker-unique","type":"regular","width":64,"height":64,"is_animated":false,"is_video":false},"star_count":15,"is_premium":true,"background":{"center_color":1,"edge_color":2,"text_color":3}}],"catalog":"main"}}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getAvailableGifts", 200, response)?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
     let request = AdvancedGetAvailableGiftsRequest::new();
-    let value = client
+    let gifts = client
         .advanced()
-        .get_available_gifts::<serde_json::Value>(&request)
+        .get_available_gifts_typed(&request)
         .await?;
-    assert!(value.is_object());
+    assert_eq!(gifts.gifts.len(), 1);
+    assert_eq!(gifts.gifts[0].id, "gift-1");
+    assert_eq!(gifts.gifts[0].star_count, 15);
+    assert!(gifts.gifts[0].is_premium);
+    assert_eq!(
+        gifts.gifts[0].background.as_ref().map(|bg| bg.text_color),
+        Some(3)
+    );
+    assert_eq!(gifts.extra["catalog"], "main");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_get_user_gifts_typed_returns_owned_gifts() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"total_count":1,"gifts":[{"type":"regular","gift":{"id":"gift-1","sticker":{"file_id":"sticker","file_unique_id":"sticker-unique","type":"regular","width":64,"height":64,"is_animated":false,"is_video":false},"star_count":15},"send_date":1710000000}],"next_offset":"next","scope":"user"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getUserGifts",
+        200,
+        response,
+        &["\"user_id\":42", "\"limit\":1"],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedGetUserGiftsRequest::new(tele::types::UserId(42));
+    request.limit = Some(1);
+    let gifts = client.advanced().get_user_gifts_typed(&request).await?;
+    assert_eq!(gifts.total_count, 1);
+    assert_eq!(gifts.next_offset.as_deref(), Some("next"));
+    let gift = gifts.gifts[0]
+        .as_regular()
+        .ok_or("expected regular owned gift")?;
+    assert_eq!(gifts.gifts[0].kind(), Some("regular"));
+    assert_eq!(gift.gift.id, "gift-1");
+    assert_eq!(gift.gift.star_count, 15);
+    assert_eq!(gifts.extra["scope"], "user");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_get_star_transactions_typed_returns_transactions() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"transactions":[{"id":"tx-1","amount":5,"nanostar_amount":7,"date":1710000000,"source":{"type":"user","transaction_type":"gift_purchase","user":{"id":7,"is_bot":false,"first_name":"Ada"},"gift":{"id":"gift-1","sticker":{"file_id":"sticker","file_unique_id":"sticker-unique","type":"regular","width":64,"height":64,"is_animated":false,"is_video":false},"star_count":15}},"note":"kept"}]}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getStarTransactions",
+        200,
+        response,
+        &["\"offset\":0", "\"limit\":1"],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedGetStarTransactionsRequest::new();
+    request.offset = Some(0);
+    request.limit = Some(1);
+    let transactions = client
+        .advanced()
+        .get_star_transactions_typed(&request)
+        .await?;
+    assert_eq!(transactions.transactions.len(), 1);
+    assert_eq!(transactions.transactions[0].id, "tx-1");
+    assert_eq!(transactions.transactions[0].nanostar_amount, Some(7));
+    let source = transactions.transactions[0]
+        .source
+        .as_ref()
+        .ok_or("expected transaction source")?;
+    assert_eq!(source.kind(), Some("user"));
+    let user = source
+        .as_user()
+        .ok_or("expected user transaction partner")?;
+    assert_eq!(user.transaction_type.as_str(), "gift_purchase");
+    assert_eq!(user.user.id.0, 7);
+    assert_eq!(
+        user.gift.as_ref().map(|gift| gift.id.as_str()),
+        Some("gift-1")
+    );
+    assert_eq!(transactions.transactions[0].extra["note"], "kept");
 
     join_server(handle)?;
     Ok(())
@@ -2369,6 +2656,225 @@ async fn answer_web_app_query_typed_success() -> Result<(), DynError> {
         .answer_web_app_query_typed(&request)
         .await?;
     assert_eq!(sent.inline_message_id, "inline-msg-1");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_send_game_typed_returns_message() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":51,"date":1710000000,"chat":{"id":1,"type":"private"},"game":{"title":"Space","description":"Arcade","photo":[{"file_id":"photo","file_unique_id":"photo-unique","width":64,"height":64}]}}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/sendGame",
+        200,
+        response,
+        &["\"game_short_name\":\"space\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedSendGameRequest::new(1_i64, "space");
+    let message = client.advanced().send_game_typed(&request).await?;
+    assert_eq!(message.message_id.0, 51);
+    assert!(message.game.is_some());
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_get_game_high_scores_typed_returns_scores() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":[{"position":1,"user":{"id":42,"is_bot":false,"first_name":"Ada"},"score":9001,"tier":"gold"}]}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getGameHighScores",
+        200,
+        response,
+        &["\"user_id\":42", "\"chat_id\":1", "\"message_id\":99"],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedGetGameHighScoresRequest::new(tele::types::UserId(42));
+    request.chat_id = Some(1_i64.into());
+    request.message_id = Some(MessageId(99));
+    let scores = client
+        .advanced()
+        .get_game_high_scores_typed(&request)
+        .await?;
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].position, 1);
+    assert_eq!(scores[0].user.id.0, 42);
+    assert_eq!(scores[0].score, 9_001);
+    assert_eq!(scores[0].extra["tier"], "gold");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_get_user_profile_audios_typed_returns_audios() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"total_count":1,"audios":[{"file_id":"audio","file_unique_id":"audio-unique","duration":7,"title":"Intro"}],"page":"first"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getUserProfileAudios",
+        200,
+        response,
+        &["\"user_id\":42", "\"limit\":1"],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedGetUserProfileAudiosRequest::new(tele::types::UserId(42));
+    request.limit = Some(1);
+    let profile_audios = client
+        .advanced()
+        .get_user_profile_audios_typed(&request)
+        .await?;
+    assert_eq!(profile_audios.total_count, 1);
+    assert_eq!(profile_audios.audios[0].file_id, "audio");
+    assert_eq!(profile_audios.audios[0].title.as_deref(), Some("Intro"));
+    assert_eq!(profile_audios.extra["page"], "first");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_prepared_mini_app_outputs_are_typed() -> Result<(), DynError> {
+    let inline_response =
+        r#"{"ok":true,"result":{"id":"prepared-inline","expiration_date":1710086400}}"#;
+    let keyboard_response = r#"{"ok":true,"result":{"id":"prepared-keyboard"}}"#;
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/savePreparedInlineMessage")
+            .contains_case_insensitive("\"user_id\":42")
+            .contains_case_insensitive("\"type\":\"article\"")
+            .respond_json(200, inline_response),
+        RequestExpectation::post("/bot123:abc/savePreparedKeyboardButton")
+            .contains_case_insensitive("\"request_users\"")
+            .respond_json(200, keyboard_response),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+    let base_url = server.base_url().to_owned();
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let result = InlineQueryResult::article("article-1", "Prepared", "message")?;
+    let inline_request =
+        AdvancedSavePreparedInlineMessageRequest::new(tele::types::UserId(42), result);
+    let prepared_inline = client
+        .advanced()
+        .save_prepared_inline_message_typed(&inline_request)
+        .await?;
+    assert_eq!(prepared_inline.id, "prepared-inline");
+    assert_eq!(prepared_inline.expiration_date, 1_710_086_400);
+
+    let mut button = KeyboardButton::new("Pick user");
+    button.extra.insert(
+        "request_users".to_owned(),
+        serde_json::json!({ "request_id": 1 }),
+    );
+    let keyboard_request =
+        AdvancedSavePreparedKeyboardButtonRequest::new(tele::types::UserId(42), button);
+    let prepared_keyboard = client
+        .advanced()
+        .save_prepared_keyboard_button_typed(&keyboard_request)
+        .await?;
+    assert_eq!(prepared_keyboard.id, "prepared-keyboard");
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_create_forum_topic_typed_returns_forum_topic() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_thread_id":61,"name":"topic","icon_color":7322096,"icon_custom_emoji_id":"emoji-id"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/createForumTopic",
+        200,
+        response,
+        &["\"chat_id\":1", "\"name\":\"topic\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedCreateForumTopicRequest::new(1_i64, "topic");
+    let topic = client.advanced().create_forum_topic_typed(&request).await?;
+    assert_eq!(topic.message_thread_id, 61);
+    assert_eq!(topic.name, "topic");
+    assert_eq!(topic.icon_color, 7_322_096);
+    assert_eq!(topic.icon_custom_emoji_id.as_deref(), Some("emoji-id"));
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_business_star_balance_typed_returns_star_amount() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"amount":42,"nanostar_amount":7}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getBusinessAccountStarBalance",
+        200,
+        response,
+        &["\"business_connection_id\":\"business-id\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedGetBusinessAccountStarBalanceRequest::new("business-id");
+    let balance = client
+        .advanced()
+        .get_business_account_star_balance_typed(&request)
+        .await?;
+    assert_eq!(balance.amount, 42);
+    assert_eq!(balance.nanostar_amount, Some(7));
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_user_chat_boosts_typed_returns_boosts() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"boosts":[{"boost_id":"boost-1","add_date":1710000000,"expiration_date":1710086400,"source":{"source":"premium"}}]}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getUserChatBoosts",
+        200,
+        response,
+        &["\"chat_id\":1", "\"user_id\":42"],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedGetUserChatBoostsRequest::new(1_i64, tele::types::UserId(42));
+    let boosts = client
+        .advanced()
+        .get_user_chat_boosts_typed(&request)
+        .await?;
+    assert_eq!(boosts.boosts.len(), 1);
+    assert_eq!(boosts.boosts[0].boost_id, "boost-1");
+    assert_eq!(boosts.boosts[0].source.source, "premium");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_post_story_typed_returns_story() -> Result<(), DynError> {
+    let response =
+        r#"{"ok":true,"result":{"chat":{"id":1,"type":"private"},"id":77,"extra":"kept"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/postStory",
+        200,
+        response,
+        &[
+            "\"business_connection_id\":\"business-id\"",
+            "\"active_period\":86400",
+            "\"type\":\"photo\"",
+            "\"photo\":\"file-id\"",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let content = InputStoryContent::new(serde_json::json!({
+        "type": "photo",
+        "photo": "file-id"
+    }))?;
+    let request = AdvancedPostStoryRequest::new("business-id", content, 86_400);
+    let story = client.advanced().post_story_typed(&request).await?;
+    assert_eq!(story.id, 77);
+    assert_eq!(story.chat.id, 1);
+    assert_eq!(story.extra["extra"], "kept");
 
     join_server(handle)?;
     Ok(())

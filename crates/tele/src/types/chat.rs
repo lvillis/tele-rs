@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::common::{ChatId, MessageId, UserId};
+use crate::types::tagged::{serialize_tagged_field, strip_tag, tagged_field};
 use crate::{Error, Result};
 
 const MAX_CHAT_TITLE_CHARS: usize = 128;
@@ -190,20 +191,63 @@ impl ChatAdministratorRights {
 }
 
 /// Strongly typed chat member status.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum ChatMemberStatus {
-    #[serde(rename = "creator")]
     Owner,
-    #[serde(rename = "administrator")]
     Administrator,
-    #[serde(rename = "member")]
     Member,
-    #[serde(rename = "restricted")]
     Restricted,
-    #[serde(rename = "left")]
     Left,
-    #[serde(rename = "kicked")]
     Banned,
+    Unknown(String),
+}
+
+impl ChatMemberStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Owner => "creator",
+            Self::Administrator => "administrator",
+            Self::Member => "member",
+            Self::Restricted => "restricted",
+            Self::Left => "left",
+            Self::Banned => "kicked",
+            Self::Unknown(value) => value.as_str(),
+        }
+    }
+}
+
+impl From<&str> for ChatMemberStatus {
+    fn from(value: &str) -> Self {
+        match value {
+            "creator" => Self::Owner,
+            "administrator" => Self::Administrator,
+            "member" => Self::Member,
+            "restricted" => Self::Restricted,
+            "left" => Self::Left,
+            "kicked" => Self::Banned,
+            _ => Self::Unknown(value.to_owned()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ChatMemberStatus {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from(value.as_str()))
+    }
+}
+
+impl Serialize for ChatMemberStatus {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
 /// Telegram chat owner payload.
@@ -281,22 +325,67 @@ pub struct ChatMemberBanned {
 }
 
 /// Telegram chat member object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "status")]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum ChatMember {
-    #[serde(rename = "creator")]
     Owner(ChatMemberOwner),
-    #[serde(rename = "administrator")]
     Administrator(ChatMemberAdministrator),
-    #[serde(rename = "member")]
     Member(ChatMemberRegular),
-    #[serde(rename = "restricted")]
     Restricted(ChatMemberRestricted),
-    #[serde(rename = "left")]
     Left(ChatMemberLeft),
-    #[serde(rename = "kicked")]
     Banned(ChatMemberBanned),
+    Unknown(Value),
+}
+
+impl<'de> Deserialize<'de> for ChatMember {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match tagged_field(&value, "status") {
+            Some("creator") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Owner)
+                .map_err(serde::de::Error::custom),
+            Some("administrator") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Administrator)
+                .map_err(serde::de::Error::custom),
+            Some("member") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Member)
+                .map_err(serde::de::Error::custom),
+            Some("restricted") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Restricted)
+                .map_err(serde::de::Error::custom),
+            Some("left") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Left)
+                .map_err(serde::de::Error::custom),
+            Some("kicked") => serde_json::from_value(strip_tag(value, "status"))
+                .map(Self::Banned)
+                .map_err(serde::de::Error::custom),
+            Some(_) | None => Ok(Self::Unknown(value)),
+        }
+    }
+}
+
+impl Serialize for ChatMember {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Owner(value) => serialize_tagged_field(serializer, "status", "creator", value),
+            Self::Administrator(value) => {
+                serialize_tagged_field(serializer, "status", "administrator", value)
+            }
+            Self::Member(value) => serialize_tagged_field(serializer, "status", "member", value),
+            Self::Restricted(value) => {
+                serialize_tagged_field(serializer, "status", "restricted", value)
+            }
+            Self::Left(value) => serialize_tagged_field(serializer, "status", "left", value),
+            Self::Banned(value) => serialize_tagged_field(serializer, "status", "kicked", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
 }
 
 /// Administrative capabilities exposed by `getChatMember`.
@@ -341,40 +430,183 @@ impl ChatAdministratorCapability {
 }
 
 impl ChatMember {
-    pub fn status(&self) -> ChatMemberStatus {
+    pub fn status_name(&self) -> Option<&str> {
         match self {
-            Self::Owner(_) => ChatMemberStatus::Owner,
-            Self::Administrator(_) => ChatMemberStatus::Administrator,
-            Self::Member(_) => ChatMemberStatus::Member,
-            Self::Restricted(_) => ChatMemberStatus::Restricted,
-            Self::Left(_) => ChatMemberStatus::Left,
-            Self::Banned(_) => ChatMemberStatus::Banned,
+            Self::Owner(_) => Some("creator"),
+            Self::Administrator(_) => Some("administrator"),
+            Self::Member(_) => Some("member"),
+            Self::Restricted(_) => Some("restricted"),
+            Self::Left(_) => Some("left"),
+            Self::Banned(_) => Some("kicked"),
+            Self::Unknown(value) => tagged_field(value, "status"),
         }
     }
 
-    pub fn user(&self) -> &User {
+    pub fn status(&self) -> Option<ChatMemberStatus> {
+        self.status_name().map(ChatMemberStatus::from)
+    }
+
+    pub fn user(&self) -> Option<&User> {
         match self {
-            Self::Owner(member) => &member.user,
-            Self::Administrator(member) => &member.user,
-            Self::Member(member) => &member.user,
-            Self::Restricted(member) => &member.user,
-            Self::Left(member) => &member.user,
-            Self::Banned(member) => &member.user,
+            Self::Owner(member) => Some(&member.user),
+            Self::Administrator(member) => Some(&member.user),
+            Self::Member(member) => Some(&member.user),
+            Self::Restricted(member) => Some(&member.user),
+            Self::Left(member) => Some(&member.user),
+            Self::Banned(member) => Some(&member.user),
+            Self::Unknown(_) => None,
         }
     }
 
-    pub fn custom_title(&self) -> Option<&str> {
+    pub fn as_owner(&self) -> Option<&ChatMemberOwner> {
         match self {
-            Self::Owner(member) => member.custom_title.as_deref(),
-            Self::Administrator(member) => member.custom_title.as_deref(),
-            Self::Member(_) | Self::Restricted(_) | Self::Left(_) | Self::Banned(_) => None,
+            Self::Owner(member) => Some(member),
+            Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
         }
     }
 
-    pub fn administrator_rights(&self) -> Option<&ChatAdministratorRights> {
+    pub fn into_owner(self) -> Option<ChatMemberOwner> {
         match self {
-            Self::Administrator(member) => Some(&member.rights),
+            Self::Owner(member) => Some(member),
+            Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_administrator(&self) -> Option<&ChatMemberAdministrator> {
+        match self {
+            Self::Administrator(member) => Some(member),
             Self::Owner(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_administrator(self) -> Option<ChatMemberAdministrator> {
+        match self {
+            Self::Administrator(member) => Some(member),
+            Self::Owner(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_member(&self) -> Option<&ChatMemberRegular> {
+        match self {
+            Self::Member(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_member(self) -> Option<ChatMemberRegular> {
+        match self {
+            Self::Member(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_restricted(&self) -> Option<&ChatMemberRestricted> {
+        match self {
+            Self::Restricted(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_restricted(self) -> Option<ChatMemberRestricted> {
+        match self {
+            Self::Restricted(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_left(&self) -> Option<&ChatMemberLeft> {
+        match self {
+            Self::Left(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_left(self) -> Option<ChatMemberLeft> {
+        match self {
+            Self::Left(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_banned(&self) -> Option<&ChatMemberBanned> {
+        match self {
+            Self::Banned(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_banned(self) -> Option<ChatMemberBanned> {
+        match self {
+            Self::Banned(member) => Some(member),
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_unknown_value(&self) -> Option<&Value> {
+        match self {
+            Self::Unknown(value) => Some(value),
+            Self::Owner(_)
+            | Self::Administrator(_)
             | Self::Member(_)
             | Self::Restricted(_)
             | Self::Left(_)
@@ -382,33 +614,59 @@ impl ChatMember {
         }
     }
 
-    pub fn permissions(&self) -> Option<&ChatPermissions> {
+    pub fn into_unknown_value(self) -> Option<Value> {
         match self {
-            Self::Restricted(member) => Some(&member.permissions),
+            Self::Unknown(value) => Some(value),
             Self::Owner(_)
             | Self::Administrator(_)
             | Self::Member(_)
+            | Self::Restricted(_)
             | Self::Left(_)
             | Self::Banned(_) => None,
         }
+    }
+
+    pub fn custom_title(&self) -> Option<&str> {
+        match self {
+            Self::Owner(member) => member.custom_title.as_deref(),
+            Self::Administrator(member) => member.custom_title.as_deref(),
+            Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn administrator_rights(&self) -> Option<&ChatAdministratorRights> {
+        self.as_administrator().map(|member| &member.rights)
+    }
+
+    pub fn permissions(&self) -> Option<&ChatPermissions> {
+        self.as_restricted().map(|member| &member.permissions)
     }
 
     pub fn until_date(&self) -> Option<i64> {
         match self {
             Self::Restricted(member) => member.until_date,
             Self::Banned(member) => member.until_date,
-            Self::Owner(_) | Self::Administrator(_) | Self::Member(_) | Self::Left(_) => None,
+            Self::Owner(_)
+            | Self::Administrator(_)
+            | Self::Member(_)
+            | Self::Left(_)
+            | Self::Unknown(_) => None,
         }
     }
 
-    pub fn extra(&self) -> &BTreeMap<String, Value> {
+    pub fn extra(&self) -> Option<&BTreeMap<String, Value>> {
         match self {
-            Self::Owner(member) => &member.extra,
-            Self::Administrator(member) => &member.extra,
-            Self::Member(member) => &member.extra,
-            Self::Restricted(member) => &member.extra,
-            Self::Left(member) => &member.extra,
-            Self::Banned(member) => &member.extra,
+            Self::Owner(member) => Some(&member.extra),
+            Self::Administrator(member) => Some(&member.extra),
+            Self::Member(member) => Some(&member.extra),
+            Self::Restricted(member) => Some(&member.extra),
+            Self::Left(member) => Some(&member.extra),
+            Self::Banned(member) => Some(&member.extra),
+            Self::Unknown(_) => None,
         }
     }
 
@@ -424,7 +682,11 @@ impl ChatMember {
         match self {
             Self::Owner(_) => true,
             Self::Administrator(member) => member.rights.has_capability(capability),
-            Self::Member(_) | Self::Restricted(_) | Self::Left(_) | Self::Banned(_) => false,
+            Self::Member(_)
+            | Self::Restricted(_)
+            | Self::Left(_)
+            | Self::Banned(_)
+            | Self::Unknown(_) => false,
         }
     }
 }
@@ -1302,8 +1564,17 @@ mod tests {
             "can_manage_topics": true
         }))?;
 
-        assert_eq!(member.status(), ChatMemberStatus::Administrator);
-        assert_eq!(member.user().id.0, 1);
+        assert_eq!(member.status_name(), Some("administrator"));
+        assert_eq!(member.status(), Some(ChatMemberStatus::Administrator));
+        assert_eq!(member.user().map(|user| user.id.0), Some(1));
+        assert!(member.as_administrator().is_some());
+        assert_eq!(
+            member
+                .clone()
+                .into_administrator()
+                .map(|administrator| administrator.user.first_name),
+            Some("mod".to_owned())
+        );
         assert!(member.has_capability(ChatAdministratorCapability::ManageChat));
         assert!(member.has_capability(ChatAdministratorCapability::DeleteMessages));
         assert!(member.has_capability(ChatAdministratorCapability::ManageVideoChats));
@@ -1318,6 +1589,31 @@ mod tests {
         assert!(!member.has_capability(ChatAdministratorCapability::EditMessages));
         assert!(member.has_capability(ChatAdministratorCapability::PinMessages));
         assert!(member.has_capability(ChatAdministratorCapability::ManageTopics));
+
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_chat_member_status_is_preserved()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let input = json!({
+            "status": "future_status",
+            "user": {"id": 2, "is_bot": false, "first_name": "future"},
+            "payload": {"kept": true}
+        });
+        let member: ChatMember = serde_json::from_value(input.clone())?;
+
+        assert_eq!(member.status_name(), Some("future_status"));
+        assert_eq!(
+            member.status(),
+            Some(ChatMemberStatus::Unknown("future_status".to_owned()))
+        );
+        assert!(member.user().is_none());
+        assert!(!member.is_admin());
+        assert!(!member.has_capability(ChatAdministratorCapability::ManageChat));
+        assert_eq!(member.as_unknown_value(), Some(&input));
+        assert_eq!(member.clone().into_unknown_value(), Some(input.clone()));
+        assert_eq!(serde_json::to_value(member)?, input);
 
         Ok(())
     }

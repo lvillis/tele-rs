@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::common::MessageId;
+use crate::types::gift::{GiftInfo, UniqueGiftInfo};
 use crate::types::sticker::Sticker;
 use crate::types::telegram::{LinkPreviewOptions, ReplyMarkup, WebAppData};
 
@@ -177,6 +178,12 @@ pub struct Message {
     pub successful_payment: Option<Box<SuccessfulPayment>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refunded_payment: Option<Box<RefundedPayment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gift: Option<Box<GiftInfo>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_gift: Option<Box<UniqueGiftInfo>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gift_upgrade_sent: Option<Box<GiftInfo>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub users_shared: Option<UsersShared>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -364,6 +371,9 @@ impl<'de> Deserialize<'de> for Message {
             invoice: take_optional_field(&mut object, "invoice")?,
             successful_payment: take_optional_field(&mut object, "successful_payment")?,
             refunded_payment: take_optional_field(&mut object, "refunded_payment")?,
+            gift: take_optional_field(&mut object, "gift")?,
+            unique_gift: take_optional_field(&mut object, "unique_gift")?,
+            gift_upgrade_sent: take_optional_field(&mut object, "gift_upgrade_sent")?,
             users_shared: take_optional_field(&mut object, "users_shared")?,
             chat_shared: take_optional_field(&mut object, "chat_shared")?,
             connected_website: take_optional_field(&mut object, "connected_website")?,
@@ -420,10 +430,7 @@ impl<'de> Deserialize<'de> for Message {
 }
 
 fn is_unmodeled_message_content_key(key: &str) -> bool {
-    matches!(
-        key,
-        "gift" | "unique_gift" | "gift_upgrade_sent" | "passport_data" | "chat_background_set"
-    )
+    matches!(key, "passport_data" | "chat_background_set")
 }
 
 impl Message {
@@ -458,6 +465,9 @@ impl Message {
             || self.invoice.is_some()
             || self.successful_payment.is_some()
             || self.refunded_payment.is_some()
+            || self.gift.is_some()
+            || self.unique_gift.is_some()
+            || self.gift_upgrade_sent.is_some()
             || self.new_chat_members.is_some()
             || self.left_chat_member.is_some()
             || self.chat_owner_left.is_some()
@@ -575,6 +585,9 @@ impl Message {
             MessageKind::Invoice => self.invoice.is_some(),
             MessageKind::SuccessfulPayment => self.successful_payment.is_some(),
             MessageKind::RefundedPayment => self.refunded_payment.is_some(),
+            MessageKind::Gift => self.gift.is_some(),
+            MessageKind::UniqueGift => self.unique_gift.is_some(),
+            MessageKind::GiftUpgradeSent => self.gift_upgrade_sent.is_some(),
             MessageKind::NewChatMembers => self.new_chat_members.is_some(),
             MessageKind::LeftChatMember => self.left_chat_member.is_some(),
             MessageKind::ChatOwnerLeft => self.chat_owner_left.is_some(),

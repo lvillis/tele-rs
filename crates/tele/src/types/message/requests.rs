@@ -12,7 +12,7 @@ use crate::types::validation::{
     optional_positive_i64 as validate_optional_positive_i64,
     optional_text_formatting as validate_optional_text_formatting,
     reply_markup as validate_reply_markup, reply_parameters as validate_reply_parameters,
-    required_text as validate_required_text,
+    required_text as validate_required_text, string_id as validate_string_id,
     suggested_post_parameters as validate_suggested_post_parameters,
     text_formatting as validate_text_formatting,
 };
@@ -1266,6 +1266,8 @@ impl InputMediaPhoto {
 pub struct InputMediaVideo {
     pub media: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
@@ -1287,6 +1289,7 @@ impl InputMediaVideo {
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
+            thumbnail: None,
             caption: None,
             parse_mode: None,
             caption_entities: None,
@@ -1296,6 +1299,11 @@ impl InputMediaVideo {
             supports_streaming: None,
             has_spoiler: None,
         }
+    }
+
+    pub fn thumbnail(mut self, thumbnail: impl Into<String>) -> Self {
+        self.thumbnail = Some(thumbnail.into());
+        self
     }
 
     pub fn caption(mut self, caption: impl Into<String>) -> Self {
@@ -1344,6 +1352,8 @@ impl InputMediaVideo {
 pub struct InputMediaAnimation {
     pub media: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
@@ -1363,6 +1373,7 @@ impl InputMediaAnimation {
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
+            thumbnail: None,
             caption: None,
             parse_mode: None,
             caption_entities: None,
@@ -1371,6 +1382,11 @@ impl InputMediaAnimation {
             duration: None,
             has_spoiler: None,
         }
+    }
+
+    pub fn thumbnail(mut self, thumbnail: impl Into<String>) -> Self {
+        self.thumbnail = Some(thumbnail.into());
+        self
     }
 
     pub fn caption(mut self, caption: impl Into<String>) -> Self {
@@ -1414,6 +1430,8 @@ impl InputMediaAnimation {
 pub struct InputMediaAudio {
     pub media: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
@@ -1431,6 +1449,7 @@ impl InputMediaAudio {
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
+            thumbnail: None,
             caption: None,
             parse_mode: None,
             caption_entities: None,
@@ -1438,6 +1457,11 @@ impl InputMediaAudio {
             performer: None,
             title: None,
         }
+    }
+
+    pub fn thumbnail(mut self, thumbnail: impl Into<String>) -> Self {
+        self.thumbnail = Some(thumbnail.into());
+        self
     }
 
     pub fn caption(mut self, caption: impl Into<String>) -> Self {
@@ -1476,6 +1500,8 @@ impl InputMediaAudio {
 pub struct InputMediaDocument {
     pub media: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
@@ -1489,11 +1515,17 @@ impl InputMediaDocument {
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
+            thumbnail: None,
             caption: None,
             parse_mode: None,
             caption_entities: None,
             disable_content_type_detection: None,
         }
+    }
+
+    pub fn thumbnail(mut self, thumbnail: impl Into<String>) -> Self {
+        self.thumbnail = Some(thumbnail.into());
+        self
     }
 
     pub fn caption(mut self, caption: impl Into<String>) -> Self {
@@ -2301,11 +2333,7 @@ impl EditMessageTextRequest {
         text: impl Into<String>,
     ) -> Result<Self, Error> {
         let inline_message_id = inline_message_id.into();
-        if inline_message_id.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "inline_message_id cannot be empty".to_owned(),
-            });
-        }
+        validate_string_id("inline_message_id", &inline_message_id)?;
 
         let text = text.into();
         validate_message_text("editMessageText", &text)?;
@@ -2555,18 +2583,32 @@ fn validate_edit_target(
     if let Some(message_id) = message_id {
         message_id.validate()?;
     }
+    if let Some(inline_message_id) = inline_message_id.as_deref() {
+        validate_string_id("inline_message_id", inline_message_id)?;
+    }
 
-    let has_chat_target = chat_id.is_some() && message_id.is_some();
-    let has_inline_target = inline_message_id
-        .as_ref()
-        .is_some_and(|inline_message_id| !inline_message_id.trim().is_empty());
+    let has_complete_chat_target = chat_id.is_some() && message_id.is_some();
+    let has_any_chat_target_field = chat_id.is_some() || message_id.is_some();
+    let has_inline_target = inline_message_id.is_some();
 
-    if has_chat_target ^ has_inline_target {
+    if has_inline_target {
+        if has_any_chat_target_field {
+            return Err(Error::InvalidRequest {
+                reason:
+                    "method accepts either chat_id with message_id or inline_message_id, not both"
+                        .to_owned(),
+            });
+        }
+
+        return Ok(());
+    }
+
+    if has_complete_chat_target {
         return Ok(());
     }
 
     Err(Error::InvalidRequest {
-        reason: "method requires either chat_id+message_id or inline_message_id".to_owned(),
+        reason: "method requires either chat_id with message_id or inline_message_id".to_owned(),
     })
 }
 
@@ -2719,6 +2761,7 @@ fn validate_input_media_photo(media: &InputMediaPhoto) -> Result<(), Error> {
 
 fn validate_input_media_video(media: &InputMediaVideo) -> Result<(), Error> {
     validate_file_reference("media", &media.media)?;
+    validate_optional_file_reference("thumbnail", media.thumbnail.as_deref())?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -2732,6 +2775,7 @@ fn validate_input_media_video(media: &InputMediaVideo) -> Result<(), Error> {
 
 fn validate_input_media_animation(media: &InputMediaAnimation) -> Result<(), Error> {
     validate_file_reference("media", &media.media)?;
+    validate_optional_file_reference("thumbnail", media.thumbnail.as_deref())?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -2745,6 +2789,7 @@ fn validate_input_media_animation(media: &InputMediaAnimation) -> Result<(), Err
 
 fn validate_input_media_audio(media: &InputMediaAudio) -> Result<(), Error> {
     validate_file_reference("media", &media.media)?;
+    validate_optional_file_reference("thumbnail", media.thumbnail.as_deref())?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -2756,6 +2801,7 @@ fn validate_input_media_audio(media: &InputMediaAudio) -> Result<(), Error> {
 
 fn validate_input_media_document(media: &InputMediaDocument) -> Result<(), Error> {
     validate_file_reference("media", &media.media)?;
+    validate_optional_file_reference("thumbnail", media.thumbnail.as_deref())?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -2783,12 +2829,35 @@ fn validate_media_group_item(media: &InputMediaGroupItem) -> Result<(), Error> {
     }
 }
 
-fn media_group_file_reference(media: &InputMediaGroupItem) -> &str {
+struct MediaGroupFileReferences<'a> {
+    media: &'a str,
+    thumbnail: Option<&'a str>,
+}
+
+impl<'a> MediaGroupFileReferences<'a> {
+    fn iter(&self) -> impl Iterator<Item = &'a str> + '_ {
+        std::iter::once(self.media).chain(self.thumbnail)
+    }
+}
+
+fn media_group_file_references(media: &InputMediaGroupItem) -> MediaGroupFileReferences<'_> {
     match media {
-        InputMediaGroupItem::Photo(media) => &media.media,
-        InputMediaGroupItem::Video(media) => &media.media,
-        InputMediaGroupItem::Audio(media) => &media.media,
-        InputMediaGroupItem::Document(media) => &media.media,
+        InputMediaGroupItem::Photo(media) => MediaGroupFileReferences {
+            media: &media.media,
+            thumbnail: None,
+        },
+        InputMediaGroupItem::Video(media) => MediaGroupFileReferences {
+            media: &media.media,
+            thumbnail: media.thumbnail.as_deref(),
+        },
+        InputMediaGroupItem::Audio(media) => MediaGroupFileReferences {
+            media: &media.media,
+            thumbnail: media.thumbnail.as_deref(),
+        },
+        InputMediaGroupItem::Document(media) => MediaGroupFileReferences {
+            media: &media.media,
+            thumbnail: media.thumbnail.as_deref(),
+        },
     }
 }
 
@@ -2803,9 +2872,11 @@ fn validate_attach_name(field: &str, name: &str) -> Result<(), Error> {
 fn media_attach_names(media: &[InputMediaGroupItem]) -> Result<BTreeSet<String>, Error> {
     let mut names = BTreeSet::new();
     for item in media {
-        if let Some(name) = attach_name(media_group_file_reference(item)) {
-            validate_attach_name("media attach name", name)?;
-            names.insert(name.to_owned());
+        for reference in media_group_file_references(item).iter() {
+            if let Some(name) = attach_name(reference) {
+                validate_attach_name("media attach name", name)?;
+                names.insert(name.to_owned());
+            }
         }
     }
 
@@ -2814,9 +2885,12 @@ fn media_attach_names(media: &[InputMediaGroupItem]) -> Result<BTreeSet<String>,
 
 fn validate_no_multipart_attach_references(media: &[InputMediaGroupItem]) -> Result<(), Error> {
     for item in media {
-        if attach_name(media_group_file_reference(item)).is_some() {
+        if media_group_file_references(item)
+            .iter()
+            .any(|reference| attach_name(reference).is_some())
+        {
             return Err(Error::InvalidRequest {
-                reason: "sendMediaGroup JSON requests cannot use attach:// media; use send_media_group_upload".to_owned(),
+                reason: "sendMediaGroup JSON requests cannot use attach:// media or thumbnail references; use send_media_group_upload".to_owned(),
             });
         }
     }
@@ -2837,8 +2911,9 @@ fn validate_media_group_upload_parts(
     let attach_names = media_attach_names(media)?;
     if attach_names.is_empty() {
         return Err(Error::InvalidRequest {
-            reason: "sendMediaGroup upload requires at least one attach:// media reference"
-                .to_owned(),
+            reason:
+                "sendMediaGroup upload requires at least one attach:// media or thumbnail reference"
+                    .to_owned(),
         });
     }
 
@@ -2862,7 +2937,7 @@ fn validate_media_group_upload_parts(
     for name in &file_names {
         if !attach_names.contains(name) {
             return Err(Error::InvalidRequest {
-                reason: format!("multipart file part `{name}` is not referenced by media"),
+                reason: format!("multipart file part `{name}` is not referenced by attach://"),
             });
         }
     }
@@ -3996,6 +4071,42 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
+        assert!(matches!(
+            EditMessageTextRequest::for_inline_message("bad\nid", "hello"),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut partial_edit_target =
+            EditMessageTextRequest::for_chat_message(1_i64, MessageId(1), "hello")?;
+        partial_edit_target.message_id = None;
+        assert!(matches!(
+            partial_edit_target.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut ambiguous_edit_target =
+            EditMessageTextRequest::for_inline_message("inline-id", "hello")?;
+        ambiguous_edit_target.chat_id = Some(1_i64.into());
+        assert!(matches!(
+            ambiguous_edit_target.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_inline_caption_target = EditMessageCaptionRequest {
+            chat_id: None,
+            message_id: None,
+            inline_message_id: Some("bad\nid".to_owned()),
+            caption: Some("hello".to_owned()),
+            parse_mode: None,
+            caption_entities: None,
+            reply_markup: None,
+            show_caption_above_media: None,
+        };
+        assert!(matches!(
+            invalid_inline_caption_target.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let delete = DeleteMessageRequest::new("channel", MessageId(1));
         assert!(matches!(
             delete.validate(),
@@ -4130,6 +4241,20 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
+        let input_video = InputMediaVideo::new("video-file-id").thumbnail("thumb-file-id");
+        InputMedia::from(input_video.clone()).validate()?;
+        let input_video_json = serde_json::to_value(&input_video)
+            .map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(input_video_json["thumbnail"], "thumb-file-id");
+
+        let invalid_input_document = InputMedia::from(
+            InputMediaDocument::new("document-file-id").thumbnail("bad\nthumbnail"),
+        );
+        assert!(matches!(
+            invalid_input_document.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let photo_media = InputMediaPhoto {
             media: "photo-file-id".to_owned(),
             caption: None,
@@ -4139,6 +4264,7 @@ mod tests {
         };
         let video_media = InputMediaVideo {
             media: "video-file-id".to_owned(),
+            thumbnail: None,
             caption: None,
             parse_mode: None,
             caption_entities: None,
@@ -4174,6 +4300,7 @@ mod tests {
                 .into(),
                 InputMediaVideo {
                     media: "video-file-id".to_owned(),
+                    thumbnail: None,
                     caption: None,
                     parse_mode: None,
                     caption_entities: None,
@@ -4210,6 +4337,29 @@ mod tests {
             )?]),
             Err(Error::InvalidRequest { .. })
         ));
+
+        let thumbnail_upload_group = SendMediaGroupRequest::new(
+            1_i64,
+            vec![
+                InputMediaPhoto::new("photo-file-id").into(),
+                InputMediaVideo::new("video-file-id")
+                    .thumbnail("attach://thumb0")
+                    .into(),
+            ],
+        )?;
+        assert!(matches!(
+            thumbnail_upload_group.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            thumbnail_upload_group.validate_upload(&[]),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(
+            thumbnail_upload_group
+                .validate_upload(std::slice::from_ref(&thumbnail))
+                .is_ok()
+        );
 
         let single_item = SendMediaGroupRequest::new(
             1_i64,
