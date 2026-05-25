@@ -5,9 +5,49 @@ mod builders;
 
 pub use builders::*;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct DispatchState {
     command_target: Option<String>,
+    prepared_inputs: PreparedRouteInputs,
+}
+
+#[derive(Clone, Default)]
+struct PreparedRouteInputs {
+    inner: Arc<StdMutex<HashMap<usize, Box<dyn Any + Send + 'static>>>>,
+}
+
+impl DispatchState {
+    fn new(command_target: Option<String>) -> Self {
+        Self {
+            command_target,
+            prepared_inputs: PreparedRouteInputs::default(),
+        }
+    }
+
+    fn insert_prepared<T>(&self, route_id: usize, value: T)
+    where
+        T: Send + 'static,
+    {
+        let mut inputs = self
+            .prepared_inputs
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = inputs.insert(route_id, Box::new(value));
+    }
+
+    fn take_prepared<T>(&self, route_id: usize) -> Option<T>
+    where
+        T: Send + 'static,
+    {
+        let mut inputs = self
+            .prepared_inputs
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let value = inputs.remove(&route_id)?;
+        value.downcast::<T>().ok().map(|value| *value)
+    }
 }
 
 type RouteFilterFn = Arc<dyn Fn(&Update, &DispatchState) -> bool + Send + Sync + 'static>;
@@ -15,7 +55,7 @@ type RouteHandlerFn =
     Arc<dyn Fn(BotContext, Update, DispatchState) -> HandlerFuture + Send + Sync + 'static>;
 type ExtractedFilterFn<E> = Arc<dyn Fn(&E, &Update) -> bool + Send + Sync + 'static>;
 type ExtractedGuardFn<E> = Arc<dyn Fn(&E, &Update) -> HandlerResult + Send + Sync + 'static>;
-type ExtractedMapFn<E, T> = Arc<dyn Fn(E, &Update) -> Option<T> + Send + Sync + 'static>;
+type ExtractedMapFn<E, T> = Arc<dyn Fn(&E, &Update) -> Option<T> + Send + Sync + 'static>;
 
 const ROUTE_THROTTLE_GC_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -503,16 +543,6 @@ async fn run_route_guards(
     Ok(())
 }
 
-fn extracted_route_matches<E>(update: &Update, filters: &[ExtractedFilterFn<E>]) -> bool
-where
-    E: UpdateExtractor,
-{
-    let Some(extracted) = E::extract(update) else {
-        return false;
-    };
-    filters.iter().all(|filter| filter(&extracted, update))
-}
-
 fn run_extracted_guards<E>(
     guards: &[ExtractedGuardFn<E>],
     extracted: &E,
@@ -522,6 +552,12 @@ fn run_extracted_guards<E>(
         guard(extracted, update)?;
     }
     Ok(())
+}
+
+fn missing_prepared_route_input() -> HandlerError {
+    HandlerError::internal(invalid_request(
+        "prepared route input is missing or already consumed",
+    ))
 }
 
 async fn evaluate_route_pipeline<T, I, H, Fut>(
@@ -912,9 +948,7 @@ impl Router {
     }
 
     fn current_dispatch_state(&self) -> DispatchState {
-        DispatchState {
-            command_target: self.command_target_username(),
-        }
+        DispatchState::new(self.command_target_username())
     }
 
     fn route_with_state<P, H, Fut>(&mut self, predicate: P, handler: H) -> &mut Self
@@ -958,6 +992,43 @@ impl Router {
                 .await
             }
         })
+    }
+
+    fn route_prepared_handler_with_state<P, T, H, Fut>(
+        &mut self,
+        prepare: P,
+        resolution: RouteResolution,
+        handler: H,
+    ) -> &mut Self
+    where
+        P: Fn(&Update, &DispatchState) -> Option<T> + Send + Sync + 'static,
+        T: Send + 'static,
+        H: Fn(BotContext, Update, DispatchState, T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = HandlerResult> + Send + 'static,
+    {
+        let route_id = self.routes.len();
+        let prepare = Arc::new(prepare);
+        let handler = Arc::new(handler);
+
+        self.route_handler_with_state(
+            move |update, state| {
+                let Some(input) = prepare(update, state) else {
+                    return false;
+                };
+                state.insert_prepared(route_id, input);
+                true
+            },
+            resolution,
+            move |context, update, state| {
+                let handler = Arc::clone(&handler);
+                async move {
+                    let input = state
+                        .take_prepared::<T>(route_id)
+                        .ok_or_else(missing_prepared_route_input)?;
+                    handler(context, update, state, input).await
+                }
+            },
+        )
     }
 
     fn route_with_policy_state<P, H, Fut>(

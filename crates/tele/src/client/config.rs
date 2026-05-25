@@ -6,7 +6,7 @@ use http::header::{HeaderName, HeaderValue, USER_AGENT};
 use crate::Error;
 use crate::auth::{Auth, BotToken};
 use crate::client::{ClientMetric, ClientObservability};
-use crate::util::normalize_base_url;
+use crate::util::{normalize_base_url, redact_url_credentials};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -380,8 +380,8 @@ impl ClientBuilder {
     /// Sets HTTP proxy URI.
     pub fn http_proxy(mut self, proxy_uri: impl AsRef<str>) -> Result<Self, Error> {
         let raw = proxy_uri.as_ref().trim();
-        let parsed = raw.parse::<Uri>().map_err(|source| Error::InvalidRequest {
-            reason: format!("invalid http proxy uri `{raw}`: {source}"),
+        let parsed = raw.parse::<Uri>().map_err(|source| {
+            invalid_http_proxy_uri(raw, format!("failed to parse proxy uri: {source}"))
         })?;
         validate_http_proxy_uri(raw, &parsed)?;
         self.defaults.http_proxy = Some(parsed);
@@ -478,41 +478,46 @@ impl ClientBuilder {
 
 fn validate_http_proxy_uri(raw: &str, parsed: &Uri) -> Result<(), Error> {
     let Some(scheme) = parsed.scheme_str() else {
-        return Err(Error::InvalidRequest {
-            reason: format!(
-                "invalid http proxy uri `{raw}`: proxy uri must include an explicit scheme"
-            ),
-        });
+        return Err(invalid_http_proxy_uri(
+            raw,
+            "proxy uri must include an explicit scheme",
+        ));
     };
     if !scheme.eq_ignore_ascii_case("http") {
-        return Err(Error::InvalidRequest {
-            reason: format!("invalid http proxy uri `{raw}`: proxy uri must use http scheme"),
-        });
+        return Err(invalid_http_proxy_uri(
+            raw,
+            "proxy uri must use http scheme",
+        ));
     }
     if parsed.host().is_none() {
-        return Err(Error::InvalidRequest {
-            reason: format!("invalid http proxy uri `{raw}`: proxy uri must include host"),
-        });
+        return Err(invalid_http_proxy_uri(raw, "proxy uri must include host"));
     }
     if let Some(path_and_query) = parsed.path_and_query() {
         let path = path_and_query.path();
         if !path.is_empty() && path != "/" {
-            return Err(Error::InvalidRequest {
-                reason: format!(
-                    "invalid http proxy uri `{raw}`: proxy uri must not include path segments"
-                ),
-            });
+            return Err(invalid_http_proxy_uri(
+                raw,
+                "proxy uri must not include path segments",
+            ));
         }
         if path_and_query.query().is_some() {
-            return Err(Error::InvalidRequest {
-                reason: format!(
-                    "invalid http proxy uri `{raw}`: proxy uri must not include query parameters"
-                ),
-            });
+            return Err(invalid_http_proxy_uri(
+                raw,
+                "proxy uri must not include query parameters",
+            ));
         }
     }
 
     Ok(())
+}
+
+fn invalid_http_proxy_uri(raw: &str, detail: impl std::fmt::Display) -> Error {
+    Error::InvalidRequest {
+        reason: format!(
+            "invalid http proxy uri `{}`: {detail}",
+            redact_url_credentials(raw)
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +537,25 @@ mod tests {
 
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("invalid http proxy uri"));
+        Ok(())
+    }
+
+    #[test]
+    fn redacts_proxy_uri_credentials_in_validation_errors() -> Result<(), Error> {
+        let result = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://user:secret@127.0.0.1:8080/proxy");
+        let error = match result {
+            Ok(_) => Error::InvalidRequest {
+                reason: "expected proxy validation error".to_owned(),
+            },
+            Err(error) => error,
+        };
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("invalid http proxy uri"));
+        assert!(!rendered.contains("user:secret"));
+        assert!(!rendered.contains("secret"));
+        assert!(rendered.contains("redacted"));
         Ok(())
     }
 

@@ -5,7 +5,6 @@ use url::Url;
 use crate::Error;
 
 const REDACTED_TOKEN: &str = "<redacted-token>";
-#[cfg(any(test, feature = "redis-session", feature = "postgres-session"))]
 const REDACTED_CREDENTIAL: &str = "redacted";
 
 pub(crate) fn normalize_base_url(input: &str) -> Result<Url, Error> {
@@ -49,7 +48,6 @@ pub(crate) fn redact_token(input: &str, token: &str) -> String {
     input.replace(token, REDACTED_TOKEN)
 }
 
-#[cfg(any(test, feature = "redis-session", feature = "postgres-session"))]
 pub(crate) fn redact_url_credentials(input: &str) -> String {
     if let Ok(mut url) = Url::parse(input) {
         if (!url.username().is_empty() || url.password().is_some())
@@ -66,7 +64,6 @@ pub(crate) fn redact_url_credentials(input: &str) -> String {
     redact_url_credentials_fallback(input)
 }
 
-#[cfg(any(test, feature = "redis-session", feature = "postgres-session"))]
 fn redact_url_credentials_fallback(input: &str) -> String {
     let Some(scheme_end) = input.find("://") else {
         return input.to_owned();

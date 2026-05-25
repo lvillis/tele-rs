@@ -2179,33 +2179,26 @@ async fn long_polling_source_allows_short_polling_with_zero_timeout() -> Result<
     Ok(())
 }
 
-#[tokio::test]
-async fn long_polling_source_clamps_timeout_when_total_timeout_is_too_small() -> Result<(), DynError>
-{
-    let response = r#"{"ok":true,"result":[]}"#;
-    const CHECKS: [&str; 1] = ["\"timeout\":4"];
-    let (base_url, handle) =
-        spawn_server_with_checks("/bot123:abc/getUpdates", 200, response, &CHECKS)?;
-
-    let client = Client::builder(base_url)?
+#[test]
+fn long_polling_source_rejects_poll_timeout_above_total_timeout_budget() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
         .request_timeout(Duration::from_secs(40))
         .total_timeout(Some(Duration::from_secs(5)))
         .build()?;
-    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
-        disable_webhook_on_start: false,
+    let source = LongPollingSource::new(client).with_config(PollingConfig {
+        poll_timeout_seconds: 30,
         ..PollingConfig::default()
     });
-    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
-        continue_on_source_error: false,
-        continue_on_handler_error: false,
-        ..EngineConfig::default()
-    });
 
-    let outcomes = engine.poll_once().await?;
-    assert!(outcomes.is_empty());
-
-    join_server(handle).await?;
+    let error = match source.validate_timeout_budget() {
+        Ok(timeout) => return Err(format!("expected timeout budget error, got {timeout}s").into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::Configuration { .. }));
+    assert!(error.to_string().contains("poll_timeout_seconds=30"));
+    assert!(error.to_string().contains("headroom of 4s"));
+    assert!(error.to_string().contains("set poll_timeout_seconds=0"));
     Ok(())
 }
 
@@ -2409,7 +2402,7 @@ async fn long_polling_source_does_not_ack_failed_dispatch() -> Result<(), DynErr
 }
 
 #[tokio::test]
-async fn long_polling_source_does_not_ack_continued_handler_error() -> Result<(), DynError> {
+async fn long_polling_source_acks_continued_handler_error() -> Result<(), DynError> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let offset_path =
         std::env::temp_dir().join(format!("tele-offset-continued-failed-{timestamp}.json"));
@@ -2441,10 +2434,19 @@ async fn long_polling_source_does_not_ack_continued_handler_error() -> Result<()
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Failed { update_id: 811 }]);
-    assert_eq!(engine.source_mut().next_offset(), None);
-    assert!(!offset_path.exists());
+    assert_eq!(engine.source_mut().next_offset(), Some(812));
+
+    let raw = fs::read(&offset_path)?;
+    let snapshot: serde_json::Value = serde_json::from_slice(&raw)?;
+    assert_eq!(
+        snapshot
+            .get("next_offset")
+            .and_then(serde_json::Value::as_i64),
+        Some(812)
+    );
 
     join_server(handle).await?;
+    let _ = fs::remove_file(offset_path);
     Ok(())
 }
 
@@ -3072,6 +3074,47 @@ async fn chat_session_transition_serializes_concurrent_updates_per_chat() -> Res
 }
 
 #[tokio::test]
+async fn chat_session_load_waits_for_in_flight_transition() -> Result<(), DynError> {
+    let session = ChatSession::<usize, _>::new(InMemorySessionStore::new());
+    let Some(update) = parse_update(message_update(1006, 25, "state")) else {
+        return Ok(());
+    };
+    session.save(&update, 0).await?;
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let transition_session = session.clone();
+    let transition_update = update.clone();
+    let transition = tokio::spawn(async move {
+        transition_session
+            .transition(&transition_update, |state| async move {
+                let _ = started_tx.send(());
+                let _ = release_rx.await;
+                ((), StateTransition::Set(state.unwrap_or_default() + 1))
+            })
+            .await
+    });
+    started_rx.await?;
+
+    let load_session = session.clone();
+    let load_update = update.clone();
+    let load = tokio::spawn(async move { load_session.load(&load_update).await });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !load.is_finished(),
+        "load returned stale state while transition was still in flight"
+    );
+
+    if release_tx.send(()).is_err() {
+        return Err("transition task dropped before release".into());
+    }
+    transition.await??;
+    assert_eq!(load.await??, Some(1));
+    Ok(())
+}
+
+#[tokio::test]
 async fn chat_session_from_shared_reuses_per_chat_locks() -> Result<(), DynError> {
     let store = Arc::new(InMemorySessionStore::<usize>::new());
     let writer_a = ChatSession::from_shared(Arc::clone(&store));
@@ -3314,7 +3357,8 @@ async fn fail_fast_dispatch_stays_serial_even_when_concurrency_configured() -> R
 }
 
 #[tokio::test]
-async fn long_polling_commits_successful_prefix_before_failed_update() -> Result<(), DynError> {
+async fn long_polling_commits_all_outcomes_when_handler_errors_are_continued()
+-> Result<(), DynError> {
     let response = r#"{"ok":true,"result":[{"update_id":401,"message":{"message_id":1,"date":1710000001,"chat":{"id":77,"type":"private"},"text":"ok"}},{"update_id":402,"message":{"message_id":2,"date":1710000002,"chat":{"id":77,"type":"private"},"text":"fail"}},{"update_id":403,"message":{"message_id":3,"date":1710000003,"chat":{"id":77,"type":"private"},"text":"ok"}}]}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
 
@@ -3351,7 +3395,7 @@ async fn long_polling_commits_successful_prefix_before_failed_update() -> Result
             DispatchOutcome::Handled { update_id: 403 },
         ]
     );
-    assert_eq!(engine.source_mut().next_offset(), Some(402));
+    assert_eq!(engine.source_mut().next_offset(), Some(404));
 
     join_server(handle).await?;
     Ok(())
@@ -3870,12 +3914,17 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
         .build()?;
 
     let filter_hits = Arc::new(AtomicUsize::new(0));
+    let filter_calls = Arc::new(AtomicUsize::new(0));
     let mut filter_router = Router::new();
     {
         let filter_hits = Arc::clone(&filter_hits);
+        let filter_calls = Arc::clone(&filter_calls);
         filter_router
             .extracted_route::<TextInput>()
-            .filter(|text, _update| text.0.starts_with("allow"))
+            .filter(move |text, _update| {
+                filter_calls.fetch_add(1, Ordering::SeqCst);
+                text.0.starts_with("allow")
+            })
             .handle(move |_context: BotContext, _update: Update, _text| {
                 let filter_hits = Arc::clone(&filter_hits);
                 async move {
@@ -3901,14 +3950,18 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
             .await?
     );
     assert_eq!(filter_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(filter_calls.load(Ordering::SeqCst), 2);
 
     let map_hits = Arc::new(AtomicUsize::new(0));
+    let map_calls = Arc::new(AtomicUsize::new(0));
     let mut map_router = Router::new();
     {
         let map_hits = Arc::clone(&map_hits);
+        let map_calls = Arc::clone(&map_calls);
         map_router
             .extracted_route::<CallbackInput>()
-            .map(|callback, _update| {
+            .map(move |callback, _update| {
+                map_calls.fetch_add(1, Ordering::SeqCst);
                 let value: serde_json::Value = serde_json::from_str(&callback.0).ok()?;
                 Some(value.get("action")?.as_str()?.to_owned())
             })
@@ -3941,6 +3994,7 @@ async fn extractor_combinators_filter_map_guard_work() -> Result<(), DynError> {
             .await?
     );
     assert_eq!(map_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(map_calls.load(Ordering::SeqCst), 2);
 
     let guard_hits = Arc::new(AtomicUsize::new(0));
     let mut guard_router = Router::new();

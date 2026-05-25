@@ -105,14 +105,55 @@ where
         .then(|| body_snippet(body, snippet_limit))
         .flatten();
 
-    let envelope: TelegramEnvelope<T> =
-        serde_json::from_slice(body).map_err(|source| Error::DeserializeResponse {
+    let envelope: TelegramEnvelope<T> = match serde_json::from_slice(body) {
+        Ok(envelope) => envelope,
+        Err(source) if !status.is_success() => {
+            let retry_after = retry_after_seconds_from_headers(headers).map(Duration::from_secs);
+            let mut message =
+                format!("non-Telegram HTTP response while calling `{method}`: {source}");
+            if let Some(snippet) = snippet.as_deref() {
+                message.push_str("; body: ");
+                message.push_str(snippet);
+            }
+            return Err(Error::Transport {
+                method: method.to_owned(),
+                status: Some(status.as_u16()),
+                request_id: request_id.map(Into::into),
+                retry_after,
+                request_path: None,
+                message: message.into(),
+            });
+        }
+        Err(source) => {
+            return Err(Error::DeserializeResponse {
+                method: method.to_owned(),
+                status: Some(status.as_u16()),
+                request_id: request_id.clone().map(Into::into),
+                body_snippet: snippet.clone().map(Into::into),
+                source,
+            });
+        }
+    };
+
+    if envelope.ok && !status.is_success() {
+        let retry_after = retry_after_seconds_from_headers(headers).map(Duration::from_secs);
+        let mut message = format!(
+            "telegram api returned `ok=true` with non-success HTTP status {} while calling `{method}`",
+            status.as_u16()
+        );
+        if let Some(snippet) = snippet.as_deref() {
+            message.push_str("; body: ");
+            message.push_str(snippet);
+        }
+        return Err(Error::Transport {
             method: method.to_owned(),
             status: Some(status.as_u16()),
-            request_id: request_id.clone().map(Into::into),
-            body_snippet: snippet.clone().map(Into::into),
-            source,
-        })?;
+            request_id: request_id.map(Into::into),
+            retry_after,
+            request_path: None,
+            message: message.into(),
+        });
+    }
 
     if envelope.ok {
         if let Some(result) = envelope.result {
@@ -127,13 +168,12 @@ where
         });
     }
 
-    let mut parameters = envelope.parameters;
-    if let Some(retry_after) = retry_after_seconds_from_headers(headers) {
-        let parameters = parameters.get_or_insert_with(ResponseParameters::default);
-        if parameters.retry_after.is_none() {
-            parameters.retry_after = Some(retry_after);
-        }
-    }
+    let parameters = envelope.parameters;
+    let retry_after = parameters
+        .as_ref()
+        .and_then(|parameters| parameters.retry_after)
+        .map(Duration::from_secs)
+        .or_else(|| retry_after_seconds_from_headers(headers).map(Duration::from_secs));
 
     Err(Error::Api {
         method: method.to_owned(),
@@ -144,6 +184,7 @@ where
             .description
             .unwrap_or_else(|| "telegram api returned an unknown error".to_owned())
             .into(),
+        retry_after,
         parameters: parameters.map(Box::new),
         body_snippet: snippet.map(Into::into),
     })
@@ -1005,7 +1046,134 @@ mod tests {
         };
 
         assert!(matches!(error, Error::Api { .. }));
+        if let Error::Api { parameters, .. } = &error {
+            assert!(parameters.is_none());
+        }
         assert_eq!(error.retry_after(), Some(Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn api_error_retry_after_header_without_429_is_not_rate_limited() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
+        let body = br#"{"ok":false,"error_code":503,"description":"Service Unavailable"}"#;
+
+        let result = parse_telegram_response::<Value>(
+            "sendMessage",
+            StatusCode::SERVICE_UNAVAILABLE,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::Api { .. }));
+        assert!(!error.is_rate_limited());
+        assert!(error.is_retryable());
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+        if let Error::Api { parameters, .. } = error {
+            assert!(parameters.is_none());
+        }
+    }
+
+    #[test]
+    fn non_json_error_response_is_transport_error() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
+        let body = b"<html>too many requests</html>";
+
+        let result = parse_telegram_response::<Value>(
+            "sendMessage",
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::Transport { .. }));
+        assert!(error.is_rate_limited());
+        assert!(error.is_retryable());
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn ok_true_with_non_success_status_is_transport_error()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
+        let body = br#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"Bot"}}"#;
+
+        let result = parse_telegram_response::<Value>(
+            "getMe",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(value) => {
+                return Err(
+                    format!("expected non-success HTTP status to fail, got {value:?}").into(),
+                );
+            }
+        };
+
+        assert!(matches!(error, Error::Transport { .. }));
+        assert!(error.is_retryable());
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+        assert!(error.to_string().contains("ok=true"));
+        Ok(())
+    }
+
+    #[test]
+    fn non_json_retry_after_without_429_is_transport_error() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
+        let body = b"<html>service unavailable</html>";
+
+        let result = parse_telegram_response::<Value>(
+            "sendMessage",
+            StatusCode::SERVICE_UNAVAILABLE,
+            &headers,
+            body,
+            true,
+            256,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::Transport { .. }));
+        assert!(!error.is_rate_limited());
+        assert!(error.is_retryable());
+        assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn non_json_success_response_remains_decode_error() {
+        let headers = HeaderMap::new();
+        let body = b"<html>not telegram json</html>";
+
+        let result =
+            parse_telegram_response::<Value>("getMe", StatusCode::OK, &headers, body, true, 256);
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return,
+        };
+
+        assert!(matches!(error, Error::DeserializeResponse { .. }));
     }
 
     #[test]

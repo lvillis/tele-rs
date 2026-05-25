@@ -113,6 +113,7 @@ pub enum Error {
         request_id: Option<Box<str>>,
         error_code: Option<i64>,
         description: Box<str>,
+        retry_after: Option<Duration>,
         parameters: Option<Box<ResponseParameters>>,
         body_snippet: Option<Box<str>>,
     },
@@ -143,12 +144,8 @@ impl Error {
             Self::DeserializeResponse { .. } => ErrorClass::Decode,
             Self::MissingResult { .. } => ErrorClass::Protocol,
             Self::Storage { .. } => ErrorClass::Storage,
-            Self::Transport {
-                status,
-                retry_after,
-                ..
-            } => {
-                if *status == Some(429) || retry_after.is_some() {
+            Self::Transport { status, .. } => {
+                if *status == Some(429) {
                     return ErrorClass::RateLimited;
                 }
                 if matches!(*status, Some(401 | 403)) {
@@ -217,10 +214,15 @@ impl Error {
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             Self::Transport { retry_after, .. } => *retry_after,
-            Self::Api { parameters, .. } => parameters
+            Self::Api {
+                parameters,
+                retry_after,
+                ..
+            } => parameters
                 .as_deref()
                 .and_then(|parameters| parameters.retry_after)
-                .map(Duration::from_secs),
+                .map(Duration::from_secs)
+                .or(*retry_after),
             _ => None,
         }
     }

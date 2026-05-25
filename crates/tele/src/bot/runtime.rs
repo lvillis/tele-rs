@@ -104,18 +104,27 @@ impl PollingConfig {
                 timeout.as_secs().min(u64::from(u16::MAX)) as u16
             });
 
-        if self.poll_timeout_seconds > 0 && max_poll_timeout == 0 {
+        if self.poll_timeout_seconds == 0 {
+            return Ok(0);
+        }
+
+        if self.poll_timeout_seconds > max_poll_timeout {
+            let total_timeout_display = total_timeout.map_or_else(
+                || "none".to_owned(),
+                |timeout| format!("{}ms", timeout.as_millis()),
+            );
             return Err(Error::Configuration {
                 reason: format!(
-                    "poll_timeout_seconds={} requires at least 1s timeout budget headroom, got request_timeout={}ms and total_timeout={}ms; increase timeouts or set poll_timeout_seconds=0 for short polling",
+                    "poll_timeout_seconds={} exceeds timeout budget headroom of {}s, got request_timeout={}ms and total_timeout={}; reduce poll_timeout_seconds, increase timeouts, or set poll_timeout_seconds=0 for short polling",
                     self.poll_timeout_seconds,
+                    max_poll_timeout,
                     request_timeout.as_millis(),
-                    total_timeout.map_or(0_u128, |value| value.as_millis())
+                    total_timeout_display
                 ),
             });
         }
 
-        Ok(self.poll_timeout_seconds.min(max_poll_timeout))
+        Ok(self.poll_timeout_seconds)
     }
 }
 
@@ -155,7 +164,7 @@ pub trait UpdateSource: Send + 'static {
 }
 
 /// Exponential backoff policy for source-side polling errors.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourceErrorBackoffConfig {
     pub base_delay: Duration,
     pub max_delay: Duration,
@@ -213,12 +222,15 @@ pub struct EngineConfig {
     ///
     /// Non-retryable source errors remain fatal even when this is enabled.
     pub continue_on_source_error: bool,
+    /// Continue dispatching later updates after a handler returns an error.
+    ///
+    /// In long-polling mode, continued handler failures are committed as processed together with
+    /// the rest of the completed batch. Fail-fast dispatch still commits only the successful
+    /// prefix before the failed update.
     pub continue_on_handler_error: bool,
     /// Maximum number of update handlers to run concurrently.
     ///
-    /// This is applied only when `continue_on_handler_error` is true. Fail-fast dispatch stays
-    /// source-ordered so later updates cannot perform side effects before an earlier failed update
-    /// blocks offset commits and forces Telegram redelivery.
+    /// This is applied only when `continue_on_handler_error` is true.
     pub max_handler_concurrency: usize,
 }
 
@@ -286,20 +298,58 @@ impl LongPollingSource {
     }
 
     pub fn with_config(mut self, config: PollingConfig) -> Self {
-        self.config = config;
+        self.set_config(config);
         self
     }
 
     /// Sets polling config and validates timeout budget immediately.
     pub fn with_config_checked(mut self, config: PollingConfig) -> Result<Self> {
         config.validate()?;
-        self.config = config;
+        self.set_config(config);
         let _ = self.validate_timeout_budget()?;
         Ok(self)
     }
 
-    pub fn config_mut(&mut self) -> &mut PollingConfig {
-        &mut self.config
+    /// Returns the current long-polling configuration.
+    ///
+    /// Use [`Self::set_config`] or dedicated setters to change values so runtime caches stay
+    /// consistent.
+    pub fn config(&self) -> &PollingConfig {
+        &self.config
+    }
+
+    /// Replaces long-polling configuration and invalidates derived runtime state.
+    pub fn set_config(&mut self, config: PollingConfig) -> &mut Self {
+        let dedupe_window_size_changed =
+            self.config.dedupe_window_size != config.dedupe_window_size;
+        if self.config.persist_offset_path != config.persist_offset_path {
+            self.validated_offset_storage_path = None;
+        }
+        if self.config.disable_webhook_on_start != config.disable_webhook_on_start
+            || self.config.drop_pending_updates_on_start != config.drop_pending_updates_on_start
+        {
+            self.prepared = false;
+        }
+        self.config = config;
+        if dedupe_window_size_changed {
+            self.trim_seen_update_ids();
+        }
+        self
+    }
+
+    /// Sets the `getUpdates` long-poll timeout in seconds.
+    pub fn set_poll_timeout_seconds(&mut self, poll_timeout_seconds: u16) -> &mut Self {
+        self.config.poll_timeout_seconds = poll_timeout_seconds;
+        self
+    }
+
+    /// Sets the in-memory duplicate-update window and trims cached IDs immediately.
+    pub fn set_dedupe_window_size(&mut self, dedupe_window_size: usize) -> &mut Self {
+        if self.config.dedupe_window_size != dedupe_window_size {
+            self.config.dedupe_window_size = dedupe_window_size;
+            self.trim_seen_update_ids();
+        }
+        self
     }
 
     /// Validates timeout budget and returns resolved poll timeout seconds.
@@ -323,18 +373,34 @@ impl LongPollingSource {
         self
     }
 
+    /// Enables offset persistence with a builder-style API.
     pub fn with_offset_persistence_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.config.persist_offset_path = Some(path.into());
+        self.set_offset_persistence_path(path);
         self
     }
 
+    /// Disables offset persistence with a builder-style API.
     pub fn clear_offset_persistence_path(mut self) -> Self {
-        self.config.persist_offset_path = None;
+        self.clear_offset_persistence();
         self
     }
 
-    pub fn set_prepared(&mut self, prepared: bool) -> &mut Self {
-        self.prepared = prepared;
+    /// Enables offset persistence and revalidates the new storage target before polling.
+    pub fn set_offset_persistence_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        let path = path.into();
+        if self.config.persist_offset_path.as_ref() != Some(&path) {
+            self.config.persist_offset_path = Some(path);
+            self.validated_offset_storage_path = None;
+        }
+        self
+    }
+
+    /// Disables offset persistence and clears cached storage validation state.
+    pub fn clear_offset_persistence(&mut self) -> &mut Self {
+        if self.config.persist_offset_path.is_some() {
+            self.config.persist_offset_path = None;
+            self.validated_offset_storage_path = None;
+        }
         self
     }
 
@@ -435,6 +501,20 @@ impl LongPollingSource {
         }
     }
 
+    fn trim_seen_update_ids(&mut self) {
+        if self.config.dedupe_window_size == 0 {
+            self.seen_update_ids.clear();
+            self.seen_update_order.clear();
+            return;
+        }
+
+        while self.seen_update_order.len() > self.config.dedupe_window_size {
+            if let Some(oldest) = self.seen_update_order.pop_front() {
+                self.seen_update_ids.remove(&oldest);
+            }
+        }
+    }
+
     async fn commit_update_ids(&mut self, update_ids: &[i64]) -> Result<()> {
         if update_ids.is_empty() {
             return Ok(());
@@ -498,7 +578,6 @@ impl UpdateSource for LongPollingSource {
         Box::pin(async move {
             let update_ids = outcomes
                 .iter()
-                .take_while(|outcome| !outcome.is_failed())
                 .map(|outcome| outcome.update_id())
                 .collect::<Vec<_>>();
             self.commit_update_ids(&update_ids).await
@@ -721,6 +800,97 @@ mod tests {
         assert_eq!(source.next_offset(), None);
 
         let _ = fs::remove_file(&offset_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn offset_persistence_path_change_invalidates_validation_cache() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let root = std::env::temp_dir().join(format!(
+            "tele-offset-path-change-{}-{timestamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|source| {
+            storage_error(
+                "test mkdir",
+                format!("failed to create test root: {source}"),
+                true,
+            )
+        })?;
+        let valid_path = root.join("offset.json");
+        let blocked_parent = root.join("not-a-directory");
+        fs::write(&blocked_parent, b"not a directory").map_err(|source| {
+            storage_error(
+                "test write",
+                format!("failed to create blocked path: {source}"),
+                true,
+            )
+        })?;
+        let invalid_path = blocked_parent.join("offset.json");
+
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client).with_offset_persistence_path(&valid_path);
+        source.set_next_offset(Some(42));
+        source.ensure_offset_loaded().await?;
+        assert_eq!(
+            source.validated_offset_storage_path.as_deref(),
+            Some(valid_path.as_path())
+        );
+
+        source.set_offset_persistence_path(invalid_path);
+        let result = source.ensure_offset_loaded().await;
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn set_config_resets_prepared_when_webhook_startup_policy_changes() -> Result<()> {
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client);
+        source.prepared = true;
+
+        let config = PollingConfig {
+            disable_webhook_on_start: false,
+            ..PollingConfig::default()
+        };
+        source.set_config(config);
+
+        assert!(!source.prepared);
+        Ok(())
+    }
+
+    #[test]
+    fn dedupe_window_reconfiguration_trims_cached_update_ids() -> Result<()> {
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client);
+
+        source.remember_update(1);
+        source.remember_update(2);
+        source.remember_update(3);
+        source.set_dedupe_window_size(2);
+
+        assert!(!source.is_duplicate_update(1));
+        assert!(source.is_duplicate_update(2));
+        assert!(source.is_duplicate_update(3));
+
+        source.set_config(PollingConfig {
+            dedupe_window_size: 0,
+            ..PollingConfig::default()
+        });
+
+        assert!(!source.is_duplicate_update(2));
+        assert!(source.seen_update_ids.is_empty());
+        assert!(source.seen_update_order.is_empty());
         Ok(())
     }
 

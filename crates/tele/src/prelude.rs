@@ -36,11 +36,11 @@ pub use crate::types::{
     AllowedUpdate, BotCommand, BusinessConnection, BusinessMessagesDeleted, CallbackCodec,
     CallbackPayload, ChatAdministratorCapability, ChatBoostRemoved, ChatBoostUpdated, ChatId,
     ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload,
-    InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaPhoto,
-    InputMediaVideo, InputPollOption, ManagedBotUpdated, Message, MessageEntityKind, MessageId,
-    MessageKind, MessageOrigin, MessageReactionCountUpdated, MessageReactionUpdated,
-    PaidMediaPurchased, ParseMode, PollKind, PreCheckoutQuery, ReplyMarkup, ReplyParameters,
-    ShippingQuery, Update, UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
+    InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaGroupItem,
+    InputMediaPhoto, InputMediaVideo, InputPollOption, ManagedBotUpdated, Message,
+    MessageEntityKind, MessageId, MessageKind, MessageOrigin, MessageReactionCountUpdated,
+    MessageReactionUpdated, PaidMediaPurchased, ParseMode, PollKind, PreCheckoutQuery, ReplyMarkup,
+    ReplyParameters, ShippingQuery, Update, UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]

@@ -188,7 +188,7 @@ where
     pub fn map<T, M>(self, mapper: M) -> MappedExtractedRouteBuilder<'a, E, T>
     where
         T: Send + 'static,
-        M: Fn(E, &Update) -> Option<T> + Send + Sync + 'static,
+        M: Fn(&E, &Update) -> Option<T> + Send + Sync + 'static,
     {
         MappedExtractedRouteBuilder {
             router: self.router,
@@ -209,37 +209,26 @@ where
         let extracted_guards = Arc::new(self.extracted_guards);
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             {
                 let filters = Arc::clone(&filters);
-                move |update, _state| extracted_route_matches::<E>(update, filters.as_ref())
+                move |update, _state| {
+                    let extracted = E::extract(update)?;
+                    filters
+                        .iter()
+                        .all(|filter| filter(&extracted, update))
+                        .then_some(extracted)
+                }
             },
-            move |context, update, _state| {
-                let filters = Arc::clone(&filters);
+            RouteResolution::Default,
+            move |context, update, _state, extracted| {
                 let extracted_guards = Arc::clone(&extracted_guards);
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(extracted) = E::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(format!(
-                                    "update does not contain {}",
-                                    E::describe()
-                                ))));
-                            };
-                            if !filters.iter().all(|filter| filter(&extracted, update)) {
-                                return Ok(None);
-                            }
-                            run_extracted_guards(extracted_guards.as_ref(), &extracted, update)?;
-                            Ok(Some(extracted))
-                        },
-                        move |context, update, extracted| handler(context, update, extracted),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)?;
+                    handler(context, update, extracted).await
                 }
             },
         )
@@ -262,38 +251,26 @@ where
         let extracted_guards = Arc::new(self.extracted_guards);
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             {
                 let filters = Arc::clone(&filters);
-                move |update, _state| extracted_route_matches::<E>(update, filters.as_ref())
+                move |update, _state| {
+                    let extracted = E::extract(update)?;
+                    filters
+                        .iter()
+                        .all(|filter| filter(&extracted, update))
+                        .then_some(extracted)
+                }
             },
-            policy,
-            move |context, update, _state| {
-                let filters = Arc::clone(&filters);
+            RouteResolution::Policy(policy),
+            move |context, update, _state, extracted| {
                 let extracted_guards = Arc::clone(&extracted_guards);
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(extracted) = E::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(format!(
-                                    "update does not contain {}",
-                                    E::describe()
-                                ))));
-                            };
-                            if !filters.iter().all(|filter| filter(&extracted, update)) {
-                                return Ok(None);
-                            }
-                            run_extracted_guards(extracted_guards.as_ref(), &extracted, update)?;
-                            Ok(Some(extracted))
-                        },
-                        move |context, update, extracted| handler(context, update, extracted),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)?;
+                    handler(context, update, extracted).await
                 }
             },
         )
@@ -327,45 +304,28 @@ where
         let guards = Arc::new(self.config.guards);
         let mapper = Arc::clone(&self.mapper);
         let handler = Arc::new(handler);
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             {
                 let filters = Arc::clone(&filters);
                 let mapper = Arc::clone(&mapper);
                 move |update, _state| {
-                    let Some(extracted) = E::extract(update) else {
-                        return false;
-                    };
-                    filters.iter().all(|filter| filter(&extracted, update))
-                        && mapper(extracted, update).is_some()
+                    let extracted = E::extract(update)?;
+                    if !filters.iter().all(|filter| filter(&extracted, update)) {
+                        return None;
+                    }
+                    let mapped = mapper(&extracted, update)?;
+                    Some((extracted, mapped))
                 }
             },
-            move |context, update, _state| {
-                let filters = Arc::clone(&filters);
+            RouteResolution::Default,
+            move |context, update, _state, (extracted, mapped)| {
                 let extracted_guards = Arc::clone(&extracted_guards);
                 let guards = Arc::clone(&guards);
-                let mapper = Arc::clone(&mapper);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(extracted) = E::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(format!(
-                                    "update does not contain {}",
-                                    E::describe()
-                                ))));
-                            };
-                            if !filters.iter().all(|filter| filter(&extracted, update)) {
-                                return Ok(None);
-                            }
-                            run_extracted_guards(extracted_guards.as_ref(), &extracted, update)?;
-                            Ok(mapper(extracted, update))
-                        },
-                        move |context, update, mapped| handler(context, update, mapped),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)?;
+                    handler(context, update, mapped).await
                 }
             },
         )
@@ -389,46 +349,28 @@ where
         let guards = Arc::new(self.config.guards);
         let mapper = Arc::clone(&self.mapper);
         let handler = Arc::new(handler);
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             {
                 let filters = Arc::clone(&filters);
                 let mapper = Arc::clone(&mapper);
                 move |update, _state| {
-                    let Some(extracted) = E::extract(update) else {
-                        return false;
-                    };
-                    filters.iter().all(|filter| filter(&extracted, update))
-                        && mapper(extracted, update).is_some()
+                    let extracted = E::extract(update)?;
+                    if !filters.iter().all(|filter| filter(&extracted, update)) {
+                        return None;
+                    }
+                    let mapped = mapper(&extracted, update)?;
+                    Some((extracted, mapped))
                 }
             },
-            policy,
-            move |context, update, _state| {
-                let filters = Arc::clone(&filters);
+            RouteResolution::Policy(policy),
+            move |context, update, _state, (extracted, mapped)| {
                 let extracted_guards = Arc::clone(&extracted_guards);
                 let guards = Arc::clone(&guards);
-                let mapper = Arc::clone(&mapper);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(extracted) = E::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(format!(
-                                    "update does not contain {}",
-                                    E::describe()
-                                ))));
-                            };
-                            if !filters.iter().all(|filter| filter(&extracted, update)) {
-                                return Ok(None);
-                            }
-                            run_extracted_guards(extracted_guards.as_ref(), &extracted, update)?;
-                            Ok(mapper(extracted, update))
-                        },
-                        move |context, update, mapped| handler(context, update, mapped),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    run_extracted_guards(extracted_guards.as_ref(), &extracted, &update)?;
+                    handler(context, update, mapped).await
                 }
             },
         )
@@ -459,32 +401,17 @@ impl<'a> CommandInputRouteBuilder<'a> {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                extract_command_data_for_bot(update, state.command_target.as_deref()).is_some()
+                extract_command_data_for_bot(update, state.command_target.as_deref())
             },
-            move |context, update, state| {
+            RouteResolution::Default,
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            Ok(Some(command))
-                        },
-                        move |context, update, command| handler(context, update, command),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, command).await
                 }
             },
         )
@@ -506,33 +433,17 @@ impl<'a> CommandInputRouteBuilder<'a> {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                extract_command_data_for_bot(update, state.command_target.as_deref()).is_some()
+                extract_command_data_for_bot(update, state.command_target.as_deref())
             },
-            policy,
-            move |context, update, state| {
+            RouteResolution::Policy(policy),
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            Ok(Some(command))
-                        },
-                        move |context, update, command| handler(context, update, command),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, command).await
                 }
             },
         )
@@ -666,35 +577,20 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                extract_command_for_bot(update, state.command_target.as_deref())
-                    .is_some_and(|command| command == expected)
+                let command =
+                    extract_command_data_for_bot(update, state.command_target.as_deref())?;
+                (command.name == expected).then_some(command)
             },
-            move |context, update, state| {
+            RouteResolution::Default,
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            let parsed =
-                                T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
-                            Ok(Some(parsed))
-                        },
-                        move |context, update, parsed| handler(context, update, parsed),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    let parsed = T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
+                    handler(context, update, parsed).await
                 }
             },
         )
@@ -717,36 +613,20 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                extract_command_for_bot(update, state.command_target.as_deref())
-                    .is_some_and(|command| command == expected)
+                let command =
+                    extract_command_data_for_bot(update, state.command_target.as_deref())?;
+                (command.name == expected).then_some(command)
             },
-            policy,
-            move |context, update, state| {
+            RouteResolution::Policy(policy),
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            let parsed =
-                                T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
-                            Ok(Some(parsed))
-                        },
-                        move |context, update, parsed| handler(context, update, parsed),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    let parsed = T::parse(command.args_trimmed()).map_err(HandlerError::user)?;
+                    handler(context, update, parsed).await
                 }
             },
         )
@@ -782,32 +662,17 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref())
             },
-            move |context, update, state| {
+            RouteResolution::Default,
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                parse_typed_command_for_bot::<C>(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid typed command",
-                                )));
-                            };
-                            Ok(Some(command))
-                        },
-                        move |context, update, command| handler(context, update, command),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, command).await
                 }
             },
         )
@@ -821,41 +686,20 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_fallible_with_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
-                    && extract_command_data_for_bot(update, state.command_target.as_deref())
-                        .is_some()
+                let command =
+                    parse_typed_command_for_bot::<C>(update, state.command_target.as_deref())?;
+                let raw = extract_command_data_for_bot(update, state.command_target.as_deref())?;
+                Some(TypedCommandInput { command, raw })
             },
-            move |context, update, state| {
+            RouteResolution::Default,
+            move |context, update, _state, input| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                parse_typed_command_for_bot::<C>(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid typed command",
-                                )));
-                            };
-                            let Some(raw) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            Ok(Some(TypedCommandInput { command, raw }))
-                        },
-                        move |context, update, input| handler(context, update, input),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, input).await
                 }
             },
         )
@@ -885,33 +729,17 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
+                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref())
             },
-            policy,
-            move |context, update, state| {
+            RouteResolution::Policy(policy),
+            move |context, update, _state, command| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                parse_typed_command_for_bot::<C>(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid typed command",
-                                )));
-                            };
-                            Ok(Some(command))
-                        },
-                        move |context, update, command| handler(context, update, command),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, command).await
                 }
             },
         )
@@ -925,42 +753,20 @@ where
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
         self.router.has_command_routes = true;
-        self.router.route_with_policy_state(
+        self.router.route_prepared_handler_with_state(
             move |update, state| {
-                parse_typed_command_for_bot::<C>(update, state.command_target.as_deref()).is_some()
-                    && extract_command_data_for_bot(update, state.command_target.as_deref())
-                        .is_some()
+                let command =
+                    parse_typed_command_for_bot::<C>(update, state.command_target.as_deref())?;
+                let raw = extract_command_data_for_bot(update, state.command_target.as_deref())?;
+                Some(TypedCommandInput { command, raw })
             },
-            policy,
-            move |context, update, state| {
+            RouteResolution::Policy(policy),
+            move |context, update, _state, input| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
-                let command_target = state.command_target.clone();
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(command) =
-                                parse_typed_command_for_bot::<C>(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid typed command",
-                                )));
-                            };
-                            let Some(raw) =
-                                extract_command_data_for_bot(update, command_target.as_deref())
-                            else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid command",
-                                )));
-                            };
-                            Ok(Some(TypedCommandInput { command, raw }))
-                        },
-                        move |context, update, input| handler(context, update, input),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, input).await
                 }
             },
         )
@@ -1001,27 +807,15 @@ where
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
-        self.router.route_fallible(
-            |update| CodedCallbackInput::<T, C>::extract(update).is_some(),
-            move |context, update| {
+        self.router.route_prepared_handler_with_state(
+            |update, _state| CodedCallbackInput::<T, C>::extract(update),
+            RouteResolution::Default,
+            move |context, update, _state, payload| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(payload) = CodedCallbackInput::<T, C>::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid callback payload",
-                                )));
-                            };
-                            Ok(Some(payload))
-                        },
-                        move |context, update, payload| handler(context, update, payload),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, payload).await
                 }
             },
         )
@@ -1042,28 +836,15 @@ where
     {
         let guards = Arc::new(self.config.guards);
         let handler = Arc::new(handler);
-        self.router.route_with_policy(
-            |update| CodedCallbackInput::<T, C>::extract(update).is_some(),
-            policy,
-            move |context, update| {
+        self.router.route_prepared_handler_with_state(
+            |update, _state| CodedCallbackInput::<T, C>::extract(update),
+            RouteResolution::Policy(policy),
+            move |context, update, _state, payload| {
                 let guards = Arc::clone(&guards);
                 let handler = Arc::clone(&handler);
                 async move {
-                    evaluate_route_pipeline(
-                        context,
-                        update,
-                        guards.as_ref(),
-                        move |update| {
-                            let Some(payload) = CodedCallbackInput::<T, C>::extract(update) else {
-                                return Err(HandlerError::internal(invalid_request(
-                                    "update does not contain a valid callback payload",
-                                )));
-                            };
-                            Ok(Some(payload))
-                        },
-                        move |context, update, payload| handler(context, update, payload),
-                    )
-                    .await
+                    run_route_guards(guards.as_ref(), &context, &update).await?;
+                    handler(context, update, payload).await
                 }
             },
         )

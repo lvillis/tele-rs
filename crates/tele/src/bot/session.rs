@@ -780,8 +780,14 @@ where
         Arc::clone(&self.store)
     }
 
+    /// Loads the latest committed state for the update's chat.
+    ///
+    /// Reads join the same per-chat queue as writes and transitions, so a load
+    /// for a chat waits for any in-flight mutation of that chat to finish.
     pub async fn load(&self, update: &Update) -> Result<Option<S>> {
-        load_chat_state(self.store(), update).await
+        let chat_id = chat_id_for_state(update)?;
+        let _guard = self.locks.acquire(chat_id).await;
+        self.store.load(chat_id).await
     }
 
     pub async fn save(&self, update: &Update, state: S) -> Result<()> {
@@ -806,6 +812,8 @@ where
     ///
     /// Transitions are serialized per chat id, so concurrent updates for the same chat cannot
     /// overwrite each other's load-modify-save cycle. Different chats still progress independently.
+    /// Do not call `ChatSession` methods for the same chat from inside the transition function;
+    /// use the supplied state and return the desired [`StateTransition`] instead.
     pub async fn transition<R, F, Fut>(&self, update: &Update, f: F) -> Result<R>
     where
         F: FnOnce(Option<S>) -> Fut + Send,

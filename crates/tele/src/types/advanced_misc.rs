@@ -1166,6 +1166,7 @@ impl AdvancedRequest for AdvancedEditMessageMediaRequest {
         if let Some(value) = self.inline_message_id.as_deref() {
             validate_string_id("inline_message_id", value)?;
         }
+        self.media.validate()?;
         if let Some(value) = self.reply_markup.as_ref() {
             value.validate()?;
         }

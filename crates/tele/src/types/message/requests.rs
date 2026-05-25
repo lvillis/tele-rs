@@ -1557,12 +1557,88 @@ impl From<InputMediaDocument> for InputMedia {
     }
 }
 
+impl InputMedia {
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_media(self)
+    }
+}
+
+/// Media item accepted by `sendMediaGroup`.
+///
+/// Telegram media groups do not accept animations. Use [`InputMedia`] for APIs that support the
+/// full input-media union, such as editing a message's media.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InputMediaGroupItem {
+    Photo(Box<InputMediaPhoto>),
+    Video(Box<InputMediaVideo>),
+    Audio(Box<InputMediaAudio>),
+    Document(Box<InputMediaDocument>),
+}
+
+impl From<InputMediaPhoto> for InputMediaGroupItem {
+    fn from(value: InputMediaPhoto) -> Self {
+        Self::Photo(Box::new(value))
+    }
+}
+
+impl From<InputMediaVideo> for InputMediaGroupItem {
+    fn from(value: InputMediaVideo) -> Self {
+        Self::Video(Box::new(value))
+    }
+}
+
+impl From<InputMediaAudio> for InputMediaGroupItem {
+    fn from(value: InputMediaAudio) -> Self {
+        Self::Audio(Box::new(value))
+    }
+}
+
+impl From<InputMediaDocument> for InputMediaGroupItem {
+    fn from(value: InputMediaDocument) -> Self {
+        Self::Document(Box::new(value))
+    }
+}
+
+impl InputMediaGroupItem {
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_media_group_item(self)
+    }
+}
+
+impl From<InputMediaGroupItem> for InputMedia {
+    fn from(value: InputMediaGroupItem) -> Self {
+        match value {
+            InputMediaGroupItem::Photo(value) => Self::Photo(value),
+            InputMediaGroupItem::Video(value) => Self::Video(value),
+            InputMediaGroupItem::Audio(value) => Self::Audio(value),
+            InputMediaGroupItem::Document(value) => Self::Document(value),
+        }
+    }
+}
+
+impl TryFrom<InputMedia> for InputMediaGroupItem {
+    type Error = Error;
+
+    fn try_from(value: InputMedia) -> Result<Self, Self::Error> {
+        match value {
+            InputMedia::Photo(value) => Ok(Self::Photo(value)),
+            InputMedia::Video(value) => Ok(Self::Video(value)),
+            InputMedia::Audio(value) => Ok(Self::Audio(value)),
+            InputMedia::Document(value) => Ok(Self::Document(value)),
+            InputMedia::Animation(_) => Err(Error::InvalidRequest {
+                reason: "sendMediaGroup does not support animation media".to_owned(),
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SendMediaGroupRequest {
     pub chat_id: ChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_connection_id: Option<String>,
-    pub media: Vec<InputMedia>,
+    pub media: Vec<InputMediaGroupItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1580,7 +1656,7 @@ pub struct SendMediaGroupRequest {
 }
 
 impl SendMediaGroupRequest {
-    pub fn new(chat_id: impl Into<ChatId>, media: Vec<InputMedia>) -> Result<Self, Error> {
+    pub fn new(chat_id: impl Into<ChatId>, media: Vec<InputMediaGroupItem>) -> Result<Self, Error> {
         let chat_id = chat_id.into();
         chat_id.validate()?;
         if media.len() < MIN_MEDIA_GROUP_ITEMS {
@@ -2631,70 +2707,88 @@ fn validate_caption_fields(
     validate_optional_text_formatting(field, caption, parse_mode, entities)
 }
 
+fn validate_input_media_photo(media: &InputMediaPhoto) -> Result<(), Error> {
+    validate_file_reference("media", &media.media)?;
+    validate_caption_fields(
+        "input media caption",
+        media.caption.as_deref(),
+        media.parse_mode,
+        media.caption_entities.as_deref(),
+    )
+}
+
+fn validate_input_media_video(media: &InputMediaVideo) -> Result<(), Error> {
+    validate_file_reference("media", &media.media)?;
+    validate_caption_fields(
+        "input media caption",
+        media.caption.as_deref(),
+        media.parse_mode,
+        media.caption_entities.as_deref(),
+    )?;
+    validate_positive_u32("width", media.width)?;
+    validate_positive_u32("height", media.height)?;
+    validate_positive_u32("duration", media.duration)
+}
+
+fn validate_input_media_animation(media: &InputMediaAnimation) -> Result<(), Error> {
+    validate_file_reference("media", &media.media)?;
+    validate_caption_fields(
+        "input media caption",
+        media.caption.as_deref(),
+        media.parse_mode,
+        media.caption_entities.as_deref(),
+    )?;
+    validate_positive_u32("width", media.width)?;
+    validate_positive_u32("height", media.height)?;
+    validate_positive_u32("duration", media.duration)
+}
+
+fn validate_input_media_audio(media: &InputMediaAudio) -> Result<(), Error> {
+    validate_file_reference("media", &media.media)?;
+    validate_caption_fields(
+        "input media caption",
+        media.caption.as_deref(),
+        media.parse_mode,
+        media.caption_entities.as_deref(),
+    )?;
+    validate_positive_u32("duration", media.duration)
+}
+
+fn validate_input_media_document(media: &InputMediaDocument) -> Result<(), Error> {
+    validate_file_reference("media", &media.media)?;
+    validate_caption_fields(
+        "input media caption",
+        media.caption.as_deref(),
+        media.parse_mode,
+        media.caption_entities.as_deref(),
+    )
+}
+
 fn validate_media(media: &InputMedia) -> Result<(), Error> {
     match media {
-        InputMedia::Photo(media) => {
-            validate_file_reference("media", &media.media)?;
-            validate_caption_fields(
-                "input media caption",
-                media.caption.as_deref(),
-                media.parse_mode,
-                media.caption_entities.as_deref(),
-            )
-        }
-        InputMedia::Video(media) => {
-            validate_file_reference("media", &media.media)?;
-            validate_caption_fields(
-                "input media caption",
-                media.caption.as_deref(),
-                media.parse_mode,
-                media.caption_entities.as_deref(),
-            )?;
-            validate_positive_u32("width", media.width)?;
-            validate_positive_u32("height", media.height)?;
-            validate_positive_u32("duration", media.duration)
-        }
-        InputMedia::Animation(media) => {
-            validate_file_reference("media", &media.media)?;
-            validate_caption_fields(
-                "input media caption",
-                media.caption.as_deref(),
-                media.parse_mode,
-                media.caption_entities.as_deref(),
-            )?;
-            validate_positive_u32("width", media.width)?;
-            validate_positive_u32("height", media.height)?;
-            validate_positive_u32("duration", media.duration)
-        }
-        InputMedia::Audio(media) => {
-            validate_file_reference("media", &media.media)?;
-            validate_caption_fields(
-                "input media caption",
-                media.caption.as_deref(),
-                media.parse_mode,
-                media.caption_entities.as_deref(),
-            )?;
-            validate_positive_u32("duration", media.duration)
-        }
-        InputMedia::Document(media) => {
-            validate_file_reference("media", &media.media)?;
-            validate_caption_fields(
-                "input media caption",
-                media.caption.as_deref(),
-                media.parse_mode,
-                media.caption_entities.as_deref(),
-            )
-        }
+        InputMedia::Photo(media) => validate_input_media_photo(media),
+        InputMedia::Video(media) => validate_input_media_video(media),
+        InputMedia::Animation(media) => validate_input_media_animation(media),
+        InputMedia::Audio(media) => validate_input_media_audio(media),
+        InputMedia::Document(media) => validate_input_media_document(media),
     }
 }
 
-fn media_file_reference(media: &InputMedia) -> &str {
+fn validate_media_group_item(media: &InputMediaGroupItem) -> Result<(), Error> {
     match media {
-        InputMedia::Photo(media) => &media.media,
-        InputMedia::Video(media) => &media.media,
-        InputMedia::Animation(media) => &media.media,
-        InputMedia::Audio(media) => &media.media,
-        InputMedia::Document(media) => &media.media,
+        InputMediaGroupItem::Photo(media) => validate_input_media_photo(media),
+        InputMediaGroupItem::Video(media) => validate_input_media_video(media),
+        InputMediaGroupItem::Audio(media) => validate_input_media_audio(media),
+        InputMediaGroupItem::Document(media) => validate_input_media_document(media),
+    }
+}
+
+fn media_group_file_reference(media: &InputMediaGroupItem) -> &str {
+    match media {
+        InputMediaGroupItem::Photo(media) => &media.media,
+        InputMediaGroupItem::Video(media) => &media.media,
+        InputMediaGroupItem::Audio(media) => &media.media,
+        InputMediaGroupItem::Document(media) => &media.media,
     }
 }
 
@@ -2706,10 +2800,10 @@ fn validate_attach_name(field: &str, name: &str) -> Result<(), Error> {
     validate_upload_part_name(field, name)
 }
 
-fn media_attach_names(media: &[InputMedia]) -> Result<BTreeSet<String>, Error> {
+fn media_attach_names(media: &[InputMediaGroupItem]) -> Result<BTreeSet<String>, Error> {
     let mut names = BTreeSet::new();
     for item in media {
-        if let Some(name) = attach_name(media_file_reference(item)) {
+        if let Some(name) = attach_name(media_group_file_reference(item)) {
             validate_attach_name("media attach name", name)?;
             names.insert(name.to_owned());
         }
@@ -2718,9 +2812,9 @@ fn media_attach_names(media: &[InputMedia]) -> Result<BTreeSet<String>, Error> {
     Ok(names)
 }
 
-fn validate_no_multipart_attach_references(media: &[InputMedia]) -> Result<(), Error> {
+fn validate_no_multipart_attach_references(media: &[InputMediaGroupItem]) -> Result<(), Error> {
     for item in media {
-        if attach_name(media_file_reference(item)).is_some() {
+        if attach_name(media_group_file_reference(item)).is_some() {
             return Err(Error::InvalidRequest {
                 reason: "sendMediaGroup JSON requests cannot use attach:// media; use send_media_group_upload".to_owned(),
             });
@@ -2731,7 +2825,7 @@ fn validate_no_multipart_attach_references(media: &[InputMedia]) -> Result<(), E
 }
 
 fn validate_media_group_upload_parts(
-    media: &[InputMedia],
+    media: &[InputMediaGroupItem],
     files: &[UploadPart],
 ) -> Result<(), Error> {
     if files.is_empty() {
@@ -2776,7 +2870,7 @@ fn validate_media_group_upload_parts(
     Ok(())
 }
 
-fn validate_media_group_items(media: &[InputMedia]) -> Result<(), Error> {
+fn validate_media_group_items(media: &[InputMediaGroupItem]) -> Result<(), Error> {
     if !(MIN_MEDIA_GROUP_ITEMS..=MAX_MEDIA_GROUP_ITEMS).contains(&media.len()) {
         return Err(Error::InvalidRequest {
             reason: format!(
@@ -2785,7 +2879,7 @@ fn validate_media_group_items(media: &[InputMedia]) -> Result<(), Error> {
         });
     }
     for item in media {
-        validate_media(item)?;
+        validate_media_group_item(item)?;
     }
 
     Ok(())
@@ -3646,6 +3740,14 @@ mod tests {
             media_group_json["media"][0]["caption_entities"][0]["type"],
             "bold"
         );
+
+        let animation_media = InputMedia::from(InputMediaAnimation::new("animation-file-id"));
+        assert!(animation_media.validate().is_ok());
+        assert!(matches!(
+            InputMediaGroupItem::try_from(animation_media),
+            Err(Error::InvalidRequest { reason })
+                if reason.contains("does not support animation")
+        ));
 
         let invalid_media_group = SendMediaGroupRequest::new(
             1_i64,

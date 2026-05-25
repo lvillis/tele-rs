@@ -468,6 +468,7 @@ const TYPES_WITH_VALIDATE: &[&str] = &[
     "crate::types::common::NumericChatId",
     "crate::types::common::UserId",
     "crate::types::common::MessageId",
+    "crate::types::message::InputMedia",
     "crate::types::payment::LabeledPrice",
     "crate::types::payment::ShippingOption",
     "crate::types::sticker::InputSticker",
@@ -1512,6 +1513,13 @@ mod tests {
                     type_rust: "Vec<Value>".to_owned(),
                 },
                 ParamSpec {
+                    name: "edit_media".to_owned(),
+                    field_name: "edit_media".to_owned(),
+                    required: true,
+                    type_raw: "InputMedia".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
                     name: "reactions".to_owned(),
                     field_name: "reactions".to_owned(),
                     required: false,
@@ -1586,6 +1594,8 @@ mod tests {
         assert!(generated.contains("self.photo.validate()?;"));
         assert!(generated.contains("pub button: crate::types::telegram::KeyboardButton,"));
         assert!(generated.contains("self.button.validate()?;"));
+        assert!(generated.contains("pub edit_media: crate::types::message::InputMedia,"));
+        assert!(generated.contains("self.edit_media.validate()?;"));
         assert!(
             generated
                 .contains("validate_required_items::<crate::types::telegram::InlineQueryResult>")

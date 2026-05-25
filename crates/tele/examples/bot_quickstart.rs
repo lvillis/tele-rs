@@ -73,10 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-    app.engine_mut()
-        .source_mut()
-        .config_mut()
-        .poll_timeout_seconds = 20;
+    app.engine_mut().source_mut().set_poll_timeout_seconds(20);
     app.run().await?;
     Ok(())
 }

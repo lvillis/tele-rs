@@ -184,4 +184,26 @@ mod tests {
             3
         ));
     }
+
+    #[test]
+    fn retry_after_header_does_not_bypass_non_idempotent_policy() {
+        let retry = RetryConfig::default();
+        let error = Error::Transport {
+            method: "sendMessage".to_owned(),
+            status: Some(503),
+            request_id: None,
+            retry_after: Some(Duration::from_secs(1)),
+            request_path: None,
+            message: "service unavailable".into(),
+        };
+
+        assert!(!should_retry_method_error(
+            "sendMessage",
+            &retry,
+            &error,
+            1,
+            3
+        ));
+        assert!(should_retry_method_error("getMe", &retry, &error, 1, 3));
+    }
 }

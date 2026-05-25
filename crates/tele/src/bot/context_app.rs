@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::InputMedia;
+use crate::types::InputMediaGroupItem;
 
 /// Request-scoped runtime facade for handler code.
 ///
@@ -287,7 +287,7 @@ impl ContextAppApi {
     ) -> Result<crate::client::MediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         self.client.app().media_group(chat_id, media)
     }
@@ -300,7 +300,7 @@ impl ContextAppApi {
     ) -> Result<crate::client::MediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         self.client.app().reply_media_group(update, media)
     }

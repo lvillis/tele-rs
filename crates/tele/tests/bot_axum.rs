@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use serde_json::json;
 use tele::bot::axum::{
     TELEGRAM_SECRET_HEADER, dispatch_webhook, dispatch_webhook_status, telegram_secret_token,
-    webhook_handler,
+    telegram_secret_token_checked, webhook_handler,
 };
 use tele::bot::{BotContext, DispatchOutcome, HandlerError, Router, WebhookRunner};
 use tele::types::update::Update;
@@ -90,6 +90,41 @@ async fn dispatch_webhook_status_maps_secret_and_json_errors() -> Result<(), Dyn
     let bad_payload = br#"{"update_id":"invalid"}"#;
     let bad_request = dispatch_webhook_status(&runner, &good_headers, bad_payload).await;
     assert_eq!(bad_request, StatusCode::BAD_REQUEST);
+
+    let mut duplicate_headers = HeaderMap::new();
+    duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
+    duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
+    let duplicate_secret = dispatch_webhook_status(&runner, &duplicate_headers, &payload).await;
+    assert_eq!(duplicate_secret, StatusCode::BAD_REQUEST);
+
+    let mut malformed_headers = HeaderMap::new();
+    malformed_headers.insert(
+        TELEGRAM_SECRET_HEADER,
+        HeaderValue::from_bytes(&[0xff]).map_err(|error| format!("invalid header: {error}"))?,
+    );
+    let malformed_secret = dispatch_webhook_status(&runner, &malformed_headers, &payload).await;
+    assert_eq!(malformed_secret, StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[test]
+fn telegram_secret_token_checked_rejects_invalid_header_shapes() -> Result<(), DynError> {
+    let mut duplicate_headers = HeaderMap::new();
+    duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
+    duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
+
+    assert!(telegram_secret_token_checked(&duplicate_headers).is_err());
+    assert_eq!(telegram_secret_token(&duplicate_headers), None);
+
+    let mut malformed_headers = HeaderMap::new();
+    malformed_headers.insert(
+        TELEGRAM_SECRET_HEADER,
+        HeaderValue::from_bytes(&[0xff]).map_err(|error| format!("invalid header: {error}"))?,
+    );
+
+    assert!(telegram_secret_token_checked(&malformed_headers).is_err());
+    assert_eq!(telegram_secret_token(&malformed_headers), None);
 
     Ok(())
 }

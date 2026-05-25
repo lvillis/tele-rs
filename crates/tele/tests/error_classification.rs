@@ -20,6 +20,42 @@ fn classifies_rate_limited_transport_errors() {
 }
 
 #[test]
+fn retry_after_transport_hint_without_429_is_not_rate_limited() {
+    let error = Error::Transport {
+        method: "sendMessage".to_owned(),
+        status: Some(503),
+        request_id: None,
+        retry_after: Some(Duration::from_secs(3)),
+        request_path: None,
+        message: "service unavailable".into(),
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Transport);
+    assert!(!error.is_rate_limited());
+    assert!(error.is_retryable());
+    assert_eq!(error.retry_after(), Some(Duration::from_secs(3)));
+}
+
+#[test]
+fn retry_after_api_hint_without_429_is_not_rate_limited() {
+    let error = Error::Api {
+        method: "sendMessage".to_owned(),
+        status: Some(503),
+        request_id: None,
+        error_code: Some(503),
+        description: "service unavailable".into(),
+        retry_after: Some(Duration::from_secs(3)),
+        parameters: None,
+        body_snippet: None,
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Api);
+    assert!(!error.is_rate_limited());
+    assert!(error.is_retryable());
+    assert_eq!(error.retry_after(), Some(Duration::from_secs(3)));
+}
+
+#[test]
 fn classifies_auth_errors_from_api_code() {
     let error = Error::Api {
         method: "getMe".to_owned(),
@@ -27,6 +63,7 @@ fn classifies_auth_errors_from_api_code() {
         request_id: None,
         error_code: Some(401),
         description: "unauthorized".into(),
+        retry_after: None,
         parameters: None,
         body_snippet: None,
     };
@@ -52,6 +89,7 @@ fn classifies_auth_errors_from_api_status_without_error_code() {
         request_id: None,
         error_code: None,
         description: "forbidden".into(),
+        retry_after: None,
         parameters: None,
         body_snippet: None,
     };
@@ -111,6 +149,7 @@ fn classifies_protocol_and_decode_errors() {
         request_id: None,
         error_code: Some(400),
         description: "retry later".into(),
+        retry_after: None,
         parameters: Some(Box::new(parameters)),
         body_snippet: None,
     };
@@ -126,6 +165,7 @@ fn classifies_rate_limit_from_api_status_without_error_code() {
         request_id: None,
         error_code: None,
         description: "too many requests".into(),
+        retry_after: None,
         parameters: None,
         body_snippet: None,
     };

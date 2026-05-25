@@ -16,12 +16,13 @@ const WEB_APP_INIT_DATA_FUTURE_SKEW: Duration = Duration::from_secs(60);
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct VerifiedWebAppInitData {
-    auth_date: Option<u64>,
+    auth_date: u64,
     fields: BTreeMap<String, String>,
 }
 
 impl VerifiedWebAppInitData {
-    pub fn auth_date(&self) -> Option<u64> {
+    /// Unix timestamp from the verified `auth_date` field.
+    pub fn auth_date(&self) -> u64 {
         self.auth_date
     }
 
@@ -85,7 +86,7 @@ fn validate_init_data_key(key: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Verifies Mini App `initData` signature and optional max age.
+/// Verifies Mini App `initData` signature, required `auth_date`, and optional max age.
 ///
 /// This should run on the backend before trusting Mini App payloads.
 pub fn verify_web_app_init_data(
@@ -121,40 +122,36 @@ pub fn verify_web_app_init_data(
         });
     }
 
-    let auth_date = match fields.get("auth_date") {
-        Some(value) => Some(
-            value
-                .parse::<u64>()
-                .map_err(|error| Error::InvalidRequest {
-                    reason: format!("invalid initData `auth_date`: {error}"),
-                })?,
-        ),
-        None => None,
-    };
+    let auth_date = fields
+        .get("auth_date")
+        .ok_or_else(|| Error::InvalidRequest {
+            reason: "initData is missing `auth_date`".to_owned(),
+        })?
+        .parse::<u64>()
+        .map_err(|error| Error::InvalidRequest {
+            reason: format!("invalid initData `auth_date`: {error}"),
+        })?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| Error::InvalidRequest {
+            reason: format!("system clock error while validating initData age: {error}"),
+        })?
+        .as_secs();
+    if auth_date > now {
+        let skew_secs = auth_date - now;
+        if skew_secs > WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs() {
+            return Err(Error::InvalidRequest {
+                reason: format!(
+                    "initData `auth_date` is in the future: skew={}s exceeds allowed_skew={}s",
+                    skew_secs,
+                    WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs()
+                ),
+            });
+        }
+    }
 
     if let Some(max_age) = max_age {
-        let auth_date = auth_date.ok_or_else(|| Error::InvalidRequest {
-            reason: "initData is missing `auth_date` required for max_age validation".to_owned(),
-        })?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| Error::InvalidRequest {
-                reason: format!("system clock error while validating initData age: {error}"),
-            })?
-            .as_secs();
-        if auth_date > now {
-            let skew_secs = auth_date - now;
-            if skew_secs > WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs() {
-                return Err(Error::InvalidRequest {
-                    reason: format!(
-                        "initData `auth_date` is in the future: skew={}s exceeds allowed_skew={}s",
-                        skew_secs,
-                        WEB_APP_INIT_DATA_FUTURE_SKEW.as_secs()
-                    ),
-                });
-            }
-        }
-
         let age_secs = now.saturating_sub(auth_date);
         if age_secs > max_age.as_secs() {
             return Err(Error::InvalidRequest {
@@ -312,6 +309,8 @@ mod tests {
 
     use super::*;
 
+    type TestResult = std::result::Result<(), Box<dyn StdError>>;
+
     fn sign_init_data(
         bot_token: &str,
         fields: &[(&str, &str)],
@@ -350,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_valid_init_data() -> std::result::Result<(), Box<dyn StdError>> {
+    fn verifies_valid_init_data() -> TestResult {
         let bot_token = "123456:bot-token";
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let auth_date = now.to_string();
@@ -366,22 +365,36 @@ mod tests {
         let verified =
             verify_web_app_init_data(bot_token, init_data.as_str(), Some(Duration::from_secs(60)))?;
         assert_eq!(verified.get("query_id"), Some("q-1"));
-        assert_eq!(verified.auth_date(), Some(now));
+        assert_eq!(verified.auth_date(), now);
         Ok(())
     }
 
     #[test]
-    fn verifies_known_hash_vector() -> std::result::Result<(), Box<dyn StdError>> {
+    fn verifies_known_hash_vector() -> TestResult {
         let bot_token = "123456:bot-token";
         let init_data = "auth_date=1700000000&query_id=q-1&user=%7B%22id%22%3A42%2C%22first_name%22%3A%22Tele%22%7D&hash=e6e77ddca82b669a27e3d2bacd6535954ced7219f791f47ff7f2e257000f6b1c";
         let verified = verify_web_app_init_data(bot_token, init_data, None)?;
-        assert_eq!(verified.auth_date(), Some(1_700_000_000));
+        assert_eq!(verified.auth_date(), 1_700_000_000);
         assert_eq!(verified.get("query_id"), Some("q-1"));
         Ok(())
     }
 
     #[test]
-    fn rejects_invalid_signature() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_missing_auth_date_even_without_max_age() -> TestResult {
+        let bot_token = "123456:bot-token";
+        let init_data = sign_init_data(bot_token, &[("query_id", "q-1")])?;
+
+        let error = match verify_web_app_init_data(bot_token, init_data.as_str(), None) {
+            Ok(_) => return Err("missing auth_date should fail".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("auth_date"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_signature() -> TestResult {
         let bot_token = "123456:bot-token";
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let auth_date = now.to_string();
@@ -410,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_hash_length() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_wrong_hash_length() -> TestResult {
         let bot_token = "123456:bot-token";
         let init_data = "auth_date=1700000000&query_id=q-1&hash=deadbeef";
 
@@ -424,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stale_init_data() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_stale_init_data() -> TestResult {
         let bot_token = "123456:bot-token";
         let stale_auth_date = "1";
         let init_data = sign_init_data(
@@ -446,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_future_init_data_beyond_clock_skew() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_future_init_data_beyond_clock_skew() -> TestResult {
         let bot_token = "123456:bot-token";
         let future = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600;
         let future_auth_date = future.to_string();
@@ -492,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_keys_in_init_data() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_duplicate_keys_in_init_data() -> TestResult {
         let error = match parse_web_app_init_data("auth_date=1&auth_date=2&hash=deadbeef") {
             Ok(_) => return Err("duplicate keys must be rejected".into()),
             Err(error) => error,
@@ -503,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_malformed_init_data_keys() -> std::result::Result<(), Box<dyn StdError>> {
+    fn rejects_malformed_init_data_keys() -> TestResult {
         for init_data in [
             "=value&hash=deadbeef",
             "bad-key=value&hash=deadbeef",

@@ -123,6 +123,8 @@ struct PersistedOutboxCommand {
     attempt: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -164,6 +166,7 @@ fn default_dead_letter_snapshot_version() -> u8 {
 struct QueuedOutboxCommand {
     payload: PersistedOutboxCommand,
     responder: Option<oneshot::Sender<Result<Message>>>,
+    terminal_error: Option<Error>,
     _permit: OutboxQueuePermit,
 }
 
@@ -196,8 +199,12 @@ pub struct BotOutbox {
 }
 
 impl BotOutbox {
+    /// Spawns the outbox worker on the current Tokio runtime.
     pub fn spawn(client: Client, config: OutboxConfig) -> Result<Self> {
         config.validate()?;
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| Error::Configuration {
+            reason: "BotOutbox::spawn requires an active Tokio runtime".to_owned(),
+        })?;
         validate_outbox_persistence_path(config.persistence_path.as_deref())?;
         validate_dead_letter_path(config.dead_letter_path.as_deref())?;
         let persisted_queue = load_outbox_queue(&config)?;
@@ -205,7 +212,7 @@ impl BotOutbox {
         let available_permits = queue_capacity.saturating_sub(persisted_queue.len());
         let permits = Arc::new(Semaphore::new(available_permits));
         let (sender, receiver) = mpsc::channel(queue_capacity);
-        tokio::spawn(run_outbox_worker(
+        runtime.spawn(run_outbox_worker(
             client,
             config,
             persisted_queue,
@@ -285,6 +292,7 @@ async fn run_outbox_worker(
         .map(|payload| QueuedOutboxCommand {
             payload,
             responder: None,
+            terminal_error: None,
             _permit: OutboxQueuePermit::Persisted(Arc::clone(&permits)),
         })
         .collect::<VecDeque<_>>();
@@ -299,8 +307,10 @@ async fn run_outbox_worker(
                     enqueued_at_unix_ms: unix_timestamp_millis_now(),
                     attempt: 0,
                     last_error: None,
+                    terminal_error: None,
                 },
                 responder: Some(command.responder),
+                terminal_error: None,
                 _permit: OutboxQueuePermit::Live(command._permit),
             });
         }
@@ -318,8 +328,10 @@ async fn run_outbox_worker(
                     enqueued_at_unix_ms: unix_timestamp_millis_now(),
                     attempt: 0,
                     last_error: None,
+                    terminal_error: None,
                 },
                 responder: Some(command.responder),
+                terminal_error: None,
                 _permit: OutboxQueuePermit::Live(command._permit),
             });
         }
@@ -335,18 +347,8 @@ async fn run_outbox_worker(
             continue;
         };
 
-        if is_outbox_message_expired(
-            front_payload.enqueued_at_unix_ms,
-            config.max_message_age,
-            unix_timestamp_millis_now(),
-        ) {
-            let entry = match dead_letter_front_and_commit(
-                &config,
-                &mut queue,
-                "message expired in outbox before delivery".to_owned(),
-            )
-            .await
-            {
+        if let Some(reason) = front_payload.terminal_error.clone() {
+            let entry = match dead_letter_front_and_commit(&config, &mut queue, reason).await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => continue,
                 Err(_error) => {
@@ -354,8 +356,25 @@ async fn run_outbox_worker(
                     continue;
                 }
             };
-            if let Some(responder) = entry.responder {
-                let _ = responder.send(Err(invalid_request("message expired in outbox queue")));
+            notify_terminal_responder(entry);
+            continue;
+        }
+
+        if is_outbox_message_expired(
+            front_payload.enqueued_at_unix_ms,
+            config.max_message_age,
+            unix_timestamp_millis_now(),
+        ) {
+            let terminal_error = invalid_request("message expired in outbox queue");
+            if let Err(_error) = mark_front_terminal(
+                &config,
+                &mut queue,
+                "message expired in outbox before delivery".to_owned(),
+                Some(terminal_error),
+            )
+            .await
+            {
+                sleep(outbox_persistence_retry_delay(&config)).await;
             }
             continue;
         }
@@ -367,24 +386,18 @@ async fn run_outbox_worker(
             && cached.expires_at > Instant::now()
         {
             if cached.chat_id != front_payload.chat_id || cached.text != front_payload.text {
-                let entry = match dead_letter_front_and_commit(
+                let terminal_error = invalid_request(
+                    "outbox idempotency key was reused with a different message payload",
+                );
+                if let Err(_error) = mark_front_terminal(
                     &config,
                     &mut queue,
                     "idempotency key reused with different outbox payload".to_owned(),
+                    Some(terminal_error),
                 )
                 .await
                 {
-                    Ok(Some(entry)) => entry,
-                    Ok(None) => continue,
-                    Err(_error) => {
-                        sleep(outbox_persistence_retry_delay(&config)).await;
-                        continue;
-                    }
-                };
-                if let Some(responder) = entry.responder {
-                    let _ = responder.send(Err(invalid_request(
-                        "outbox idempotency key was reused with a different message payload",
-                    )));
+                    sleep(outbox_persistence_retry_delay(&config)).await;
                 }
                 continue;
             }
@@ -457,21 +470,34 @@ async fn run_outbox_worker(
                     continue;
                 }
 
-                let entry =
-                    match dead_letter_front_and_commit(&config, &mut queue, error_message).await {
-                        Ok(Some(entry)) => entry,
-                        Ok(None) => continue,
-                        Err(_error) => {
-                            sleep(outbox_persistence_retry_delay(&config)).await;
-                            continue;
-                        }
-                    };
-                if let Some(responder) = entry.responder {
-                    let _ = responder.send(Err(error));
+                if let Err(_error) =
+                    mark_front_terminal(&config, &mut queue, error_message, Some(error)).await
+                {
+                    sleep(outbox_persistence_retry_delay(&config)).await;
                 }
             }
         }
     }
+}
+
+async fn mark_front_terminal(
+    config: &OutboxConfig,
+    queue: &mut VecDeque<QueuedOutboxCommand>,
+    reason: String,
+    responder_error: Option<Error>,
+) -> Result<()> {
+    let Some(front) = queue.front_mut() else {
+        return Ok(());
+    };
+
+    if front.payload.terminal_error.is_none() {
+        front.payload.terminal_error = Some(reason);
+    }
+    if front.terminal_error.is_none() {
+        front.terminal_error = responder_error;
+    }
+
+    persist_outbox_queue_async(config.persistence_path.clone(), queue).await
 }
 
 async fn dead_letter_front_and_commit(
@@ -527,6 +553,22 @@ fn notify_front_responder(queue: &mut VecDeque<QueuedOutboxCommand>, error: Erro
         return;
     };
 
+    let _ = responder.send(Err(error));
+}
+
+fn notify_terminal_responder(entry: QueuedOutboxCommand) {
+    let Some(responder) = entry.responder else {
+        return;
+    };
+
+    let error = entry.terminal_error.unwrap_or_else(|| {
+        invalid_request(
+            entry
+                .payload
+                .terminal_error
+                .unwrap_or_else(|| "outbox message reached terminal failure".to_owned()),
+        )
+    });
     let _ = responder.send(Err(error));
 }
 
@@ -615,7 +657,14 @@ fn validate_persisted_outbox_command(
             "outbox enqueued_at_unix_ms must not be negative",
         ));
     }
-    if command.attempt >= config.max_attempts {
+    if command
+        .terminal_error
+        .as_ref()
+        .is_some_and(|reason| reason.trim().is_empty())
+    {
+        return Err(invalid_request("outbox terminal_error cannot be empty"));
+    }
+    if command.terminal_error.is_none() && command.attempt >= config.max_attempts {
         return Err(invalid_request(format!(
             "outbox attempt {} has no remaining retry budget for max_attempts {}",
             command.attempt, config.max_attempts
@@ -693,6 +742,9 @@ fn append_dead_letter(
 
     let mut snapshot = load_dead_letter_snapshot(path)?;
     validate_dead_letter_snapshot(&snapshot)?;
+    snapshot
+        .entries
+        .retain(|existing| !same_dead_letter_message(existing, &entry));
     snapshot.entries.push(entry);
     if snapshot.entries.len() > max_dead_letters {
         let overflow = snapshot.entries.len().saturating_sub(max_dead_letters);
@@ -704,6 +756,15 @@ fn append_dead_letter(
     })?;
     write_file_atomic(path, encoded.as_slice(), "dead-letter snapshot")?;
     Ok(())
+}
+
+fn same_dead_letter_message(left: &DeadLetterEntry, right: &DeadLetterEntry) -> bool {
+    left.chat_id == right.chat_id
+        && left.text == right.text
+        && left.idempotency_key == right.idempotency_key
+        && left.attempts == right.attempts
+        && left.reason == right.reason
+        && left.enqueued_at_unix_ms == right.enqueued_at_unix_ms
 }
 
 async fn append_dead_letter_async(
@@ -814,9 +875,114 @@ async fn send_once(client: &Client, chat_id: &ChatId, text: &str) -> Result<Mess
 mod tests {
     use super::*;
 
+    type BoxTestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn spawn_without_tokio_runtime_returns_configuration_error() -> Result<()> {
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+
+        let result = BotOutbox::spawn(client, OutboxConfig::default());
+
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn append_dead_letter_replaces_existing_entry_for_same_message() -> BoxTestResult {
+        let root = std::env::temp_dir().join(format!(
+            "tele-outbox-dlq-idempotent-{}-{}",
+            std::process::id(),
+            unix_timestamp_millis_now()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let dead_letter_path = root.join("dead-letter.json");
+        let entry = DeadLetterEntry {
+            chat_id: ChatId::from(12_i64),
+            text: "hello".to_owned(),
+            idempotency_key: Some("dead-letter-key".to_owned()),
+            attempts: 4,
+            reason: "delivery failed".to_owned(),
+            enqueued_at_unix_ms: 100,
+            failed_at_unix_ms: 200,
+        };
+        let mut retried_entry = entry.clone();
+        retried_entry.failed_at_unix_ms = 300;
+
+        append_dead_letter(Some(&dead_letter_path), 16, entry)?;
+        append_dead_letter(Some(&dead_letter_path), 16, retried_entry)?;
+
+        let snapshot = load_dead_letter_snapshot(&dead_letter_path)?;
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].failed_at_unix_ms, 300);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[tokio::test]
-    async fn dead_letter_failure_keeps_queue_entry()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn terminal_queue_entry_moves_to_dead_letter_without_retrying() -> BoxTestResult {
+        let root = std::env::temp_dir().join(format!(
+            "tele-outbox-terminal-{}-{}",
+            std::process::id(),
+            unix_timestamp_millis_now()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let queue_path = root.join("queue.json");
+        let dead_letter_path = root.join("dead-letter.json");
+        let mut config = OutboxConfig::default()
+            .with_persistence_path(queue_path.clone())
+            .with_dead_letter_path(dead_letter_path.clone());
+        config.max_attempts = 1;
+
+        let payload = PersistedOutboxCommand {
+            chat_id: ChatId::from(12_i64),
+            text: "hello".to_owned(),
+            idempotency_key: Some("terminal-key".to_owned()),
+            enqueued_at_unix_ms: unix_timestamp_millis_now(),
+            attempt: 1,
+            last_error: Some("delivery failed".to_owned()),
+            terminal_error: Some("delivery failed".to_owned()),
+        };
+        validate_persisted_outbox_command(&payload, &config)?;
+
+        let permit_source = Arc::new(Semaphore::new(0));
+        let mut queue = VecDeque::from([QueuedOutboxCommand {
+            payload: payload.clone(),
+            responder: None,
+            terminal_error: None,
+            _permit: OutboxQueuePermit::Persisted(permit_source),
+        }]);
+
+        let entry = dead_letter_front_and_commit(
+            &config,
+            &mut queue,
+            payload.terminal_error.clone().unwrap_or_default(),
+        )
+        .await?;
+
+        assert!(entry.is_some());
+        assert!(queue.is_empty());
+        assert!(load_outbox_queue(&config)?.is_empty());
+
+        let dead_letter = load_dead_letter_snapshot(&dead_letter_path)?;
+        assert_eq!(dead_letter.entries.len(), 1);
+        assert_eq!(
+            dead_letter.entries[0].idempotency_key.as_deref(),
+            Some("terminal-key")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dead_letter_failure_keeps_queue_entry() -> BoxTestResult {
         let root = std::env::temp_dir().join(format!(
             "tele-outbox-dlq-failure-{}-{}",
             std::process::id(),
@@ -842,8 +1008,10 @@ mod tests {
                 enqueued_at_unix_ms: unix_timestamp_millis_now(),
                 attempt: 1,
                 last_error: Some("failed".to_owned()),
+                terminal_error: None,
             },
             responder: None,
+            terminal_error: None,
             _permit: OutboxQueuePermit::Persisted(permit_source),
         }]);
 

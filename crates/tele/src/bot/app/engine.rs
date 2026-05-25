@@ -50,17 +50,17 @@ impl DispatchFailure {
     }
 }
 
-fn completed_source_order_prefix(outcomes: &[Option<DispatchOutcome>]) -> Vec<DispatchOutcome> {
+fn successful_source_order_prefix(outcomes: &[Option<DispatchOutcome>]) -> Vec<DispatchOutcome> {
     let mut prefix = Vec::new();
 
     for outcome in outcomes {
         let Some(outcome) = *outcome else {
             break;
         };
-        prefix.push(outcome);
         if outcome.is_failed() {
             break;
         }
+        prefix.push(outcome);
     }
 
     prefix
@@ -109,22 +109,47 @@ where
     }
 
     pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
+        self.set_config(config);
         self
     }
 
     pub fn with_config_checked(mut self, config: EngineConfig) -> Result<Self> {
         config.validate()?;
-        self.config = config;
+        self.set_config(config);
         Ok(self)
     }
 
-    pub fn config_mut(&mut self) -> &mut EngineConfig {
-        &mut self.config
+    /// Returns the current engine configuration.
+    ///
+    /// Use [`Self::set_config`] or [`Self::with_config_checked`] to change values so derived
+    /// runtime state stays consistent.
+    pub fn config(&self) -> &EngineConfig {
+        &self.config
+    }
+
+    /// Replaces engine configuration and invalidates derived retry state when policy changes.
+    pub fn set_config(&mut self, config: EngineConfig) -> &mut Self {
+        if self.source_error_retry_policy_changed(&config) {
+            self.source_error_streak = 0;
+        }
+        self.config = config;
+        self
+    }
+
+    /// Validates and replaces engine configuration.
+    pub fn set_config_checked(&mut self, config: EngineConfig) -> Result<&mut Self> {
+        config.validate()?;
+        Ok(self.set_config(config))
     }
 
     pub fn source_mut(&mut self) -> &mut S {
         &mut self.source
+    }
+
+    fn source_error_retry_policy_changed(&self, config: &EngineConfig) -> bool {
+        self.config.continue_on_source_error != config.continue_on_source_error
+            || self.config.error_delay != config.error_delay
+            || self.config.source_error_backoff != config.source_error_backoff
     }
 
     /// Prepares router runtime state ahead of dispatch.
@@ -402,10 +427,10 @@ where
                     let outcome = DispatchOutcome::Failed { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
-                    outcomes.push(outcome);
                     if !self.config.continue_on_handler_error {
                         return Err(DispatchFailure::new(error, outcomes));
                     }
+                    outcomes.push(outcome);
                 }
             }
         }
@@ -432,7 +457,7 @@ where
             let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
                 DispatchFailure::new(
                     invalid_request("handler semaphore closed unexpectedly"),
-                    completed_source_order_prefix(&outcomes),
+                    successful_source_order_prefix(&outcomes),
                 )
             })?;
 
@@ -496,11 +521,11 @@ where
                     let outcome = DispatchOutcome::Failed { update_id };
                     self.notify_event(EngineEvent::DispatchCompleted { outcome })
                         .await;
-                    outcomes[index] = Some(outcome);
                     if !self.config.continue_on_handler_error {
                         first_error = Some(error);
                         break;
                     }
+                    outcomes[index] = Some(outcome);
                 }
                 Err(join_error) => {
                     let error = invalid_request(format!("bot handler task failed: {join_error}"));
@@ -521,7 +546,7 @@ where
             while join_set.join_next().await.is_some() {}
             return Err(DispatchFailure::new(
                 error,
-                completed_source_order_prefix(&outcomes),
+                successful_source_order_prefix(&outcomes),
             ));
         }
 
@@ -856,4 +881,59 @@ async fn wait_if_needed(duration: Duration) {
     }
 
     sleep(duration).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_engine() -> Result<BotEngine<ChannelUpdateSource>> {
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let (_sink, source) = channel_source(1)?;
+        Ok(BotEngine::new(client, source, Router::new()))
+    }
+
+    #[test]
+    fn set_config_resets_source_error_streak_when_retry_policy_changes() -> Result<()> {
+        let mut engine = test_engine()?;
+        engine.source_error_streak = 4;
+
+        engine.set_config(EngineConfig {
+            error_delay: Duration::from_secs(2),
+            ..EngineConfig::default()
+        });
+
+        assert_eq!(engine.source_error_streak, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn set_config_preserves_source_error_streak_for_dispatch_only_changes() -> Result<()> {
+        let mut engine = test_engine()?;
+        engine.source_error_streak = 4;
+
+        engine.set_config(EngineConfig {
+            max_handler_concurrency: 8,
+            ..EngineConfig::default()
+        });
+
+        assert_eq!(engine.source_error_streak, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn set_config_checked_rejects_invalid_config_without_mutating_engine() -> Result<()> {
+        let mut engine = test_engine()?;
+
+        let result = engine.set_config_checked(EngineConfig {
+            max_handler_concurrency: 0,
+            ..EngineConfig::default()
+        });
+
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        assert_eq!(engine.config().max_handler_concurrency, 1);
+        Ok(())
+    }
 }

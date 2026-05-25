@@ -14,7 +14,7 @@ use crate::types::command::{
 };
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode, UserId};
 use crate::types::message::{
-    InputMedia, Message, MessageEntity, SendAnimationRequest, SendAudioRequest,
+    InputMediaGroupItem, Message, MessageEntity, SendAnimationRequest, SendAudioRequest,
     SendDocumentRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
     SendVideoRequest, SendVoiceRequest, SentWebAppMessage,
 };

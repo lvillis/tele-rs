@@ -13,13 +13,39 @@ use crate::{Error, Result};
 pub const TELEGRAM_SECRET_HEADER: &str = "x-telegram-bot-api-secret-token";
 
 const INVALID_SECRET_REASON: &str = "invalid webhook secret token";
+const DUPLICATE_SECRET_HEADER_REASON: &str = "duplicate webhook secret token header";
+const INVALID_SECRET_HEADER_REASON: &str = "invalid webhook secret token header";
 const INVALID_JSON_REASON_PREFIX: &str = "failed to deserialize webhook update payload";
 
-/// Extracts the Telegram webhook secret token from request headers.
+/// Strictly extracts the Telegram webhook secret token from request headers.
+///
+/// Telegram sends at most one `x-telegram-bot-api-secret-token` header. Duplicate
+/// values or non-UTF-8 header bytes are rejected before the payload reaches the
+/// webhook dispatcher.
+pub fn telegram_secret_token_checked(headers: &HeaderMap) -> Result<Option<&str>> {
+    let mut values = headers.get_all(TELEGRAM_SECRET_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+
+    if values.next().is_some() {
+        return Err(Error::InvalidRequest {
+            reason: DUPLICATE_SECRET_HEADER_REASON.to_owned(),
+        });
+    }
+
+    let token = value.to_str().map_err(|_| Error::InvalidRequest {
+        reason: INVALID_SECRET_HEADER_REASON.to_owned(),
+    })?;
+
+    Ok(Some(token))
+}
+
+/// Lossily extracts the Telegram webhook secret token from request headers.
+///
+/// Prefer [`telegram_secret_token_checked`] for request validation.
 pub fn telegram_secret_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(TELEGRAM_SECRET_HEADER)
-        .and_then(|value| value.to_str().ok())
+    telegram_secret_token_checked(headers).ok().flatten()
 }
 
 /// Validates secret token, parses update payload and dispatches it through `WebhookRunner`.
@@ -28,7 +54,7 @@ pub async fn dispatch_webhook(
     headers: &HeaderMap,
     payload: &[u8],
 ) -> Result<DispatchOutcome> {
-    let incoming_secret = telegram_secret_token(headers);
+    let incoming_secret = telegram_secret_token_checked(headers)?;
     let update = runner
         .parse_update_json(payload, incoming_secret)
         .map_err(normalize_parse_error)?;
@@ -63,6 +89,12 @@ fn status_from_error(error: &Error) -> StatusCode {
     match error {
         Error::InvalidRequest { reason } if reason == INVALID_SECRET_REASON => {
             StatusCode::UNAUTHORIZED
+        }
+        Error::InvalidRequest { reason }
+            if reason == DUPLICATE_SECRET_HEADER_REASON
+                || reason == INVALID_SECRET_HEADER_REASON =>
+        {
+            StatusCode::BAD_REQUEST
         }
         Error::InvalidRequest { reason } if reason.starts_with(INVALID_JSON_REASON_PREFIX) => {
             StatusCode::BAD_REQUEST

@@ -45,6 +45,7 @@ impl RecordedRequest {
 struct ResponseSpec {
     status: u16,
     content_type: String,
+    headers: Vec<(String, String)>,
     body: String,
     delay: Duration,
 }
@@ -54,6 +55,7 @@ impl Default for ResponseSpec {
         Self {
             status: 200,
             content_type: "application/json".to_owned(),
+            headers: Vec::new(),
             body: r#"{"ok":true,"result":true}"#.to_owned(),
             delay: Duration::ZERO,
         }
@@ -97,6 +99,11 @@ impl RequestExpectation {
         self.response.status = status;
         self.response.content_type = "application/json".to_owned();
         self.response.body = body.into();
+        self
+    }
+
+    pub fn response_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.response.headers.push((name.into(), value.into()));
         self
     }
 
@@ -169,10 +176,17 @@ impl FakeTelegramServer {
                     thread::sleep(expectation.response.delay);
                 }
 
+                let extra_headers = expectation
+                    .response
+                    .headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}\r\n"))
+                    .collect::<String>();
                 let response = format!(
-                    "HTTP/1.1 {} OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} OK\r\nContent-Type: {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                     expectation.response.status,
                     expectation.response.content_type,
+                    extra_headers,
                     expectation.response.body.len(),
                     expectation.response.body
                 );

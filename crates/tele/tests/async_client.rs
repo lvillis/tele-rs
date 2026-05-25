@@ -14,8 +14,8 @@ use tele::types::advanced::{
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
     CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton,
-    InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto,
-    InputMediaVideo, LabeledPrice, MessageId, ParseMode, SendDocumentRequest,
+    InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMediaGroupItem,
+    InputMediaPhoto, InputMediaVideo, LabeledPrice, MessageId, ParseMode, SendDocumentRequest,
     SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest,
     SetMyCommandsRequest, ShippingOption, StickerFormat, SuggestedPostParameters, Update,
     UploadStickerFileRequest, WebAppData,
@@ -403,6 +403,123 @@ async fn raw_retry_does_not_multiply_transport_retries() -> Result<(), DynError>
     assert_eq!(error.status().map(|status| status.as_u16()), Some(502));
     assert_eq!(server.finish()?.len(), 2);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_retry_retries_non_json_rate_limit_for_mutating_method() -> Result<(), DynError> {
+    let rate_limited = "<html>too many requests</html>";
+    let ok_response = r#"{"ok":true,"result":{"message_id":91,"date":1710000013,"chat":{"id":12,"type":"private"},"text":"hello"}}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/sendMessage", 429, rate_limited),
+        ("/bot123:abc/sendMessage", 200, ok_response),
+    ])?;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(1, false))?
+        .build()?;
+    let payload = serde_json::json!({
+        "chat_id": 12,
+        "text": "hello"
+    });
+
+    let message = client
+        .raw()
+        .call_json_with_retry::<tele::types::Message, _>(
+            "sendMessage",
+            &payload,
+            fast_retry(2, false),
+        )
+        .await?;
+
+    assert_eq!(message.message_id, MessageId(91));
+    assert_eq!(server.finish()?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_retry_keeps_retry_after_503_non_json_non_idempotent_safe() -> Result<(), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post("/bot123:abc/sendMessage")
+            .respond_json(503, "<html>service unavailable</html>")
+            .response_header("Retry-After", "0"),
+    )?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(1, false))?
+        .build()?;
+    let payload = serde_json::json!({
+        "chat_id": 12,
+        "text": "hello"
+    });
+
+    let error = match client
+        .raw()
+        .call_json_with_retry::<tele::types::Message, _>(
+            "sendMessage",
+            &payload,
+            fast_retry(2, false),
+        )
+        .await
+    {
+        Ok(_) => {
+            return Err("Retry-After on 503 must not bypass non-idempotent retry policy".into());
+        }
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Transport { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(503));
+    assert!(!error.is_rate_limited());
+    assert_eq!(error.retry_after(), Some(Duration::ZERO));
+    assert_eq!(server.finish()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_retry_keeps_retry_after_503_api_error_non_idempotent_safe() -> Result<(), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post("/bot123:abc/sendMessage")
+            .respond_json(
+                503,
+                r#"{"ok":false,"error_code":503,"description":"Service Unavailable"}"#,
+            )
+            .response_header("Retry-After", "0"),
+    )?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(1, false))?
+        .build()?;
+    let payload = serde_json::json!({
+        "chat_id": 12,
+        "text": "hello"
+    });
+
+    let error = match client
+        .raw()
+        .call_json_with_retry::<tele::types::Message, _>(
+            "sendMessage",
+            &payload,
+            fast_retry(2, false),
+        )
+        .await
+    {
+        Ok(_) => {
+            return Err(
+                "Retry-After on API 503 must not bypass non-idempotent retry policy".into(),
+            );
+        }
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(error.status().map(|status| status.as_u16()), Some(503));
+    assert!(!error.is_rate_limited());
+    assert_eq!(error.retry_after(), Some(Duration::ZERO));
+    assert_eq!(server.finish()?.len(), 1);
     Ok(())
 }
 
@@ -873,13 +990,13 @@ async fn app_richer_media_builders_support_common_send_options() -> Result<(), D
         .media_group(
             1_i64,
             vec![
-                serde_json::from_value::<InputMedia>(serde_json::json!({
+                serde_json::from_value::<InputMediaGroupItem>(serde_json::json!({
                     "type": "photo",
                     "media": "group-photo-file-id",
                     "caption": "group photo caption",
                     "parse_mode": "MarkdownV2"
                 }))?,
-                serde_json::from_value::<InputMedia>(serde_json::json!({
+                serde_json::from_value::<InputMediaGroupItem>(serde_json::json!({
                     "type": "video",
                     "media": "group-video-file-id",
                     "caption": "group video caption",

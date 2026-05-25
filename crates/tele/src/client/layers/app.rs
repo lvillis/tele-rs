@@ -198,7 +198,7 @@ fn media_group_send_request<I, M>(
 ) -> Result<SendMediaGroupRequest>
 where
     I: IntoIterator<Item = M>,
-    M: Into<InputMedia>,
+    M: Into<InputMediaGroupItem>,
 {
     SendMediaGroupRequest::new(chat_id, media.into_iter().map(Into::into).collect())
 }
@@ -206,7 +206,7 @@ where
 fn reply_media_group_request<I, M>(update: &Update, media: I) -> Result<SendMediaGroupRequest>
 where
     I: IntoIterator<Item = M>,
-    M: Into<InputMedia>,
+    M: Into<InputMediaGroupItem>,
 {
     try_build_reply_request(update, |chat_id| media_group_send_request(chat_id, media))
 }
@@ -370,7 +370,7 @@ macro_rules! impl_common_media_group_builder_methods {
     ($builder:ident, $request_ty:ty) => {
         impl $builder {
             /// Appends one more media item to the group.
-            pub fn add_media(mut self, media: impl Into<InputMedia>) -> Self {
+            pub fn add_media(mut self, media: impl Into<InputMediaGroupItem>) -> Self {
                 self.request.media.push(media.into());
                 self
             }
@@ -1405,7 +1405,7 @@ impl AppApi {
 
     /// Starts a media-group builder for a target chat.
     ///
-    /// `media` must contain 2-10 items. Build items with the typed `InputMedia` models.
+    /// `media` must contain 2-10 photo/video/audio/document items.
     pub fn media_group<I, M>(
         &self,
         chat_id: impl Into<ChatId>,
@@ -1413,7 +1413,7 @@ impl AppApi {
     ) -> Result<MediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         let request = media_group_send_request(chat_id, media)?;
         Ok(MediaGroupSendBuilder::new(self.client.clone(), request))
@@ -1427,7 +1427,7 @@ impl AppApi {
     ) -> Result<MediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         let request = reply_media_group_request(update, media)?;
         Ok(MediaGroupSendBuilder::new(self.client.clone(), request))
@@ -2368,7 +2368,7 @@ impl BlockingAppApi {
 
     /// Starts a media-group builder for a target chat.
     ///
-    /// `media` must contain 2-10 items. Build items with the typed `InputMedia` models.
+    /// `media` must contain 2-10 photo/video/audio/document items.
     pub fn media_group<I, M>(
         &self,
         chat_id: impl Into<ChatId>,
@@ -2376,7 +2376,7 @@ impl BlockingAppApi {
     ) -> Result<BlockingMediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         let request = media_group_send_request(chat_id, media)?;
         Ok(BlockingMediaGroupSendBuilder::new(
@@ -2393,7 +2393,7 @@ impl BlockingAppApi {
     ) -> Result<BlockingMediaGroupSendBuilder>
     where
         I: IntoIterator<Item = M>,
-        M: Into<InputMedia>,
+        M: Into<InputMediaGroupItem>,
     {
         let request = reply_media_group_request(update, media)?;
         Ok(BlockingMediaGroupSendBuilder::new(
