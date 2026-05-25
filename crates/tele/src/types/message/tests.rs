@@ -113,17 +113,22 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
                     "id": "poll-1",
                     "question": "q?",
                     "question_entities": [{"type": "custom_emoji", "offset": 0, "length": 1, "custom_emoji_id": "ce-1"}],
-                    "options": [{"text": "a", "voter_count": 1}],
+                    "options": [{
+                        "persistent_id": "opt-1",
+                        "text": "a",
+                        "text_entities": [{"type": "bold", "offset": 0, "length": 1}],
+                        "voter_count": 1
+                    }],
                     "total_voter_count": 1,
                     "is_closed": true,
                     "is_anonymous": false,
                     "type": "regular",
                     "allows_multiple_answers": false,
-                    "correct_option_id": 0,
                     "explanation": "ok",
                     "explanation_entities": [{"type": "bold", "offset": 0, "length": 2}],
                     "open_period": 30,
-                    "close_date": 1700001000
+                    "close_date": 1700001000,
+                    "allows_revoting": true
                 }),
             );
         }
@@ -769,16 +774,21 @@ fn parses_typed_message_entity_and_poll_kinds() -> std::result::Result<(), Box<d
             "id": "poll-2",
             "question": "q?",
             "question_entities": [{"type": "custom_emoji", "offset": 0, "length": 1, "custom_emoji_id": "ce-2"}],
-            "options": [{"text": "a", "voter_count": 1}],
+            "options": [{
+                "persistent_id": "opt-2",
+                "text": "a",
+                "voter_count": 1
+            }],
             "total_voter_count": 1,
             "is_closed": true,
             "is_anonymous": false,
             "type": "quiz",
             "allows_multiple_answers": false,
-            "correct_option_id": 0,
+            "correct_option_ids": [0],
             "explanation": "because",
             "explanation_entities": [{"type": "italic", "offset": 0, "length": 7}],
-            "close_date": 1700000044
+            "close_date": 1700000044,
+            "allows_revoting": true
         }
     }))?;
 
@@ -794,9 +804,11 @@ fn parses_typed_message_entity_and_poll_kinds() -> std::result::Result<(), Box<d
 
     let poll = message.poll.as_ref().ok_or("missing poll")?;
     assert_eq!(poll.kind, PollKind::Quiz);
-    assert_eq!(poll.correct_option_id, Some(0));
+    assert_eq!(poll.correct_option_ids.as_deref(), Some(&[0_u32][..]));
+    assert_eq!(poll.options[0].persistent_id.as_deref(), Some("opt-2"));
     assert_eq!(poll.explanation.as_deref(), Some("because"));
     assert_eq!(poll.close_date, Some(1_700_000_044));
+    assert_eq!(poll.allows_revoting, Some(true));
 
     Ok(())
 }
@@ -1002,6 +1014,7 @@ fn input_media_round_trips_with_boxed_variants() -> std::result::Result<(), Box<
         media: "attach://photo".to_owned(),
         caption: Some("preview".to_owned()),
         parse_mode: Some(ParseMode::Html),
+        caption_entities: None,
         has_spoiler: None,
     });
 

@@ -280,6 +280,12 @@ macro_rules! impl_common_media_builder_methods {
                 self
             }
 
+            /// Sets explicit caption entities instead of a parse mode.
+            pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+                self.request.caption_entities = Some(entities);
+                self
+            }
+
             /// Attaches reply markup such as an inline keyboard.
             pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
                 self.request.reply_markup = Some(reply_markup.into());
@@ -313,6 +319,12 @@ macro_rules! impl_common_media_builder_methods {
                 self
             }
 
+            /// Targets a direct messages topic when sending to a channel direct messages chat.
+            pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+                self.request.direct_messages_topic_id = Some(direct_messages_topic_id);
+                self
+            }
+
             /// Sends silently when `true`.
             pub fn disable_notification(mut self, enabled: bool) -> Self {
                 self.request.disable_notification = enabled.then_some(true);
@@ -322,6 +334,27 @@ macro_rules! impl_common_media_builder_methods {
             /// Protects the sent message from forwarding and saving when `true`.
             pub fn protect_content(mut self, enabled: bool) -> Self {
                 self.request.protect_content = enabled.then_some(true);
+                self
+            }
+
+            /// Allows high-throughput paid broadcast sends when `true`.
+            pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+                self.request.allow_paid_broadcast = enabled.then_some(true);
+                self
+            }
+
+            /// Adds a Telegram message effect to the sent message.
+            pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+                self.request.message_effect_id = Some(message_effect_id.into());
+                self
+            }
+
+            /// Sets suggested post parameters for direct messages chats.
+            pub fn suggested_post_parameters(
+                mut self,
+                suggested_post_parameters: SuggestedPostParameters,
+            ) -> Self {
+                self.request.suggested_post_parameters = Some(suggested_post_parameters);
                 self
             }
 
@@ -369,6 +402,12 @@ macro_rules! impl_common_media_group_builder_methods {
                 self
             }
 
+            /// Targets a direct messages topic when sending to a channel direct messages chat.
+            pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+                self.request.direct_messages_topic_id = Some(direct_messages_topic_id);
+                self
+            }
+
             /// Sends silently when `true`.
             pub fn disable_notification(mut self, enabled: bool) -> Self {
                 self.request.disable_notification = enabled.then_some(true);
@@ -378,6 +417,18 @@ macro_rules! impl_common_media_group_builder_methods {
             /// Protects the sent media group from forwarding and saving when `true`.
             pub fn protect_content(mut self, enabled: bool) -> Self {
                 self.request.protect_content = enabled.then_some(true);
+                self
+            }
+
+            /// Allows high-throughput paid broadcast sends when `true`.
+            pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+                self.request.allow_paid_broadcast = enabled.then_some(true);
+                self
+            }
+
+            /// Adds a Telegram message effect to the sent media group.
+            pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+                self.request.message_effect_id = Some(message_effect_id.into());
                 self
             }
 
@@ -431,6 +482,12 @@ macro_rules! impl_common_sticker_builder_methods {
                 self
             }
 
+            /// Targets a direct messages topic when sending to a channel direct messages chat.
+            pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+                self.request.direct_messages_topic_id = Some(direct_messages_topic_id);
+                self
+            }
+
             /// Sends silently when `true`.
             pub fn disable_notification(mut self, enabled: bool) -> Self {
                 self.request.disable_notification = enabled.then_some(true);
@@ -440,6 +497,27 @@ macro_rules! impl_common_sticker_builder_methods {
             /// Protects the sent sticker from forwarding and saving when `true`.
             pub fn protect_content(mut self, enabled: bool) -> Self {
                 self.request.protect_content = enabled.then_some(true);
+                self
+            }
+
+            /// Allows high-throughput paid broadcast sends when `true`.
+            pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+                self.request.allow_paid_broadcast = enabled.then_some(true);
+                self
+            }
+
+            /// Adds a Telegram message effect to the sent sticker.
+            pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+                self.request.message_effect_id = Some(message_effect_id.into());
+                self
+            }
+
+            /// Sets suggested post parameters for direct messages chats.
+            pub fn suggested_post_parameters(
+                mut self,
+                suggested_post_parameters: SuggestedPostParameters,
+            ) -> Self {
+                self.request.suggested_post_parameters = Some(suggested_post_parameters);
                 self
             }
 
@@ -504,6 +582,12 @@ impl TextSendBuilder {
         self
     }
 
+    /// Sets explicit text entities instead of a parse mode.
+    pub fn entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.request = self.request.entities(entities);
+        self
+    }
+
     /// Attaches reply markup such as an inline keyboard.
     pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
         self.request = self.request.reply_markup(reply_markup);
@@ -534,6 +618,14 @@ impl TextSendBuilder {
         self
     }
 
+    /// Targets a direct messages topic when sending to a channel direct messages chat.
+    pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+        self.request = self
+            .request
+            .direct_messages_topic_id(direct_messages_topic_id);
+        self
+    }
+
     /// Sends silently when `true`.
     pub fn disable_notification(mut self, enabled: bool) -> Self {
         self.request.disable_notification = enabled.then_some(true);
@@ -543,6 +635,29 @@ impl TextSendBuilder {
     /// Protects the sent message from forwarding and saving when `true`.
     pub fn protect_content(mut self, enabled: bool) -> Self {
         self.request.protect_content = enabled.then_some(true);
+        self
+    }
+
+    /// Allows high-throughput paid broadcast sends when `true`.
+    pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+        self.request = self.request.allow_paid_broadcast(enabled);
+        self
+    }
+
+    /// Adds a Telegram message effect to the sent message.
+    pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+        self.request = self.request.message_effect_id(message_effect_id);
+        self
+    }
+
+    /// Sets suggested post parameters for direct messages chats.
+    pub fn suggested_post_parameters(
+        mut self,
+        suggested_post_parameters: SuggestedPostParameters,
+    ) -> Self {
+        self.request = self
+            .request
+            .suggested_post_parameters(suggested_post_parameters);
         self
     }
 
@@ -1409,6 +1524,12 @@ impl BlockingTextSendBuilder {
         self
     }
 
+    /// Sets explicit text entities instead of a parse mode.
+    pub fn entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.request = self.request.entities(entities);
+        self
+    }
+
     /// Attaches reply markup such as an inline keyboard.
     pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
         self.request = self.request.reply_markup(reply_markup);
@@ -1439,6 +1560,14 @@ impl BlockingTextSendBuilder {
         self
     }
 
+    /// Targets a direct messages topic when sending to a channel direct messages chat.
+    pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+        self.request = self
+            .request
+            .direct_messages_topic_id(direct_messages_topic_id);
+        self
+    }
+
     /// Sends silently when `true`.
     pub fn disable_notification(mut self, enabled: bool) -> Self {
         self.request.disable_notification = enabled.then_some(true);
@@ -1448,6 +1577,29 @@ impl BlockingTextSendBuilder {
     /// Protects the sent message from forwarding and saving when `true`.
     pub fn protect_content(mut self, enabled: bool) -> Self {
         self.request.protect_content = enabled.then_some(true);
+        self
+    }
+
+    /// Allows high-throughput paid broadcast sends when `true`.
+    pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+        self.request = self.request.allow_paid_broadcast(enabled);
+        self
+    }
+
+    /// Adds a Telegram message effect to the sent message.
+    pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
+        self.request = self.request.message_effect_id(message_effect_id);
+        self
+    }
+
+    /// Sets suggested post parameters for direct messages chats.
+    pub fn suggested_post_parameters(
+        mut self,
+        suggested_post_parameters: SuggestedPostParameters,
+    ) -> Self {
+        self.request = self
+            .request
+            .suggested_post_parameters(suggested_post_parameters);
         self
     }
 

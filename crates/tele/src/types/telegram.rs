@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode};
 use crate::types::message::MessageEntity;
+use crate::types::validation::optional_text_formatting as validate_optional_text_formatting;
 use crate::{Error, Result};
 
 pub const MAX_CALLBACK_DATA_BYTES: usize = 64;
@@ -1668,23 +1669,12 @@ impl ReplyParameters {
                 "quote formatting options require reply quote",
             ));
         }
-        if self.quote_parse_mode.is_some() && self.quote_entities.is_some() {
-            return Err(invalid_request(
-                "reply quote cannot set both quote_parse_mode and quote_entities",
-            ));
-        }
-        if let Some(entities) = self.quote_entities.as_ref() {
-            if entities.is_empty() {
-                return Err(invalid_request("quote_entities cannot be empty"));
-            }
-            for entity in entities {
-                if entity.length == 0 {
-                    return Err(invalid_request(
-                        "quote_entities length must be greater than 0",
-                    ));
-                }
-            }
-        }
+        validate_optional_text_formatting(
+            "reply quote",
+            self.quote.as_deref(),
+            self.quote_parse_mode,
+            self.quote_entities.as_deref(),
+        )?;
 
         Ok(())
     }

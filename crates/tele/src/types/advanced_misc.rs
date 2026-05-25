@@ -5,8 +5,10 @@ use serde_json::Value;
 use crate::{Error, Result};
 
 use crate::types::validation::{
-    non_negative_i64 as validate_non_negative_i64, positive_i64 as validate_positive_i64,
-    required_string as validate_required_string, string_id as validate_string_id,
+    non_negative_i64 as validate_non_negative_i64,
+    optional_text_formatting as validate_optional_text_formatting,
+    positive_i64 as validate_positive_i64, required_string as validate_required_string,
+    string_id as validate_string_id, text_formatting as validate_text_formatting,
 };
 
 use super::AdvancedRequest;
@@ -51,9 +53,22 @@ fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> R
     validate_items(values)
 }
 
-fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {
-    for value in values {
+const MAX_MESSAGE_IDS: usize = 100;
+
+fn validate_message_ids(field: &str, values: &[crate::types::common::MessageId]) -> Result<()> {
+    if values.len() > MAX_MESSAGE_IDS {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} accepts at most {MAX_MESSAGE_IDS} message ids"),
+        });
+    }
+
+    for (index, value) in values.iter().enumerate() {
         value.validate()?;
+        if values[..index].iter().any(|existing| existing == value) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{field} message ids must be unique"),
+            });
+        }
     }
 
     Ok(())
@@ -69,7 +84,26 @@ fn validate_required_message_ids(
         });
     }
 
-    validate_message_ids(values)
+    validate_message_ids(field, values)
+}
+
+fn validate_required_ordered_message_ids(
+    field: &str,
+    values: &[crate::types::common::MessageId],
+) -> Result<()> {
+    validate_required_message_ids(field, values)?;
+
+    let mut previous = None;
+    for value in values {
+        if previous.is_some_and(|previous| value.0 <= previous) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{field} message ids must be strictly increasing"),
+            });
+        }
+        previous = Some(value.0);
+    }
+
+    Ok(())
 }
 
 /// Auto-generated request for `getMe`.
@@ -134,7 +168,7 @@ impl AdvancedRequest for AdvancedForwardMessagesRequest {
             validate_positive_i64("direct_messages_topic_id", value)?;
         }
         self.from_chat_id.validate()?;
-        validate_required_message_ids("message_ids", &self.message_ids)?;
+        validate_required_ordered_message_ids("message_ids", &self.message_ids)?;
         Ok(())
     }
 }
@@ -325,6 +359,12 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
         if let Some(value) = self.reply_markup.as_ref() {
             value.validate()?;
         }
+        validate_optional_text_formatting(
+            "caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         Ok(())
     }
 }
@@ -429,6 +469,12 @@ impl AdvancedRequest for AdvancedSendMessageDraftRequest {
         }
         validate_positive_i64("draft_id", self.draft_id)?;
         validate_required_string("text", &self.text)?;
+        validate_text_formatting(
+            "text",
+            &self.text,
+            self.parse_mode,
+            self.entities.as_deref(),
+        )?;
         Ok(())
     }
 }

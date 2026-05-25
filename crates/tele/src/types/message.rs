@@ -46,11 +46,11 @@ pub use requests::{
     DeleteMessagesRequest, EditMessageCaptionRequest, EditMessageLiveLocationRequest,
     EditMessageReplyMarkupRequest, EditMessageResult, EditMessageTextRequest,
     ForwardMessageRequest, InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument,
-    InputMediaPhoto, InputMediaVideo, MessageIdObject, SendAnimationRequest, SendAudioRequest,
-    SendChatActionRequest, SendContactRequest, SendDiceRequest, SendDocumentRequest,
-    SendLocationRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
-    SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest,
-    SentWebAppMessage, StopMessageLiveLocationRequest, StopPollRequest,
+    InputMediaPhoto, InputMediaVideo, InputPollOption, MessageIdObject, SendAnimationRequest,
+    SendAudioRequest, SendChatActionRequest, SendContactRequest, SendDiceRequest,
+    SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest, SendMessageRequest,
+    SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest,
+    SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest, StopPollRequest,
 };
 pub use service::{
     ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft, ChatShared, ChecklistTasksAdded,

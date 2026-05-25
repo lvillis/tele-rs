@@ -9,11 +9,15 @@ use crate::types::telegram::{
 };
 use crate::types::upload::{UploadPart, validate_upload_part_name};
 use crate::types::validation::{
-    optional_positive_i64 as validate_optional_positive_i64, reply_markup as validate_reply_markup,
-    reply_parameters as validate_reply_parameters, required_text as validate_required_text,
+    optional_positive_i64 as validate_optional_positive_i64,
+    optional_text_formatting as validate_optional_text_formatting,
+    reply_markup as validate_reply_markup, reply_parameters as validate_reply_parameters,
+    required_text as validate_required_text,
     suggested_post_parameters as validate_suggested_post_parameters,
+    text_formatting as validate_text_formatting,
 };
 
+use super::common::MessageEntity;
 use super::content::{DiceEmoji, PollKind};
 use super::model::Message;
 
@@ -22,9 +26,14 @@ const MAX_CAPTION_CHARS: usize = 1024;
 const MIN_MEDIA_GROUP_ITEMS: usize = 2;
 const MAX_MEDIA_GROUP_ITEMS: usize = 10;
 const MAX_BULK_MESSAGE_IDS: usize = 100;
+const MIN_POLL_OPTIONS: usize = 1;
 const MAX_POLL_OPTIONS: usize = 12;
 const MAX_POLL_QUESTION_CHARS: usize = 300;
 const MAX_POLL_OPTION_CHARS: usize = 100;
+const MAX_POLL_EXPLANATION_CHARS: usize = 200;
+const MAX_POLL_EXPLANATION_LINE_FEEDS: usize = 2;
+const MAX_POLL_DESCRIPTION_CHARS: usize = 1024;
+const MAX_POLL_COUNTRY_CODES: usize = 12;
 const MIN_POLL_OPEN_PERIOD_SECONDS: u32 = 5;
 const MAX_POLL_OPEN_PERIOD_SECONDS: u32 = 2_628_000;
 const MIN_LIVE_LOCATION_PERIOD_SECONDS: u32 = 60;
@@ -46,6 +55,8 @@ pub struct SendMessageRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_web_page_preview: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -53,6 +64,14 @@ pub struct SendMessageRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,10 +92,15 @@ impl SendMessageRequest {
             chat_id,
             text,
             parse_mode: None,
+            entities: None,
             disable_web_page_preview: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
             link_preview_options: None,
@@ -85,6 +109,11 @@ impl SendMessageRequest {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.entities = Some(entities);
         self
     }
 
@@ -97,27 +126,44 @@ impl SendMessageRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_link_preview_fields(
             self.disable_web_page_preview,
             self.link_preview_options.as_ref(),
         )?;
-        validate_message_text("sendMessage", &self.text)
+        validate_message_text("sendMessage", &self.text)?;
+        validate_text_formatting(
+            "sendMessage text",
+            &self.text,
+            self.parse_mode,
+            self.entities.as_deref(),
+        )
     }
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ForwardMessageRequest {
     pub chat_id: ChatId,
-    pub from_chat_id: ChatId,
-    pub message_id: MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    pub from_chat_id: ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_start_timestamp: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protect_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    pub message_id: MessageId,
 }
 
 impl ForwardMessageRequest {
@@ -128,11 +174,15 @@ impl ForwardMessageRequest {
     ) -> Self {
         Self {
             chat_id: chat_id.into(),
-            from_chat_id: from_chat_id.into(),
-            message_id,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            from_chat_id: from_chat_id.into(),
+            video_start_timestamp: None,
             disable_notification: None,
             protect_content: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
+            message_id,
         }
     }
 
@@ -140,25 +190,42 @@ impl ForwardMessageRequest {
         self.chat_id.validate()?;
         self.from_chat_id.validate()?;
         self.message_id.validate()?;
-        validate_message_thread_id(self.message_thread_id)
+        validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())
     }
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CopyMessageRequest {
     pub chat_id: ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
     pub from_chat_id: ChatId,
     pub message_id: MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message_thread_id: Option<i64>,
+    pub video_start_timestamp: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protect_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,13 +240,20 @@ impl CopyMessageRequest {
     ) -> Self {
         Self {
             chat_id: chat_id.into(),
+            message_thread_id: None,
+            direct_messages_topic_id: None,
             from_chat_id: from_chat_id.into(),
             message_id,
-            message_thread_id: None,
+            video_start_timestamp: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
+            show_caption_above_media: None,
             disable_notification: None,
             protect_content: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -190,19 +264,29 @@ impl CopyMessageRequest {
         self.from_chat_id.validate()?;
         self.message_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())
+        validate_caption_fields(
+            "copy caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )
     }
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CopyMessagesRequest {
     pub chat_id: ChatId,
-    pub from_chat_id: ChatId,
-    pub message_ids: Vec<MessageId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    pub from_chat_id: ChatId,
+    pub message_ids: Vec<MessageId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,13 +305,14 @@ impl CopyMessagesRequest {
         chat_id.validate()?;
         let from_chat_id = from_chat_id.into();
         from_chat_id.validate()?;
-        validate_bulk_message_ids("copyMessages", &message_ids)?;
+        validate_ordered_bulk_message_ids("copyMessages", &message_ids)?;
 
         Ok(Self {
             chat_id,
+            message_thread_id: None,
+            direct_messages_topic_id: None,
             from_chat_id,
             message_ids,
-            message_thread_id: None,
             disable_notification: None,
             protect_content: None,
             remove_caption: None,
@@ -238,7 +323,8 @@ impl CopyMessagesRequest {
         self.chat_id.validate()?;
         self.from_chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
-        validate_bulk_message_ids("copyMessages", &self.message_ids)
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_ordered_bulk_message_ids("copyMessages", &self.message_ids)
     }
 }
 
@@ -265,6 +351,8 @@ pub struct SendPhotoRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -272,6 +360,14 @@ pub struct SendPhotoRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,10 +382,15 @@ impl SendPhotoRequest {
             photo: Some(photo.into()),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -302,10 +403,15 @@ impl SendPhotoRequest {
             photo: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -315,10 +421,18 @@ impl SendPhotoRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("photo", self.photo.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())
+        validate_caption_fields(
+            "sendPhoto caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )
     }
 
     pub(crate) fn validate_upload(&self) -> Result<(), Error> {
@@ -326,9 +440,17 @@ impl SendPhotoRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())
+        validate_caption_fields(
+            "sendPhoto caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )
     }
 }
 
@@ -344,6 +466,8 @@ pub struct SendAudioRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub performer: Option<String>,
@@ -358,6 +482,14 @@ pub struct SendAudioRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -371,6 +503,7 @@ impl SendAudioRequest {
             audio: Some(audio.into()),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             duration: None,
             performer: None,
             title: None,
@@ -378,6 +511,10 @@ impl SendAudioRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -390,6 +527,7 @@ impl SendAudioRequest {
             audio: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             duration: None,
             performer: None,
             title: None,
@@ -397,6 +535,10 @@ impl SendAudioRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -406,10 +548,18 @@ impl SendAudioRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("audio", self.audio.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendAudio caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)
     }
@@ -419,9 +569,17 @@ impl SendAudioRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendAudio caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_attach_upload_parts("sendAudio", [self.thumbnail.as_deref()], files)
@@ -442,6 +600,8 @@ pub struct SendDocumentRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_content_type_detection: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -449,6 +609,14 @@ pub struct SendDocumentRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -464,10 +632,15 @@ impl SendDocumentRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             disable_content_type_detection: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -481,10 +654,15 @@ impl SendDocumentRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             disable_content_type_detection: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -494,10 +672,18 @@ impl SendDocumentRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("document", self.document.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendDocument caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())
     }
 
@@ -506,9 +692,17 @@ impl SendDocumentRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendDocument caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_attach_upload_parts("sendDocument", [self.thumbnail.as_deref()], files)
     }
@@ -534,6 +728,8 @@ pub struct SendVideoRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_streaming: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
@@ -543,6 +739,14 @@ pub struct SendVideoRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -561,11 +765,16 @@ impl SendVideoRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             supports_streaming: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -582,11 +791,16 @@ impl SendVideoRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             supports_streaming: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -596,10 +810,18 @@ impl SendVideoRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("video", self.video.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendVideo caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
@@ -611,9 +833,17 @@ impl SendVideoRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendVideo caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
@@ -642,6 +872,8 @@ pub struct SendAnimationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -649,6 +881,14 @@ pub struct SendAnimationRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -667,10 +907,15 @@ impl SendAnimationRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -687,10 +932,15 @@ impl SendAnimationRequest {
             thumbnail: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -700,10 +950,18 @@ impl SendAnimationRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("animation", self.animation.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendAnimation caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
@@ -715,9 +973,17 @@ impl SendAnimationRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendAnimation caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
@@ -738,6 +1004,8 @@ pub struct SendVoiceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -745,6 +1013,14 @@ pub struct SendVoiceRequest {
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -759,10 +1035,15 @@ impl SendVoiceRequest {
             voice: Some(voice.into()),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             duration: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -775,10 +1056,15 @@ impl SendVoiceRequest {
             voice: None,
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             duration: None,
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -788,10 +1074,18 @@ impl SendVoiceRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_file_reference("voice", self.voice.as_deref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendVoice caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_positive_u32("duration", self.duration)
     }
 
@@ -800,9 +1094,17 @@ impl SendVoiceRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())?;
+        validate_caption_fields(
+            "sendVoice caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         validate_positive_u32("duration", self.duration)
     }
 }
@@ -922,6 +1224,8 @@ pub struct InputMediaPhoto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
 }
 
@@ -931,6 +1235,7 @@ impl InputMediaPhoto {
             media: media.into(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
         }
     }
@@ -942,6 +1247,11 @@ impl InputMediaPhoto {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.caption_entities = Some(entities);
         self
     }
 
@@ -960,6 +1270,8 @@ pub struct InputMediaVideo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
@@ -977,6 +1289,7 @@ impl InputMediaVideo {
             media: media.into(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             width: None,
             height: None,
             duration: None,
@@ -992,6 +1305,11 @@ impl InputMediaVideo {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.caption_entities = Some(entities);
         self
     }
 
@@ -1030,6 +1348,8 @@ pub struct InputMediaAnimation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
@@ -1045,6 +1365,7 @@ impl InputMediaAnimation {
             media: media.into(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             width: None,
             height: None,
             duration: None,
@@ -1059,6 +1380,11 @@ impl InputMediaAnimation {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.caption_entities = Some(entities);
         self
     }
 
@@ -1092,6 +1418,8 @@ pub struct InputMediaAudio {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub performer: Option<String>,
@@ -1105,6 +1433,7 @@ impl InputMediaAudio {
             media: media.into(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             duration: None,
             performer: None,
             title: None,
@@ -1118,6 +1447,11 @@ impl InputMediaAudio {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.caption_entities = Some(entities);
         self
     }
 
@@ -1146,6 +1480,8 @@ pub struct InputMediaDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_content_type_detection: Option<bool>,
 }
 
@@ -1155,6 +1491,7 @@ impl InputMediaDocument {
             media: media.into(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             disable_content_type_detection: None,
         }
     }
@@ -1166,6 +1503,11 @@ impl InputMediaDocument {
 
     pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
         self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.caption_entities = Some(entities);
         self
     }
 
@@ -1228,6 +1570,12 @@ pub struct SendMediaGroupRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
 }
 
@@ -1251,6 +1599,9 @@ impl SendMediaGroupRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
             reply_parameters: None,
         })
     }
@@ -1259,6 +1610,8 @@ impl SendMediaGroupRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_media_group_items(&self.media)?;
         validate_no_multipart_attach_references(&self.media)
@@ -1268,6 +1621,8 @@ impl SendMediaGroupRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_media_group_items(&self.media)?;
         validate_media_group_upload_parts(&self.media, files)
@@ -1296,6 +1651,14 @@ pub struct SendLocationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -1315,6 +1678,10 @@ impl SendLocationRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -1324,6 +1691,9 @@ impl SendLocationRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_coordinates(self.latitude, self.longitude)?;
@@ -1360,6 +1730,14 @@ pub struct SendVenueRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -1387,6 +1765,10 @@ impl SendVenueRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -1396,6 +1778,9 @@ impl SendVenueRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_coordinates(self.latitude, self.longitude)?;
@@ -1422,6 +1807,14 @@ pub struct SendContactRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -1443,6 +1836,10 @@ impl SendContactRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -1452,10 +1849,66 @@ impl SendContactRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_required_text("phone_number", &self.phone_number)?;
         validate_required_text("first_name", &self.first_name)
+    }
+}
+
+/// Poll answer option sent by [`SendPollRequest`].
+#[derive(Clone, Debug, Serialize)]
+#[non_exhaustive]
+pub struct InputPollOption {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_parse_mode: Option<ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_entities: Option<Vec<MessageEntity>>,
+}
+
+impl InputPollOption {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            text_parse_mode: None,
+            text_entities: None,
+        }
+    }
+
+    pub fn text_parse_mode(mut self, parse_mode: ParseMode) -> Self {
+        self.text_parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn text_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.text_entities = Some(entities);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_poll_option(self)?;
+        validate_text_formatting(
+            "poll option text",
+            &self.text,
+            self.text_parse_mode,
+            self.text_entities.as_deref(),
+        )
+    }
+}
+
+impl From<String> for InputPollOption {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for InputPollOption {
+    fn from(value: &str) -> Self {
+        Self::new(value)
     }
 }
 
@@ -1465,7 +1918,11 @@ pub struct SendPollRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_connection_id: Option<String>,
     pub question: String,
-    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_parse_mode: Option<ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_entities: Option<Vec<MessageEntity>>,
+    pub options: Vec<InputPollOption>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_anonymous: Option<bool>,
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
@@ -1473,15 +1930,25 @@ pub struct SendPollRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allows_multiple_answers: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correct_option_id: Option<u8>,
+    pub country_codes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correct_option_ids: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation_parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_period: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_date: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_parse_mode: Option<ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_closed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1489,7 +1956,11 @@ pub struct SendPollRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protect_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1500,30 +1971,56 @@ impl SendPollRequest {
     pub fn new(
         chat_id: impl Into<ChatId>,
         question: impl Into<String>,
-        options: Vec<String>,
+        options: impl IntoIterator<Item = impl Into<InputPollOption>>,
     ) -> Result<Self, Error> {
         let chat_id = chat_id.into();
         chat_id.validate()?;
         let question = question.into();
-        validate_poll(&question, &options, None, None, None)?;
+        let options = options.into_iter().map(Into::into).collect::<Vec<_>>();
+        validate_poll(&PollValidation {
+            question: &question,
+            question_parse_mode: None,
+            question_entities: None,
+            options: &options,
+            correct_option_ids: None,
+            open_period: None,
+            close_date: None,
+            kind: None,
+            explanation: None,
+            explanation_parse_mode: None,
+            explanation_entities: None,
+            description: None,
+            description_parse_mode: None,
+            description_entities: None,
+            country_codes: None,
+        })?;
 
         Ok(Self {
             chat_id,
             business_connection_id: None,
             question,
+            question_parse_mode: None,
+            question_entities: None,
             options,
             is_anonymous: None,
             kind: None,
             allows_multiple_answers: None,
-            correct_option_id: None,
+            country_codes: None,
+            correct_option_ids: None,
             explanation: None,
             explanation_parse_mode: None,
+            explanation_entities: None,
             open_period: None,
             close_date: None,
+            description: None,
+            description_parse_mode: None,
+            description_entities: None,
             is_closed: None,
             disable_notification: None,
             protect_content: None,
+            allow_paid_broadcast: None,
             message_thread_id: None,
+            message_effect_id: None,
             reply_parameters: None,
             reply_markup: None,
         })
@@ -1533,15 +2030,26 @@ impl SendPollRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_poll(
-            &self.question,
-            &self.options,
-            self.correct_option_id,
-            self.open_period,
-            self.kind.as_ref(),
-        )
+        validate_poll(&PollValidation {
+            question: &self.question,
+            question_parse_mode: self.question_parse_mode,
+            question_entities: self.question_entities.as_deref(),
+            options: &self.options,
+            correct_option_ids: self.correct_option_ids.as_deref(),
+            open_period: self.open_period,
+            close_date: self.close_date,
+            kind: self.kind.as_ref(),
+            explanation: self.explanation.as_deref(),
+            explanation_parse_mode: self.explanation_parse_mode,
+            explanation_entities: self.explanation_entities.as_deref(),
+            description: self.description.as_deref(),
+            description_parse_mode: self.description_parse_mode,
+            description_entities: self.description_entities.as_deref(),
+            country_codes: self.country_codes.as_deref(),
+        })
     }
 }
 
@@ -1583,6 +2091,14 @@ pub struct SendDiceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
@@ -1597,6 +2113,10 @@ impl SendDiceRequest {
             disable_notification: None,
             protect_content: None,
             message_thread_id: None,
+            direct_messages_topic_id: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
             reply_parameters: None,
             reply_markup: None,
         }
@@ -1606,6 +2126,9 @@ impl SendDiceRequest {
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
+        validate_direct_messages_topic_id(self.direct_messages_topic_id)?;
+        validate_message_effect_id(self.message_effect_id.as_deref())?;
+        validate_suggested_post_parameters(self.suggested_post_parameters.as_ref())?;
         validate_reply_parameters(self.reply_parameters.as_ref())?;
         validate_reply_markup(self.reply_markup.as_ref())
     }
@@ -1666,6 +2189,8 @@ pub struct EditMessageTextRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_preview_options: Option<LinkPreviewOptions>,
@@ -1689,6 +2214,7 @@ impl EditMessageTextRequest {
             inline_message_id: None,
             text,
             parse_mode: None,
+            entities: None,
             reply_markup: None,
             link_preview_options: None,
         })
@@ -1714,6 +2240,7 @@ impl EditMessageTextRequest {
             inline_message_id: Some(inline_message_id),
             text,
             parse_mode: None,
+            entities: None,
             reply_markup: None,
             link_preview_options: None,
         })
@@ -1728,7 +2255,13 @@ impl EditMessageTextRequest {
 
         validate_reply_markup(self.reply_markup.as_ref())?;
         validate_link_preview_options(self.link_preview_options.as_ref())?;
-        validate_message_text("editMessageText", &self.text)
+        validate_message_text("editMessageText", &self.text)?;
+        validate_text_formatting(
+            "editMessageText text",
+            &self.text,
+            self.parse_mode,
+            self.entities.as_deref(),
+        )
     }
 }
 
@@ -1745,6 +2278,8 @@ pub struct EditMessageCaptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_caption_above_media: Option<bool>,
@@ -1758,7 +2293,12 @@ impl EditMessageCaptionRequest {
             &self.inline_message_id,
         )?;
         validate_reply_markup(self.reply_markup.as_ref())?;
-        validate_optional_caption(self.caption.as_deref())
+        validate_caption_fields(
+            "editMessageCaption caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )
     }
 }
 
@@ -2081,34 +2621,69 @@ fn validate_optional_caption(caption: Option<&str>) -> Result<(), Error> {
     Ok(())
 }
 
+fn validate_caption_fields(
+    field: &str,
+    caption: Option<&str>,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    validate_optional_caption(caption)?;
+    validate_optional_text_formatting(field, caption, parse_mode, entities)
+}
+
 fn validate_media(media: &InputMedia) -> Result<(), Error> {
     match media {
         InputMedia::Photo(media) => {
             validate_file_reference("media", &media.media)?;
-            validate_optional_caption(media.caption.as_deref())
+            validate_caption_fields(
+                "input media caption",
+                media.caption.as_deref(),
+                media.parse_mode,
+                media.caption_entities.as_deref(),
+            )
         }
         InputMedia::Video(media) => {
             validate_file_reference("media", &media.media)?;
-            validate_optional_caption(media.caption.as_deref())?;
+            validate_caption_fields(
+                "input media caption",
+                media.caption.as_deref(),
+                media.parse_mode,
+                media.caption_entities.as_deref(),
+            )?;
             validate_positive_u32("width", media.width)?;
             validate_positive_u32("height", media.height)?;
             validate_positive_u32("duration", media.duration)
         }
         InputMedia::Animation(media) => {
             validate_file_reference("media", &media.media)?;
-            validate_optional_caption(media.caption.as_deref())?;
+            validate_caption_fields(
+                "input media caption",
+                media.caption.as_deref(),
+                media.parse_mode,
+                media.caption_entities.as_deref(),
+            )?;
             validate_positive_u32("width", media.width)?;
             validate_positive_u32("height", media.height)?;
             validate_positive_u32("duration", media.duration)
         }
         InputMedia::Audio(media) => {
             validate_file_reference("media", &media.media)?;
-            validate_optional_caption(media.caption.as_deref())?;
+            validate_caption_fields(
+                "input media caption",
+                media.caption.as_deref(),
+                media.parse_mode,
+                media.caption_entities.as_deref(),
+            )?;
             validate_positive_u32("duration", media.duration)
         }
         InputMedia::Document(media) => {
             validate_file_reference("media", &media.media)?;
-            validate_optional_caption(media.caption.as_deref())
+            validate_caption_fields(
+                "input media caption",
+                media.caption.as_deref(),
+                media.parse_mode,
+                media.caption_entities.as_deref(),
+            )
         }
     }
 }
@@ -2322,40 +2897,54 @@ fn is_disallowed_display_control(character: char) -> bool {
     character.is_control() && !matches!(character, '\n' | '\r' | '\t')
 }
 
-fn validate_poll(
-    question: &str,
-    options: &[String],
-    correct_option_id: Option<u8>,
+struct PollValidation<'a> {
+    question: &'a str,
+    question_parse_mode: Option<ParseMode>,
+    question_entities: Option<&'a [MessageEntity]>,
+    options: &'a [InputPollOption],
+    correct_option_ids: Option<&'a [u8]>,
     open_period: Option<u32>,
-    kind: Option<&PollKind>,
-) -> Result<(), Error> {
-    validate_required_text("poll question", question)?;
-    if question.chars().count() > MAX_POLL_QUESTION_CHARS {
+    close_date: Option<i64>,
+    kind: Option<&'a PollKind>,
+    explanation: Option<&'a str>,
+    explanation_parse_mode: Option<ParseMode>,
+    explanation_entities: Option<&'a [MessageEntity]>,
+    description: Option<&'a str>,
+    description_parse_mode: Option<ParseMode>,
+    description_entities: Option<&'a [MessageEntity]>,
+    country_codes: Option<&'a [String]>,
+}
+
+fn validate_poll(input: &PollValidation<'_>) -> Result<(), Error> {
+    validate_required_text("poll question", input.question)?;
+    if input.question.chars().count() > MAX_POLL_QUESTION_CHARS {
         return Err(Error::InvalidRequest {
             reason: format!("poll question exceeds {MAX_POLL_QUESTION_CHARS} characters"),
         });
     }
-    if !(2..=MAX_POLL_OPTIONS).contains(&options.len()) {
+    validate_text_formatting(
+        "poll question",
+        input.question,
+        input.question_parse_mode,
+        input.question_entities,
+    )?;
+    if !(MIN_POLL_OPTIONS..=MAX_POLL_OPTIONS).contains(&input.options.len()) {
         return Err(Error::InvalidRequest {
-            reason: format!("sendPoll requires 2-{MAX_POLL_OPTIONS} options"),
+            reason: format!("sendPoll requires {MIN_POLL_OPTIONS}-{MAX_POLL_OPTIONS} options"),
         });
     }
-    for option in options {
-        validate_required_text("poll option", option)?;
-        if option.chars().count() > MAX_POLL_OPTION_CHARS {
-            return Err(Error::InvalidRequest {
-                reason: format!("poll option exceeds {MAX_POLL_OPTION_CHARS} characters"),
-            });
-        }
+    for option in input.options {
+        option.validate()?;
     }
-    if let Some(correct_option_id) = correct_option_id
-        && usize::from(correct_option_id) >= options.len()
-    {
+
+    validate_correct_option_ids(input.kind, input.correct_option_ids, input.options.len())?;
+
+    if input.open_period.is_some() && input.close_date.is_some() {
         return Err(Error::InvalidRequest {
-            reason: "correct_option_id must point to an existing poll option".to_owned(),
+            reason: "open_period cannot be combined with close_date".to_owned(),
         });
     }
-    if let Some(open_period) = open_period
+    if let Some(open_period) = input.open_period
         && !(MIN_POLL_OPEN_PERIOD_SECONDS..=MAX_POLL_OPEN_PERIOD_SECONDS).contains(&open_period)
     {
         return Err(Error::InvalidRequest {
@@ -2364,10 +2953,147 @@ fn validate_poll(
             ),
         });
     }
-    if let Some(PollKind::Unknown(kind)) = kind {
+    if let Some(close_date) = input.close_date
+        && close_date <= 0
+    {
+        return Err(Error::InvalidRequest {
+            reason: "close_date must be a positive Unix timestamp".to_owned(),
+        });
+    }
+    if let Some(PollKind::Unknown(kind)) = input.kind {
         return Err(Error::InvalidRequest {
             reason: format!("unsupported poll type `{kind}`"),
         });
+    }
+
+    validate_poll_explanation(input.explanation)?;
+    validate_optional_text_formatting(
+        "poll explanation",
+        input.explanation,
+        input.explanation_parse_mode,
+        input.explanation_entities,
+    )?;
+    validate_poll_description(input.description)?;
+    validate_optional_text_formatting(
+        "poll description",
+        input.description,
+        input.description_parse_mode,
+        input.description_entities,
+    )?;
+    validate_poll_country_codes(input.country_codes)?;
+
+    Ok(())
+}
+
+fn validate_poll_option(option: &InputPollOption) -> Result<(), Error> {
+    validate_required_text("poll option", &option.text)?;
+    if option.text.chars().count() > MAX_POLL_OPTION_CHARS {
+        return Err(Error::InvalidRequest {
+            reason: format!("poll option exceeds {MAX_POLL_OPTION_CHARS} characters"),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_correct_option_ids(
+    kind: Option<&PollKind>,
+    correct_option_ids: Option<&[u8]>,
+    option_count: usize,
+) -> Result<(), Error> {
+    let is_quiz = matches!(kind, Some(PollKind::Quiz));
+    let ids = correct_option_ids.unwrap_or_default();
+
+    if !is_quiz && !ids.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "correct_option_ids can only be used for quiz polls".to_owned(),
+        });
+    }
+    if is_quiz && ids.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "quiz polls require at least one correct_option_ids entry".to_owned(),
+        });
+    }
+
+    let mut previous = None;
+    for id in ids {
+        let id = usize::from(*id);
+        if id >= option_count {
+            return Err(Error::InvalidRequest {
+                reason: "correct_option_ids must point to existing poll options".to_owned(),
+            });
+        }
+        if previous.is_some_and(|previous| id <= previous) {
+            return Err(Error::InvalidRequest {
+                reason: "correct_option_ids must be strictly increasing".to_owned(),
+            });
+        }
+        previous = Some(id);
+    }
+
+    Ok(())
+}
+
+fn validate_poll_explanation(explanation: Option<&str>) -> Result<(), Error> {
+    let Some(explanation) = explanation else {
+        return Ok(());
+    };
+    if explanation.chars().count() > MAX_POLL_EXPLANATION_CHARS {
+        return Err(Error::InvalidRequest {
+            reason: format!("poll explanation exceeds {MAX_POLL_EXPLANATION_CHARS} characters"),
+        });
+    }
+    if explanation.chars().filter(|ch| *ch == '\n').count() > MAX_POLL_EXPLANATION_LINE_FEEDS {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "poll explanation must contain at most {MAX_POLL_EXPLANATION_LINE_FEEDS} line feeds"
+            ),
+        });
+    }
+    if explanation.chars().any(is_disallowed_display_control) {
+        return Err(Error::InvalidRequest {
+            reason: "poll explanation must not contain non-whitespace control characters"
+                .to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_poll_description(description: Option<&str>) -> Result<(), Error> {
+    let Some(description) = description else {
+        return Ok(());
+    };
+    if description.chars().count() > MAX_POLL_DESCRIPTION_CHARS {
+        return Err(Error::InvalidRequest {
+            reason: format!("poll description exceeds {MAX_POLL_DESCRIPTION_CHARS} characters"),
+        });
+    }
+    if description.chars().any(is_disallowed_display_control) {
+        return Err(Error::InvalidRequest {
+            reason: "poll description must not contain non-whitespace control characters"
+                .to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_poll_country_codes(country_codes: Option<&[String]>) -> Result<(), Error> {
+    let Some(country_codes) = country_codes else {
+        return Ok(());
+    };
+    if country_codes.len() > MAX_POLL_COUNTRY_CODES {
+        return Err(Error::InvalidRequest {
+            reason: format!("sendPoll accepts at most {MAX_POLL_COUNTRY_CODES} country codes"),
+        });
+    }
+    for country_code in country_codes {
+        if country_code.len() != 2 || !country_code.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return Err(Error::InvalidRequest {
+                reason: "poll country codes must be two uppercase ASCII letters".to_owned(),
+            });
+        }
     }
 
     Ok(())
@@ -2392,6 +3118,22 @@ fn validate_bulk_message_ids(method: &str, message_ids: &[MessageId]) -> Result<
                 reason: format!("{method} message ids must be unique"),
             });
         }
+    }
+
+    Ok(())
+}
+
+fn validate_ordered_bulk_message_ids(method: &str, message_ids: &[MessageId]) -> Result<(), Error> {
+    validate_bulk_message_ids(method, message_ids)?;
+
+    let mut previous = None;
+    for message_id in message_ids {
+        if previous.is_some_and(|previous| message_id.0 <= previous) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{method} message ids must be strictly increasing"),
+            });
+        }
+        previous = Some(message_id.0);
     }
 
     Ok(())
@@ -2523,6 +3265,58 @@ macro_rules! impl_suggested_post_parameters_setter {
     };
 }
 
+macro_rules! impl_caption_setter {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn caption(mut self, caption: impl Into<String>) -> Self {
+                    self.caption = Some(caption.into());
+                    self
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_parse_mode_setter {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
+                    self.parse_mode = Some(parse_mode);
+                    self
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_entities_setter {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn entities(mut self, entities: Vec<MessageEntity>) -> Self {
+                    self.entities = Some(entities);
+                    self
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_caption_entities_setter {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn caption_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+                    self.caption_entities = Some(entities);
+                    self
+                }
+            }
+        )*
+    };
+}
+
 macro_rules! impl_link_preview_setter {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -2602,16 +3396,142 @@ impl_business_connection_id_setter!(
     SendChatActionRequest
 );
 
-impl_direct_messages_topic_id_setter!(SendVideoNoteRequest);
-impl_allow_paid_broadcast_setter!(SendVideoNoteRequest);
-impl_message_effect_id_setter!(SendVideoNoteRequest);
-impl_suggested_post_parameters_setter!(SendVideoNoteRequest);
+impl_direct_messages_topic_id_setter!(
+    SendMessageRequest,
+    ForwardMessageRequest,
+    CopyMessageRequest,
+    CopyMessagesRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    SendVideoNoteRequest,
+    SendMediaGroupRequest,
+    SendLocationRequest,
+    SendVenueRequest,
+    SendContactRequest,
+    SendDiceRequest
+);
+impl_allow_paid_broadcast_setter!(
+    SendMessageRequest,
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    SendVideoNoteRequest,
+    SendMediaGroupRequest,
+    SendLocationRequest,
+    SendVenueRequest,
+    SendContactRequest,
+    SendPollRequest,
+    SendDiceRequest
+);
+impl_message_effect_id_setter!(
+    SendMessageRequest,
+    ForwardMessageRequest,
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    SendVideoNoteRequest,
+    SendMediaGroupRequest,
+    SendLocationRequest,
+    SendVenueRequest,
+    SendContactRequest,
+    SendPollRequest,
+    SendDiceRequest
+);
+impl_suggested_post_parameters_setter!(
+    SendMessageRequest,
+    ForwardMessageRequest,
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    SendVideoNoteRequest,
+    SendLocationRequest,
+    SendVenueRequest,
+    SendContactRequest,
+    SendDiceRequest
+);
+
+impl_caption_setter!(
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    EditMessageCaptionRequest
+);
+
+impl_parse_mode_setter!(
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    EditMessageTextRequest,
+    EditMessageCaptionRequest
+);
+
+impl_entities_setter!(EditMessageTextRequest);
+
+impl_caption_entities_setter!(
+    CopyMessageRequest,
+    SendPhotoRequest,
+    SendAudioRequest,
+    SendDocumentRequest,
+    SendVideoRequest,
+    SendAnimationRequest,
+    SendVoiceRequest,
+    EditMessageCaptionRequest
+);
 
 impl_link_preview_setter!(SendMessageRequest, EditMessageTextRequest);
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    fn bold_entity(length: u32) -> MessageEntity {
+        entity(crate::types::message::MessageEntityKind::Bold, 0, length)
+    }
+
+    fn entity(
+        kind: crate::types::message::MessageEntityKind,
+        offset: u32,
+        length: u32,
+    ) -> MessageEntity {
+        MessageEntity {
+            kind,
+            offset,
+            length,
+            url: None,
+            user: None,
+            language: None,
+            custom_emoji_id: None,
+            unix_time: None,
+            date_time_format: None,
+            extra: BTreeMap::new(),
+        }
+    }
 
     #[test]
     fn validates_send_message_text_bounds() {
@@ -2639,6 +3559,238 @@ mod tests {
             request.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn serializes_explicit_text_and_caption_entities() -> Result<(), Error> {
+        let message = SendMessageRequest::new(1_i64, "hello")?.entities(vec![bold_entity(5)]);
+        message.validate()?;
+        let message_json =
+            serde_json::to_value(&message).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(message_json["entities"][0]["type"], "bold");
+
+        let emoji_message = SendMessageRequest::new(1_i64, "💣a")?.entities(vec![entity(
+            crate::types::message::MessageEntityKind::Bold,
+            2,
+            1,
+        )]);
+        assert!(emoji_message.validate().is_ok());
+
+        let out_of_range_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![bold_entity(6)]);
+        assert!(matches!(
+            out_of_range_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let unknown_entity_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![entity(
+                crate::types::message::MessageEntityKind::Unknown("future".to_owned()),
+                0,
+                5,
+            )]);
+        assert!(matches!(
+            unknown_entity_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_message = SendMessageRequest::new(1_i64, "hello")?
+            .parse_mode(ParseMode::Html)
+            .entities(vec![bold_entity(5)]);
+        assert!(matches!(
+            invalid_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invalid_message.entities = None;
+        assert!(invalid_message.validate().is_ok());
+
+        let photo = SendPhotoRequest::new(1_i64, "photo-file-id")
+            .caption("hello")
+            .caption_entities(vec![bold_entity(5)]);
+        photo.validate()?;
+        let photo_json =
+            serde_json::to_value(&photo).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(photo_json["caption_entities"][0]["type"], "bold");
+
+        let missing_caption =
+            SendPhotoRequest::new(1_i64, "photo-file-id").caption_entities(vec![bold_entity(5)]);
+        assert!(matches!(
+            missing_caption.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_photo = SendPhotoRequest::new(1_i64, "photo-file-id")
+            .caption("hello")
+            .parse_mode(ParseMode::Html)
+            .caption_entities(vec![bold_entity(5)]);
+        assert!(matches!(
+            invalid_photo.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let media_group = SendMediaGroupRequest::new(
+            1_i64,
+            vec![
+                InputMediaPhoto::new("photo-file-id")
+                    .caption("hello")
+                    .caption_entities(vec![bold_entity(5)])
+                    .into(),
+                InputMediaVideo::new("video-file-id").into(),
+            ],
+        )?;
+        media_group.validate()?;
+        let media_group_json = serde_json::to_value(&media_group)
+            .map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(
+            media_group_json["media"][0]["caption_entities"][0]["type"],
+            "bold"
+        );
+
+        let invalid_media_group = SendMediaGroupRequest::new(
+            1_i64,
+            vec![
+                InputMediaPhoto::new("photo-file-id")
+                    .caption("hello")
+                    .parse_mode(ParseMode::Html)
+                    .caption_entities(vec![bold_entity(5)])
+                    .into(),
+                InputMediaVideo::new("video-file-id").into(),
+            ],
+        );
+        assert!(matches!(
+            invalid_media_group,
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_edit_text =
+            EditMessageTextRequest::for_chat_message(1_i64, MessageId(10), "hello")?
+                .entities(vec![bold_entity(5)]);
+        let mut invalid_edit_text = invalid_edit_text;
+        invalid_edit_text.parse_mode = Some(ParseMode::Html);
+        assert!(matches!(
+            invalid_edit_text.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_edit_caption = EditMessageCaptionRequest {
+            chat_id: Some(1_i64.into()),
+            message_id: Some(MessageId(10)),
+            inline_message_id: None,
+            caption: Some("hello".to_owned()),
+            parse_mode: Some(ParseMode::Html),
+            caption_entities: Some(vec![bold_entity(5)]),
+            reply_markup: None,
+            show_caption_above_media: None,
+        };
+        assert!(matches!(
+            invalid_edit_caption.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn serializes_common_send_options() -> Result<(), Error> {
+        let suggested_post_parameters = SuggestedPostParameters::new(serde_json::json!({
+            "send_date": 1
+        }))?;
+        let message = SendMessageRequest::new(1_i64, "hello")?
+            .direct_messages_topic_id(7)
+            .allow_paid_broadcast(true)
+            .message_effect_id("effect-1")
+            .suggested_post_parameters(suggested_post_parameters);
+        message.validate()?;
+        let message_json =
+            serde_json::to_value(&message).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(message_json["direct_messages_topic_id"], 7);
+        assert_eq!(message_json["allow_paid_broadcast"], true);
+        assert_eq!(message_json["message_effect_id"], "effect-1");
+        assert!(message_json.get("suggested_post_parameters").is_some());
+
+        let forward = ForwardMessageRequest::new(1_i64, 2_i64, MessageId(10))
+            .direct_messages_topic_id(6)
+            .message_effect_id("forward-effect")
+            .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+                "send_date": 2
+            }))?);
+        forward.validate()?;
+        let forward_json =
+            serde_json::to_value(&forward).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(forward_json["direct_messages_topic_id"], 6);
+        assert_eq!(forward_json["message_effect_id"], "forward-effect");
+        assert!(forward_json.get("suggested_post_parameters").is_some());
+
+        let copy = CopyMessageRequest::new(1_i64, 2_i64, MessageId(10))
+            .direct_messages_topic_id(7)
+            .allow_paid_broadcast(true)
+            .message_effect_id("copy-effect")
+            .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+                "send_date": 3
+            }))?);
+        copy.validate()?;
+        let copy_json =
+            serde_json::to_value(&copy).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(copy_json["direct_messages_topic_id"], 7);
+        assert_eq!(copy_json["allow_paid_broadcast"], true);
+        assert_eq!(copy_json["message_effect_id"], "copy-effect");
+        assert!(copy_json.get("suggested_post_parameters").is_some());
+
+        let copy_messages =
+            CopyMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(11)])?
+                .direct_messages_topic_id(8);
+        copy_messages.validate()?;
+        let copy_messages_json = serde_json::to_value(&copy_messages)
+            .map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(copy_messages_json["direct_messages_topic_id"], 8);
+        assert!(
+            copy_messages_json
+                .get("suggested_post_parameters")
+                .is_none()
+        );
+
+        let media_group = SendMediaGroupRequest::new(
+            1_i64,
+            vec![
+                InputMediaPhoto::new("photo-file-id").into(),
+                InputMediaVideo::new("video-file-id").into(),
+            ],
+        )?
+        .direct_messages_topic_id(8)
+        .allow_paid_broadcast(true)
+        .message_effect_id("effect-2");
+        media_group.validate()?;
+        let media_group_json = serde_json::to_value(&media_group)
+            .map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(media_group_json["direct_messages_topic_id"], 8);
+        assert_eq!(media_group_json["allow_paid_broadcast"], true);
+        assert_eq!(media_group_json["message_effect_id"], "effect-2");
+        assert!(media_group_json.get("suggested_post_parameters").is_none());
+
+        let mut invalid_direct_topic = SendLocationRequest::new(1_i64, 1.0, 2.0);
+        invalid_direct_topic.direct_messages_topic_id = Some(0);
+        assert!(matches!(
+            invalid_direct_topic.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_effect = SendPhotoRequest::new(1_i64, "photo-file-id");
+        invalid_effect.message_effect_id = Some("bad\nid".to_owned());
+        assert!(matches!(
+            invalid_effect.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_copy_caption_entities =
+            CopyMessageRequest::new(1_i64, 2_i64, MessageId(10));
+        invalid_copy_caption_entities.parse_mode = Some(ParseMode::Html);
+        invalid_copy_caption_entities.caption_entities = Some(Vec::new());
+        assert!(matches!(
+            invalid_copy_caption_entities.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         Ok(())
     }
 
@@ -2880,12 +4032,14 @@ mod tests {
             media: "photo-file-id".to_owned(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             has_spoiler: None,
         };
         let video_media = InputMediaVideo {
             media: "video-file-id".to_owned(),
             caption: None,
             parse_mode: None,
+            caption_entities: None,
             width: None,
             height: None,
             duration: None,
@@ -2912,6 +4066,7 @@ mod tests {
                     media: "attach://photo0".to_owned(),
                     caption: None,
                     parse_mode: None,
+                    caption_entities: None,
                     has_spoiler: None,
                 }
                 .into(),
@@ -2919,6 +4074,7 @@ mod tests {
                     media: "video-file-id".to_owned(),
                     caption: None,
                     parse_mode: None,
+                    caption_entities: None,
                     width: None,
                     height: None,
                     duration: None,
@@ -2960,6 +4116,7 @@ mod tests {
                     media: "photo-file-id".to_owned(),
                     caption: None,
                     parse_mode: None,
+                    caption_entities: None,
                     has_spoiler: None,
                 }
                 .into(),
@@ -3009,17 +4166,46 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
-        let invalid_poll = SendPollRequest::new(1_i64, "question", vec!["only".to_owned()]);
+        let invalid_poll = SendPollRequest::new(1_i64, "question", Vec::<&str>::new());
         assert!(matches!(invalid_poll, Err(Error::InvalidRequest { .. })));
+
+        let single_option_poll = SendPollRequest::new(1_i64, "question", ["only"])?;
+        assert_eq!(single_option_poll.options.len(), 1);
+
+        let array_poll = SendPollRequest::new(1_i64, "question", ["one", "two"])?;
+        assert_eq!(array_poll.options.len(), 2);
 
         let mut poll =
             SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
-        poll.correct_option_id = Some(2);
+        poll.kind = Some(PollKind::Quiz);
+        poll.correct_option_ids = Some(vec![2]);
         assert!(matches!(poll.validate(), Err(Error::InvalidRequest { .. })));
-        poll.correct_option_id = None;
+        poll.correct_option_ids = Some(vec![0]);
         poll.open_period = Some(MAX_POLL_OPEN_PERIOD_SECONDS);
         assert!(poll.validate().is_ok());
+        poll.allow_paid_broadcast = Some(true);
+        poll.message_effect_id = Some("effect-1".to_owned());
+        poll.description = Some("choose carefully".to_owned());
+        poll.country_codes = Some(vec!["US".to_owned(), "FT".to_owned()]);
+        let poll_json =
+            serde_json::to_value(&poll).map_err(|source| Error::SerializeRequest { source })?;
+        assert_eq!(poll_json["options"][0]["text"], "one");
+        assert_eq!(poll_json["correct_option_ids"], serde_json::json!([0]));
+        assert_eq!(poll_json["allow_paid_broadcast"], true);
+        assert_eq!(poll_json["message_effect_id"], "effect-1");
+        assert_eq!(poll_json["description"], "choose carefully");
+        assert_eq!(poll_json["country_codes"], serde_json::json!(["US", "FT"]));
+
         poll.open_period = Some(MAX_POLL_OPEN_PERIOD_SECONDS + 1);
+        assert!(matches!(poll.validate(), Err(Error::InvalidRequest { .. })));
+        poll.open_period = None;
+        poll.close_date = Some(1);
+        assert!(poll.validate().is_ok());
+        poll.open_period = Some(MIN_POLL_OPEN_PERIOD_SECONDS);
+        assert!(matches!(poll.validate(), Err(Error::InvalidRequest { .. })));
+        poll.open_period = None;
+        poll.close_date = None;
+        poll.country_codes = Some(vec!["usa".to_owned()]);
         assert!(matches!(poll.validate(), Err(Error::InvalidRequest { .. })));
 
         let mut unsupported_kind =
@@ -3027,6 +4213,56 @@ mod tests {
         unsupported_kind.kind = Some(PollKind::Unknown("future".to_owned()));
         assert!(matches!(
             unsupported_kind.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut regular_with_answer =
+            SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
+        regular_with_answer.correct_option_ids = Some(vec![0]);
+        assert!(matches!(
+            regular_with_answer.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut quiz_without_answer =
+            SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
+        quiz_without_answer.kind = Some(PollKind::Quiz);
+        assert!(matches!(
+            quiz_without_answer.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut quiz_with_unsorted_answers = quiz_without_answer;
+        quiz_with_unsorted_answers.correct_option_ids = Some(vec![1, 0]);
+        assert!(matches!(
+            quiz_with_unsorted_answers.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut poll_with_bad_explanation =
+            SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
+        poll_with_bad_explanation.explanation = Some("a\nb\nc\nd".to_owned());
+        assert!(matches!(
+            poll_with_bad_explanation.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut poll_with_entity_conflict =
+            SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
+        poll_with_entity_conflict.question_parse_mode = Some(ParseMode::Html);
+        poll_with_entity_conflict.question_entities = Some(Vec::new());
+        assert!(matches!(
+            poll_with_entity_conflict.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut poll_with_option_entity_conflict =
+            SendPollRequest::new(1_i64, "question", vec!["one".to_owned(), "two".to_owned()])?;
+        poll_with_option_entity_conflict.options[0] = InputPollOption::new("one")
+            .text_parse_mode(ParseMode::Html)
+            .text_entities(Vec::new());
+        assert!(matches!(
+            poll_with_option_entity_conflict.validate(),
             Err(Error::InvalidRequest { .. })
         ));
 
@@ -3039,6 +4275,10 @@ mod tests {
         ));
         assert!(matches!(
             CopyMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(10)]),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            CopyMessagesRequest::new(1_i64, 2_i64, vec![MessageId(11), MessageId(10)]),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(

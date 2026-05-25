@@ -1,5 +1,7 @@
 use crate::Error;
 
+use super::common::ParseMode;
+use super::message::{MessageEntity, MessageEntityKind};
 use super::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
 
 pub(crate) fn required_text(label: &str, value: &str) -> Result<(), Error> {
@@ -164,6 +166,148 @@ pub(crate) fn suggested_post_parameters(
 ) -> Result<(), Error> {
     if let Some(suggested_post_parameters) = suggested_post_parameters {
         suggested_post_parameters.validate()?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn parse_mode_entities_conflict(
+    field: &str,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    if parse_mode.is_some() && entities.is_some() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot set both parse_mode and entities"),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn text_formatting(
+    field: &str,
+    text: &str,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    parse_mode_entities_conflict(field, parse_mode, entities)?;
+    text_entities(field, text, entities)
+}
+
+pub(crate) fn optional_text_formatting(
+    field: &str,
+    text: Option<&str>,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    parse_mode_entities_conflict(field, parse_mode, entities)?;
+
+    if parse_mode.is_none() && entities.is_none() {
+        return Ok(());
+    }
+
+    let Some(text) = text else {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} formatting requires text"),
+        });
+    };
+
+    text_entities(field, text, entities)
+}
+
+fn text_entities(field: &str, text: &str, entities: Option<&[MessageEntity]>) -> Result<(), Error> {
+    let Some(entities) = entities else {
+        return Ok(());
+    };
+    if entities.is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} entities cannot be empty"),
+        });
+    }
+
+    let text_len = text.encode_utf16().count();
+    for entity in entities {
+        validate_message_entity(field, entity, text_len)?;
+    }
+
+    Ok(())
+}
+
+fn validate_message_entity(
+    field: &str,
+    entity: &MessageEntity,
+    text_len: usize,
+) -> Result<(), Error> {
+    if entity.length == 0 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} entity length must be greater than 0"),
+        });
+    }
+
+    let start = entity.offset as usize;
+    let len = entity.length as usize;
+    let Some(end) = start.checked_add(len) else {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} entity range exceeds text length"),
+        });
+    };
+    if end > text_len {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} entity range exceeds text length"),
+        });
+    }
+
+    match &entity.kind {
+        MessageEntityKind::TextLink => {
+            let Some(url) = entity.url.as_deref() else {
+                return Err(Error::InvalidRequest {
+                    reason: format!("{field} text_link entity requires url"),
+                });
+            };
+            required_string("url", url)?;
+        }
+        MessageEntityKind::TextMention => {
+            if entity.user.is_none() {
+                return Err(Error::InvalidRequest {
+                    reason: format!("{field} text_mention entity requires user"),
+                });
+            }
+        }
+        MessageEntityKind::CustomEmoji => {
+            let Some(custom_emoji_id) = entity.custom_emoji_id.as_deref() else {
+                return Err(Error::InvalidRequest {
+                    reason: format!("{field} custom_emoji entity requires custom_emoji_id"),
+                });
+            };
+            string_id("custom_emoji_id", custom_emoji_id)?;
+        }
+        MessageEntityKind::Unknown(kind) => {
+            return Err(Error::InvalidRequest {
+                reason: format!("{field} contains unsupported entity type `{kind}`"),
+            });
+        }
+        MessageEntityKind::DateTime => {
+            return Err(Error::InvalidRequest {
+                reason: format!("{field} contains unsupported entity type `date_time`"),
+            });
+        }
+        MessageEntityKind::Mention
+        | MessageEntityKind::Hashtag
+        | MessageEntityKind::Cashtag
+        | MessageEntityKind::BotCommand
+        | MessageEntityKind::Url
+        | MessageEntityKind::Email
+        | MessageEntityKind::PhoneNumber
+        | MessageEntityKind::Bold
+        | MessageEntityKind::Italic
+        | MessageEntityKind::Underline
+        | MessageEntityKind::Strikethrough
+        | MessageEntityKind::Spoiler
+        | MessageEntityKind::Blockquote
+        | MessageEntityKind::ExpandableBlockquote
+        | MessageEntityKind::Code
+        | MessageEntityKind::Pre => {}
     }
 
     Ok(())

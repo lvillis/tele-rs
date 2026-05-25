@@ -14,13 +14,14 @@ use crate::types::command::{
 };
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode, UserId};
 use crate::types::message::{
-    InputMedia, Message, SendAnimationRequest, SendAudioRequest, SendDocumentRequest,
-    SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendVideoRequest,
-    SendVoiceRequest, SentWebAppMessage,
+    InputMedia, Message, MessageEntity, SendAnimationRequest, SendAudioRequest,
+    SendDocumentRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
+    SendVideoRequest, SendVoiceRequest, SentWebAppMessage,
 };
 use crate::types::sticker::SendStickerRequest;
 use crate::types::telegram::{
-    InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters, WebAppData,
+    InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters,
+    SuggestedPostParameters, WebAppData,
 };
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::{UploadFile, UploadPart};

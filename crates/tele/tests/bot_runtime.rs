@@ -4,6 +4,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,9 +24,9 @@ use tele::bot::{
     InMemorySessionStore, InlineQueryInput, JsonFileSessionStore, LongPollingSource,
     ManagedBotInput, MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig, PollAnswerInput,
     PollingConfig, RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig,
-    StateTransition, TextInput, UpdateExt, UpdateExtractor, WebAppInput, WebhookRunner,
-    WriteAccessAllowedInput, apply_chat_state_transition, channel_source, clear_chat_state,
-    extract_callback_data, extract_callback_json, extract_chat_join_request,
+    StateTransition, TextInput, UpdateExt, UpdateExtractor, UpdateSource, WebAppInput,
+    WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition, channel_source,
+    clear_chat_state, extract_callback_data, extract_callback_json, extract_chat_join_request,
     extract_chat_member_update, extract_command, extract_command_args, extract_command_data,
     extract_compact_callback, extract_message, extract_my_chat_member_update, extract_text,
     extract_typed_callback, extract_web_app_data, extract_write_access_allowed, load_chat_state,
@@ -137,11 +138,32 @@ where
     }
 }
 
+fn blocked_child_path(prefix: &str, child_name: &str) -> Result<(PathBuf, PathBuf), DynError> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!("{prefix}-{timestamp}"));
+    fs::create_dir_all(&root)?;
+    let blocked_parent = root.join("not-a-directory");
+    fs::write(&blocked_parent, b"not a directory")?;
+    Ok((root, blocked_parent.join(child_name)))
+}
+
 fn spawn_server(
     expected_path: &'static str,
     response_status: u16,
     response_body: &'static str,
 ) -> Result<(String, ServerHandle), DynError> {
+    spawn_server_with_request_hook(expected_path, response_status, response_body, |_| Ok(()))
+}
+
+fn spawn_server_with_request_hook<F>(
+    expected_path: &'static str,
+    response_status: u16,
+    response_body: &'static str,
+    hook: F,
+) -> Result<(String, ServerHandle), DynError>
+where
+    F: FnOnce(&str) -> Result<(), String> + Send + 'static,
+{
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
 
@@ -161,6 +183,7 @@ fn spawn_server(
         if !request.contains(&expected_request_line) {
             return Err(format!("unexpected request line: {request}"));
         }
+        hook(&request)?;
 
         let response = format!(
             "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
@@ -184,48 +207,22 @@ fn spawn_server_with_checks(
     response_body: &'static str,
     required_substrings: &'static [&'static str],
 ) -> Result<(String, ServerHandle), DynError> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(3))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .map_err(|error| error.to_string())?;
-
-        let mut buffer = vec![0_u8; 16 * 1024];
-        let read_bytes = stream
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        let request = String::from_utf8_lossy(&buffer[..read_bytes]);
-
-        let expected_request_line = format!("POST {expected_path} HTTP/1.1");
-        if !request.contains(&expected_request_line) {
-            return Err(format!("unexpected request line: {request}"));
-        }
-
-        for required in required_substrings {
-            if !request.contains(required) {
-                return Err(format!(
-                    "request missing required content `{required}`: {request}"
-                ));
+    spawn_server_with_request_hook(
+        expected_path,
+        response_status,
+        response_body,
+        move |request| {
+            for required in required_substrings {
+                if !request.contains(required) {
+                    return Err(format!(
+                        "request missing required content `{required}`: {request}"
+                    ));
+                }
             }
-        }
 
-        let response = format!(
-            "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-            response_body.len()
-        );
-
-        stream
-            .write_all(response.as_bytes())
-            .map_err(|error| error.to_string())?;
-        stream.flush().map_err(|error| error.to_string())?;
-
-        Ok(())
-    });
-
-    Ok((format!("http://{address}"), handle))
+            Ok(())
+        },
+    )
 }
 
 fn spawn_server_sequence(
@@ -2249,6 +2246,46 @@ async fn long_polling_source_loads_persisted_offset() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn long_polling_source_rejects_invalid_offset_storage_before_network() -> Result<(), DynError>
+{
+    let (root, offset_path) = blocked_child_path("tele-offset-invalid-target", "offset.json")?;
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut source = LongPollingSource::new(client).with_config(PollingConfig {
+        persist_offset_path: Some(offset_path),
+        ..PollingConfig::default()
+    });
+
+    let result = source.poll().await;
+
+    assert!(matches!(result, Err(Error::Storage { .. })));
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[tokio::test]
+async fn long_polling_source_validates_offset_storage_after_explicit_offset_override()
+-> Result<(), DynError> {
+    let (root, offset_path) =
+        blocked_child_path("tele-offset-override-invalid-target", "offset.json")?;
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut source = LongPollingSource::new(client).with_config(PollingConfig {
+        persist_offset_path: Some(offset_path),
+        ..PollingConfig::default()
+    });
+    source.set_next_offset(Some(42));
+
+    let result = source.poll().await;
+
+    assert!(matches!(result, Err(Error::Storage { .. })));
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[tokio::test]
 async fn long_polling_source_dedupes_duplicate_update_ids() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":[{"update_id":990,"message":{"message_id":1,"date":1710000101,"chat":{"id":1,"type":"private"},"text":"/start"}},{"update_id":990,"message":{"message_id":2,"date":1710000102,"chat":{"id":1,"type":"private"},"text":"/start"}}]}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getUpdates", 200, response)?;
@@ -4081,6 +4118,58 @@ async fn outbox_rejects_idempotency_key_reuse_with_different_payload() -> Result
 }
 
 #[tokio::test]
+async fn outbox_reports_commit_failure_after_delivery() -> Result<(), DynError> {
+    let ok_response = r#"{"ok":true,"result":{"message_id":90,"date":1710000012,"chat":{"id":12,"type":"private"},"text":"hello"}}"#;
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!("tele-outbox-commit-failure-{timestamp}"));
+    fs::create_dir_all(&root)?;
+    let queue_path = root.join("queue.json");
+    let hook_queue_path = queue_path.clone();
+    let (base_url, handle) =
+        spawn_server_with_request_hook("/bot123:abc/sendMessage", 200, ok_response, move |_| {
+            if !hook_queue_path.is_file() {
+                return Err(format!(
+                    "expected persisted outbox queue before response: {}",
+                    hook_queue_path.display()
+                ));
+            }
+
+            fs::remove_file(&hook_queue_path).map_err(|error| error.to_string())?;
+            fs::create_dir(&hook_queue_path).map_err(|error| error.to_string())?;
+            Ok(())
+        })?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let config = OutboxConfig::default().with_persistence_path(queue_path.clone());
+    let outbox = BotOutbox::spawn(client, config)?;
+
+    let result = outbox
+        .send_text_with_key(12_i64, "hello", Some("commit-failure".to_owned()))
+        .await;
+    join_server(handle).await?;
+
+    match result {
+        Err(Error::Storage {
+            operation,
+            message,
+            retryable,
+        }) => {
+            assert_eq!(operation.as_ref(), "outbox commit");
+            assert!(!retryable);
+            assert!(message.contains("upstream delivery may have succeeded"));
+        }
+        other => {
+            return Err(format!("expected delivered commit storage error, got {other:?}").into());
+        }
+    }
+
+    assert!(queue_path.is_dir());
+
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[tokio::test]
 async fn outbox_rejects_invalid_message_before_enqueue() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -4125,6 +4214,45 @@ async fn outbox_rejects_invalid_config_on_spawn() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn outbox_rejects_invalid_persistence_path_on_spawn() -> Result<(), DynError> {
+    let (root, queue_path) = blocked_child_path("tele-outbox-invalid-target", "queue.json")?;
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let config = OutboxConfig::default().with_persistence_path(queue_path);
+
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected outbox spawn to reject invalid persistence target".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Storage { .. }));
+    assert!(error.to_string().contains("outbox snapshot"));
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_rejects_invalid_dead_letter_path_on_spawn() -> Result<(), DynError> {
+    let (root, dead_letter_path) =
+        blocked_child_path("tele-dead-letter-invalid-target", "dead-letter.json")?;
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let config = OutboxConfig::default().with_dead_letter_path(dead_letter_path);
+
+    let error = match BotOutbox::spawn(client, config) {
+        Ok(_) => return Err("expected outbox spawn to reject invalid dead-letter target".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Storage { .. }));
+    assert!(error.to_string().contains("dead-letter snapshot"));
+    let _ = fs::remove_dir_all(root);
+    Ok(())
+}
+
+#[tokio::test]
 async fn outbox_rejects_invalid_persisted_queue_on_spawn() -> Result<(), DynError> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let queue_path = std::env::temp_dir().join(format!("tele-outbox-invalid-{timestamp}.json"));
@@ -4138,7 +4266,7 @@ async fn outbox_rejects_invalid_persisted_queue_on_spawn() -> Result<(), DynErro
         Ok(_) => return Err("expected outbox spawn to reject invalid persistence".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Storage { .. }));
     assert!(error.to_string().contains("outbox snapshot"));
 
     let raw = fs::read_to_string(&queue_path)?;
@@ -4173,7 +4301,7 @@ async fn outbox_rejects_invalid_persisted_queue_entry_on_spawn() -> Result<(), D
         Ok(_) => return Err("expected invalid outbox queue entry to be rejected".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Storage { .. }));
     assert!(error.to_string().contains("queue entry 0"));
 
     let _ = fs::remove_file(queue_path);
@@ -4215,7 +4343,7 @@ async fn outbox_rejects_persisted_queue_over_capacity_on_spawn() -> Result<(), D
         Ok(_) => return Err("expected over-capacity outbox queue to be rejected".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Storage { .. }));
     assert!(error.to_string().contains("queue_capacity"));
 
     let _ = fs::remove_file(queue_path);
@@ -4248,7 +4376,7 @@ async fn outbox_rejects_exhausted_persisted_queue_entry_on_spawn() -> Result<(),
         Ok(_) => return Err("expected exhausted outbox queue entry to be rejected".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Storage { .. }));
     assert!(error.to_string().contains("no remaining retry budget"));
 
     let _ = fs::remove_file(queue_path);
@@ -4282,7 +4410,7 @@ async fn outbox_rejects_invalid_dead_letter_snapshot_on_spawn() -> Result<(), Dy
         Ok(_) => return Err("expected invalid dead-letter snapshot to be rejected".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Storage { .. }));
     assert!(error.to_string().contains("dead-letter"));
 
     let _ = fs::remove_file(dead_letter_path);
@@ -4446,6 +4574,21 @@ async fn json_file_session_store_persists_across_instances() -> Result<(), DynEr
     assert_eq!(loaded.as_deref(), Some("step-1"));
 
     let _ = fs::remove_file(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn json_file_session_store_rejects_invalid_path_on_open() -> Result<(), DynError> {
+    let (root, path) = blocked_child_path("tele-session-invalid-target", "session.json")?;
+
+    let error = match JsonFileSessionStore::<String>::open(&path) {
+        Ok(_) => return Err("expected JSON session store to reject invalid storage target".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Storage { .. }));
+    assert!(error.to_string().contains("session store"));
+    let _ = fs::remove_dir_all(root);
     Ok(())
 }
 

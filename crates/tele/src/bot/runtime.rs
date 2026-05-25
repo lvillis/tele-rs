@@ -267,6 +267,7 @@ pub struct LongPollingSource {
     seen_update_ids: HashSet<i64>,
     seen_update_order: VecDeque<i64>,
     offset_loaded: bool,
+    validated_offset_storage_path: Option<PathBuf>,
     prepared: bool,
 }
 
@@ -279,6 +280,7 @@ impl LongPollingSource {
             seen_update_ids: HashSet::new(),
             seen_update_order: VecDeque::new(),
             offset_loaded: false,
+            validated_offset_storage_path: None,
             prepared: false,
         }
     }
@@ -378,6 +380,8 @@ impl LongPollingSource {
     }
 
     async fn ensure_offset_loaded(&mut self) -> Result<()> {
+        self.ensure_offset_storage_target_validated().await?;
+
         if self.offset_loaded {
             return Ok(());
         }
@@ -389,6 +393,21 @@ impl LongPollingSource {
         }
 
         self.offset_loaded = true;
+        Ok(())
+    }
+
+    async fn ensure_offset_storage_target_validated(&mut self) -> Result<()> {
+        let Some(path) = self.config.persist_offset_path.as_deref() else {
+            self.validated_offset_storage_path = None;
+            return Ok(());
+        };
+        if self.validated_offset_storage_path.as_deref() == Some(path) {
+            return Ok(());
+        }
+
+        let path = path.to_path_buf();
+        validate_file_storage_target_async(path.clone(), "polling offset snapshot").await?;
+        self.validated_offset_storage_path = Some(path);
         Ok(())
     }
 
@@ -422,9 +441,11 @@ impl LongPollingSource {
         }
 
         let next_offset = self.next_offset_after_update_ids(update_ids.iter().copied());
-        if next_offset != self.next_offset
-            && let Some(path) = self.config.persist_offset_path.as_deref()
-        {
+        if next_offset != self.next_offset && self.config.persist_offset_path.is_some() {
+            self.ensure_offset_storage_target_validated().await?;
+            let Some(path) = self.config.persist_offset_path.as_deref() else {
+                return Ok(());
+            };
             persist_polling_offset_async(path.to_path_buf(), next_offset).await?;
         }
 
@@ -517,12 +538,21 @@ fn load_persisted_polling_offset(path: &Path) -> Result<Option<i64>> {
     }
 
     let snapshot: PollingOffsetSnapshot = serde_json::from_slice(&raw).map_err(|source| {
-        invalid_request(format!(
-            "failed to deserialize polling offset snapshot `{}`: {source}",
-            path.display()
-        ))
+        storage_decode_error(
+            "polling offset decode",
+            "polling offset snapshot",
+            path,
+            source,
+        )
     })?;
-    validate_polling_offset_snapshot(&snapshot)?;
+    validate_polling_offset_snapshot(&snapshot).map_err(|source| {
+        storage_snapshot_error(
+            "polling offset validate",
+            "polling offset snapshot",
+            path,
+            source,
+        )
+    })?;
     Ok(snapshot.next_offset)
 }
 
@@ -548,8 +578,9 @@ fn persist_polling_offset(path: &Path, next_offset: Option<i64>) -> Result<()> {
         next_offset,
     };
     validate_polling_offset_snapshot(&snapshot)?;
-    let encoded =
-        serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
+    let encoded = serde_json::to_vec(&snapshot).map_err(|source| {
+        storage_encode_error("polling offset encode", "polling offset snapshot", source)
+    })?;
     write_file_atomic(path, encoded.as_slice(), "polling offset snapshot")?;
     Ok(())
 }

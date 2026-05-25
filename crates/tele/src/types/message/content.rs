@@ -56,8 +56,22 @@ impl Serialize for PollKind {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
 pub struct PollOption {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistent_id: Option<String>,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_entities: Option<Vec<MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Value>,
     pub voter_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by_user: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_by_chat: Option<Chat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addition_date: Option<i64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram poll object.
@@ -76,7 +90,7 @@ pub struct Poll {
     pub kind: PollKind,
     pub allows_multiple_answers: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correct_option_id: Option<u32>,
+    pub correct_option_ids: Option<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +99,8 @@ pub struct Poll {
     pub open_period: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_date: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allows_revoting: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

@@ -198,6 +198,7 @@ pub struct BotOutbox {
 impl BotOutbox {
     pub fn spawn(client: Client, config: OutboxConfig) -> Result<Self> {
         config.validate()?;
+        validate_outbox_persistence_path(config.persistence_path.as_deref())?;
         validate_dead_letter_path(config.dead_letter_path.as_deref())?;
         let persisted_queue = load_outbox_queue(&config)?;
         let queue_capacity = config.queue_capacity;
@@ -421,8 +422,9 @@ async fn run_outbox_worker(
                 let entry = match commit_outbox_front(&config, &mut queue).await {
                     Ok(Some(entry)) => entry,
                     Ok(None) => continue,
-                    Err(_error) => {
+                    Err(error) => {
                         // Message may already be delivered upstream; stop worker to avoid local duplicate sends.
+                        notify_front_responder(&mut queue, delivered_outbox_commit_error(error));
                         return;
                     }
                 };
@@ -515,6 +517,27 @@ async fn commit_outbox_front(
     }
 
     Ok(Some(entry))
+}
+
+fn notify_front_responder(queue: &mut VecDeque<QueuedOutboxCommand>, error: Error) {
+    let Some(front) = queue.front_mut() else {
+        return;
+    };
+    let Some(responder) = front.responder.take() else {
+        return;
+    };
+
+    let _ = responder.send(Err(error));
+}
+
+fn delivered_outbox_commit_error(source: Error) -> Error {
+    storage_error(
+        "outbox commit",
+        format!(
+            "failed to persist delivered outbox message removal; upstream delivery may have succeeded: {source}"
+        ),
+        false,
+    )
 }
 
 fn prune_dedupe_cache(dedupe: &mut HashMap<String, DedupeEntry>) {
@@ -641,10 +664,17 @@ fn validate_dead_letter_entry(entry: &DeadLetterEntry) -> Result<()> {
     Ok(())
 }
 
+fn validate_outbox_persistence_path(path: Option<&Path>) -> Result<()> {
+    if let Some(path) = path {
+        validate_file_storage_target(path, "outbox snapshot")?;
+    }
+
+    Ok(())
+}
+
 fn validate_dead_letter_path(path: Option<&Path>) -> Result<()> {
-    if let Some(path) = path
-        && path.exists()
-    {
+    if let Some(path) = path {
+        validate_file_storage_target(path, "dead-letter snapshot")?;
         let snapshot = load_dead_letter_snapshot(path)?;
         validate_dead_letter_snapshot(&snapshot)?;
     }
@@ -669,8 +699,9 @@ fn append_dead_letter(
         snapshot.entries.drain(0..overflow);
     }
 
-    let encoded =
-        serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
+    let encoded = serde_json::to_vec(&snapshot).map_err(|source| {
+        storage_encode_error("dead-letter encode", "dead-letter snapshot", source)
+    })?;
     write_file_atomic(path, encoded.as_slice(), "dead-letter snapshot")?;
     Ok(())
 }
@@ -709,12 +740,11 @@ fn load_dead_letter_snapshot(path: &Path) -> Result<DeadLetterSnapshot> {
     }
 
     let snapshot: DeadLetterSnapshot = serde_json::from_slice(&raw).map_err(|source| {
-        invalid_request(format!(
-            "failed to deserialize dead-letter snapshot `{}`: {source}",
-            path.display()
-        ))
+        storage_decode_error("dead-letter decode", "dead-letter snapshot", path, source)
     })?;
-    validate_dead_letter_snapshot(&snapshot)?;
+    validate_dead_letter_snapshot(&snapshot).map_err(|source| {
+        storage_snapshot_error("dead-letter validate", "dead-letter snapshot", path, source)
+    })?;
     Ok(snapshot)
 }
 
@@ -741,13 +771,11 @@ fn load_outbox_queue(config: &OutboxConfig) -> Result<Vec<PersistedOutboxCommand
         return Ok(Vec::new());
     }
 
-    let snapshot: OutboxSnapshot = serde_json::from_slice(&raw).map_err(|source| {
-        invalid_request(format!(
-            "failed to deserialize outbox snapshot `{}`: {source}",
-            path.display()
-        ))
+    let snapshot: OutboxSnapshot = serde_json::from_slice(&raw)
+        .map_err(|source| storage_decode_error("outbox decode", "outbox snapshot", path, source))?;
+    validate_outbox_snapshot(&snapshot, config).map_err(|source| {
+        storage_snapshot_error("outbox validate", "outbox snapshot", path, source)
     })?;
-    validate_outbox_snapshot(&snapshot, config)?;
     Ok(snapshot.queue)
 }
 
@@ -760,8 +788,8 @@ fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -
         version: default_outbox_snapshot_version(),
         queue: queue.to_vec(),
     };
-    let encoded =
-        serde_json::to_vec(&snapshot).map_err(|source| Error::SerializeRequest { source })?;
+    let encoded = serde_json::to_vec(&snapshot)
+        .map_err(|source| storage_encode_error("outbox encode", "outbox snapshot", source))?;
     write_file_atomic(path, encoded.as_slice(), "outbox snapshot")?;
     Ok(())
 }

@@ -7,7 +7,7 @@ use tele::types::advanced::{AdvancedForwardMessagesRequest, AdvancedGetAvailable
 use tele::types::{
     ChatAdministratorCapability, CreateInvoiceLinkRequest, GetChatMemberCountRequest,
     InlineKeyboardButton, InlineKeyboardMarkup, InputMedia, LabeledPrice, MessageId, ParseMode,
-    WebAppData,
+    SuggestedPostParameters, WebAppData,
 };
 use tele::{
     BanMemberOptions, BlockingClient, BootstrapPlan, BootstrapRetryPolicy, Error, ErrorClass,
@@ -160,6 +160,15 @@ async fn blocking_typed_layer_validates_advanced_request_before_transport() -> R
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedForwardMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(9)]);
+    let error = match client.typed().call(&request) {
+        Ok(_) => return Err("unordered message ids must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     Ok(())
 }
 
@@ -431,6 +440,10 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
             "\"disable_notification\":true",
             "\"protect_content\":true",
             "\"message_thread_id\":99",
+            "\"direct_messages_topic_id\":7",
+            "\"allow_paid_broadcast\":true",
+            "\"message_effect_id\":\"effect-1\"",
+            "\"suggested_post_parameters\":{",
             "\"reply_parameters\":{\"message_id\":55",
             "\"link_preview_options\":{\"is_disabled\":true",
             "\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Open\"",
@@ -450,8 +463,14 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
         .parse_mode(ParseMode::MarkdownV2)
         .reply_to_message(MessageId(55))
         .message_thread_id(99)
+        .direct_messages_topic_id(7)
         .disable_notification(true)
         .protect_content(true)
+        .allow_paid_broadcast(true)
+        .message_effect_id("effect-1")
+        .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+            "send_date": 1
+        }))?)
         .disable_link_preview()
         .reply_markup(markup)
         .send()?;

@@ -5,8 +5,9 @@ use serde_json::Value;
 use crate::Result;
 
 use crate::types::validation::{
-    non_negative_i64 as validate_non_negative_i64, positive_i64 as validate_positive_i64,
-    string_id as validate_string_id,
+    non_negative_i64 as validate_non_negative_i64,
+    optional_text_formatting as validate_optional_text_formatting,
+    positive_i64 as validate_positive_i64, string_id as validate_string_id,
 };
 
 use super::AdvancedRequest;
@@ -70,6 +71,12 @@ impl AdvancedRequest for AdvancedSendGiftRequest {
             value.validate()?;
         }
         validate_string_id("gift_id", &self.gift_id)?;
+        validate_optional_text_formatting(
+            "text",
+            self.text.as_deref(),
+            self.text_parse_mode,
+            self.text_entities.as_deref(),
+        )?;
         Ok(())
     }
 }
@@ -109,6 +116,12 @@ impl AdvancedRequest for AdvancedGiftPremiumSubscriptionRequest {
         self.user_id.validate()?;
         validate_positive_i64("month_count", self.month_count)?;
         validate_positive_i64("star_count", self.star_count)?;
+        validate_optional_text_formatting(
+            "text",
+            self.text.as_deref(),
+            self.text_parse_mode,
+            self.text_entities.as_deref(),
+        )?;
         Ok(())
     }
 }

@@ -17,8 +17,8 @@ use tele::types::{
     InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMedia, InputMediaPhoto,
     InputMediaVideo, LabeledPrice, MessageId, ParseMode, SendDocumentRequest,
     SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest,
-    SetMyCommandsRequest, ShippingOption, StickerFormat, Update, UploadStickerFileRequest,
-    WebAppData,
+    SetMyCommandsRequest, ShippingOption, StickerFormat, SuggestedPostParameters, Update,
+    UploadStickerFileRequest, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -183,6 +183,23 @@ async fn typed_layer_validates_advanced_request_before_transport() -> Result<(),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedForwardMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(9)]);
+    let error = match client.typed().call(&request).await {
+        Ok(_) => return Err("unordered message ids must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedForwardMessagesRequest::new(1_i64, 2_i64, vec![MessageId(9), MessageId(9)]);
+    let error = match client.typed().call(&request).await {
+        Ok(_) => return Err("duplicate message ids must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     Ok(())
 }
 
@@ -199,6 +216,18 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("empty required vector must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request =
+        AdvancedForwardMessagesRequest::new(1_i64, 2_i64, vec![MessageId(10), MessageId(9)]);
+    let error = match client
+        .advanced()
+        .forward_messages::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("unordered message ids must be rejected before transport".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -475,6 +504,10 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
             .contains_case_insensitive("\"disable_notification\":true")
             .contains_case_insensitive("\"protect_content\":true")
             .contains_case_insensitive("\"message_thread_id\":99")
+            .contains_case_insensitive("\"direct_messages_topic_id\":7")
+            .contains_case_insensitive("\"allow_paid_broadcast\":true")
+            .contains_case_insensitive("\"message_effect_id\":\"effect-1\"")
+            .contains_case_insensitive("\"suggested_post_parameters\":{")
             .contains_case_insensitive("\"reply_parameters\":{\"message_id\":55")
             .contains_case_insensitive("\"link_preview_options\":{\"is_disabled\":true")
             .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Open\"")
@@ -495,8 +528,14 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
         .parse_mode(ParseMode::MarkdownV2)
         .reply_to_message(MessageId(55))
         .message_thread_id(99)
+        .direct_messages_topic_id(7)
         .disable_notification(true)
         .protect_content(true)
+        .allow_paid_broadcast(true)
+        .message_effect_id("effect-1")
+        .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+            "send_date": 1
+        }))?)
         .disable_link_preview()
         .reply_markup(markup)
         .send()
@@ -548,6 +587,10 @@ async fn app_media_builders_support_common_send_options() -> Result<(), DynError
             .contains_case_insensitive("\"disable_notification\":true")
             .contains_case_insensitive("\"protect_content\":true")
             .contains_case_insensitive("\"message_thread_id\":11")
+            .contains_case_insensitive("\"direct_messages_topic_id\":17")
+            .contains_case_insensitive("\"allow_paid_broadcast\":true")
+            .contains_case_insensitive("\"message_effect_id\":\"photo-effect\"")
+            .contains_case_insensitive("\"suggested_post_parameters\":{")
             .contains_case_insensitive("\"reply_parameters\":{\"message_id\":55")
             .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"View photo\"")
             .contains_case_insensitive("\"callback_data\":\"photo:1\"")
@@ -612,8 +655,14 @@ async fn app_media_builders_support_common_send_options() -> Result<(), DynError
         .has_spoiler(true)
         .reply_to_message(MessageId(55))
         .message_thread_id(11)
+        .direct_messages_topic_id(17)
         .disable_notification(true)
         .protect_content(true)
+        .allow_paid_broadcast(true)
+        .message_effect_id("photo-effect")
+        .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+            "send_date": 1
+        }))?)
         .reply_markup(photo_markup)
         .send()
         .await?;

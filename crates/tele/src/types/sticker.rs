@@ -421,8 +421,33 @@ impl SendStickerRequest {
         self
     }
 
+    pub fn message_thread_id(mut self, message_thread_id: i64) -> Self {
+        self.message_thread_id = Some(message_thread_id);
+        self
+    }
+
+    pub fn direct_messages_topic_id(mut self, direct_messages_topic_id: i64) -> Self {
+        self.direct_messages_topic_id = Some(direct_messages_topic_id);
+        self
+    }
+
+    pub fn allow_paid_broadcast(mut self, enabled: bool) -> Self {
+        self.allow_paid_broadcast = enabled.then_some(true);
+        self
+    }
+
     pub fn message_effect_id(mut self, message_effect_id: impl Into<String>) -> Self {
         self.message_effect_id = Some(message_effect_id.into());
+        self
+    }
+
+    pub fn disable_notification(mut self, enabled: bool) -> Self {
+        self.disable_notification = enabled.then_some(true);
+        self
+    }
+
+    pub fn protect_content(mut self, enabled: bool) -> Self {
+        self.protect_content = enabled.then_some(true);
         self
     }
 

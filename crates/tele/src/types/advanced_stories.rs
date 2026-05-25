@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::Result;
 
 use crate::types::validation::{
+    optional_text_formatting as validate_optional_text_formatting,
     positive_i64 as validate_positive_i64, string_id as validate_string_id,
 };
 
@@ -79,6 +80,12 @@ impl AdvancedRequest for AdvancedPostStoryRequest {
         if let Some(values) = self.areas.as_deref() {
             validate_items(values)?;
         }
+        validate_optional_text_formatting(
+            "caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         Ok(())
     }
 }
@@ -172,6 +179,12 @@ impl AdvancedRequest for AdvancedEditStoryRequest {
         if let Some(values) = self.areas.as_deref() {
             validate_items(values)?;
         }
+        validate_optional_text_formatting(
+            "caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
         Ok(())
     }
 }

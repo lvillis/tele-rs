@@ -114,6 +114,7 @@ where
 {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        validate_file_storage_target(&path, "session store")?;
         let initial = load_session_snapshot::<S>(&path)?;
         Ok(Self {
             path,
@@ -208,8 +209,8 @@ fn persist_session_snapshot<S>(path: &Path, snapshot: &HashMap<i64, S>) -> Resul
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
-    let encoded =
-        serde_json::to_vec(snapshot).map_err(|source| Error::SerializeRequest { source })?;
+    let encoded = serde_json::to_vec(snapshot)
+        .map_err(|source| storage_encode_error("json session encode", "session store", source))?;
     write_file_atomic(path, encoded.as_slice(), "session store")?;
     Ok(())
 }
@@ -337,7 +338,7 @@ where
         Box::pin(async move {
             let key = self.session_key(chat_id);
             let payload = serde_json::to_string(&state)
-                .map_err(|source| Error::SerializeRequest { source })?;
+                .map_err(|source| storage_encode_error("redis encode", "redis state", source))?;
             let mut connection = self.connection().await?;
             let _: () = redis::cmd("SET")
                 .arg(&key)
@@ -496,6 +497,7 @@ where
 
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
         Box::pin(async move {
+            let state = encode_postgres_state(state)?;
             let table = quote_sql_identifier(&self.table);
             let query = format!(
                 "INSERT INTO {table} (chat_id, state) VALUES ($1, $2) \
@@ -503,7 +505,7 @@ where
             );
             sqlx::query(&query)
                 .bind(chat_id)
-                .bind(sqlx::types::Json(state))
+                .bind(state)
                 .execute(&self.pool)
                 .await
                 .map_err(|source| {
@@ -562,6 +564,16 @@ fn validate_sql_identifier(identifier: &str) -> Result<()> {
 #[cfg(feature = "postgres-session")]
 fn quote_sql_identifier(identifier: &str) -> String {
     format!("\"{identifier}\"")
+}
+
+#[cfg(feature = "postgres-session")]
+fn encode_postgres_state<S>(state: S) -> Result<sqlx::types::Json<serde_json::Value>>
+where
+    S: Serialize,
+{
+    let value = serde_json::to_value(state)
+        .map_err(|source| storage_encode_error("postgres encode", "postgres state", source))?;
+    Ok(sqlx::types::Json(value))
 }
 
 /// Loads chat-scoped state from a store.
@@ -866,6 +878,36 @@ mod chat_session_tests {
         assert!(!locks.contains_key(&chat_id));
         Ok(())
     }
+
+    #[derive(Clone, serde::Deserialize)]
+    struct FailingSerializeState;
+
+    impl serde::Serialize for FailingSerializeState {
+        fn serialize<Serializer>(
+            &self,
+            _serializer: Serializer,
+        ) -> std::result::Result<Serializer::Ok, Serializer::Error>
+        where
+            Serializer: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("state cannot be serialized"))
+        }
+    }
+
+    #[tokio::test]
+    async fn json_file_session_store_reports_state_encode_failure_as_storage() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!("tele-session-encode-{timestamp}.json"));
+        let store = JsonFileSessionStore::<FailingSerializeState>::open(&path)?;
+
+        let result = store.save(1, FailingSerializeState).await;
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        assert!(!path.exists());
+        Ok(())
+    }
 }
 
 #[cfg(all(test, any(feature = "redis-session", feature = "postgres-session")))]
@@ -891,5 +933,35 @@ mod tests {
         validate_sql_identifier("SessionState")?;
         assert_eq!(quote_sql_identifier("SessionState"), "\"SessionState\"");
         Ok(())
+    }
+
+    #[cfg(feature = "postgres-session")]
+    #[test]
+    fn postgres_state_encode_failure_is_non_retryable_storage() {
+        #[derive(Clone)]
+        struct FailingSerializeState;
+
+        impl Serialize for FailingSerializeState {
+            fn serialize<Serializer>(
+                &self,
+                _serializer: Serializer,
+            ) -> std::result::Result<Serializer::Ok, Serializer::Error>
+            where
+                Serializer: serde::Serializer,
+            {
+                Err(serde::ser::Error::custom("state cannot be serialized"))
+            }
+        }
+
+        let result = encode_postgres_state(FailingSerializeState);
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                operation,
+                retryable: false,
+                ..
+            }) if operation.as_ref() == "postgres encode"
+        ));
     }
 }

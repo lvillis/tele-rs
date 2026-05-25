@@ -174,6 +174,47 @@ fn storage_error(
     }
 }
 
+fn storage_encode_error(
+    operation: &'static str,
+    subject: &str,
+    source: serde_json::Error,
+) -> Error {
+    storage_error(
+        operation,
+        format!("failed to serialize {subject}: {source}"),
+        false,
+    )
+}
+
+fn storage_decode_error(
+    operation: &'static str,
+    subject: &str,
+    path: &Path,
+    source: serde_json::Error,
+) -> Error {
+    storage_error(
+        operation,
+        format!(
+            "failed to deserialize {subject} `{}`: {source}",
+            path.display()
+        ),
+        false,
+    )
+}
+
+fn storage_snapshot_error(
+    operation: &'static str,
+    subject: &str,
+    path: &Path,
+    source: Error,
+) -> Error {
+    storage_error(
+        operation,
+        format!("invalid {subject} `{}`: {source}", path.display()),
+        false,
+    )
+}
+
 async fn run_blocking_io<T, F>(task: F) -> Result<T>
 where
     T: Send + 'static,
@@ -205,8 +246,48 @@ pub use routing::*;
 pub use runtime::*;
 pub use session::*;
 
-fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+fn storage_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+fn storage_file_name(path: &Path) -> &str {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("snapshot")
+}
+
+fn storage_temp_path(path: &Path, attempt: usize) -> PathBuf {
+    let parent = storage_parent(path);
+    let file_name = storage_file_name(path);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    let process_id = std::process::id();
+    parent.join(format!(".{file_name}.tmp-{process_id}-{nonce}-{attempt}"))
+}
+
+fn validate_file_storage_target(path: &Path, subject: &str) -> Result<()> {
+    if path.exists() {
+        let metadata = fs::metadata(path).map_err(|source| {
+            storage_error(
+                format!("{subject} metadata"),
+                format!("failed to inspect {subject} `{}`: {source}", path.display()),
+                true,
+            )
+        })?;
+        if !metadata.is_file() {
+            return Err(storage_error(
+                format!("{subject} path validate"),
+                format!("{subject} `{}` must be a regular file", path.display()),
+                false,
+            ));
+        }
+    }
+
+    let parent = storage_parent(path);
     fs::create_dir_all(parent).map_err(|source| {
         storage_error(
             format!("{subject} directory create"),
@@ -218,17 +299,82 @@ fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> 
         )
     })?;
 
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("snapshot");
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |duration| duration.as_nanos());
-    let process_id = std::process::id();
+    for attempt in 0..16 {
+        let temp_path = storage_temp_path(path, attempt);
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(file) => {
+                if let Err(source) = file.sync_all() {
+                    let _ = fs::remove_file(&temp_path);
+                    return Err(storage_error(
+                        format!("{subject} temp sync"),
+                        format!(
+                            "failed to sync temp file for {subject} `{}`: {source}",
+                            temp_path.display()
+                        ),
+                        true,
+                    ));
+                }
+                drop(file);
+                if let Err(source) = fs::remove_file(&temp_path) {
+                    return Err(storage_error(
+                        format!("{subject} temp cleanup"),
+                        format!(
+                            "failed to remove temp file for {subject} `{}`: {source}",
+                            temp_path.display()
+                        ),
+                        true,
+                    ));
+                }
+                sync_parent_directory(parent, subject)?;
+                return Ok(());
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(source) => {
+                return Err(storage_error(
+                    format!("{subject} temp create"),
+                    format!(
+                        "failed to create temp file for {subject} `{}`: {source}",
+                        temp_path.display()
+                    ),
+                    true,
+                ));
+            }
+        }
+    }
+
+    Err(storage_error(
+        format!("{subject} temp allocate"),
+        format!(
+            "failed to allocate unique temp file for {subject} `{}`",
+            path.display()
+        ),
+        true,
+    ))
+}
+
+async fn validate_file_storage_target_async(path: PathBuf, subject: &'static str) -> Result<()> {
+    run_blocking_io(move || validate_file_storage_target(path.as_path(), subject)).await
+}
+
+fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
+    let parent = storage_parent(path);
+    fs::create_dir_all(parent).map_err(|source| {
+        storage_error(
+            format!("{subject} directory create"),
+            format!(
+                "failed to create directory for {subject} `{}`: {source}",
+                parent.display()
+            ),
+            true,
+        )
+    })?;
 
     for attempt in 0..16 {
-        let temp_path = parent.join(format!(".{file_name}.tmp-{process_id}-{nonce}-{attempt}"));
+        let temp_path = storage_temp_path(path, attempt);
         match fs::OpenOptions::new()
             .create_new(true)
             .write(true)

@@ -548,7 +548,14 @@ fn string_id_field(field_name: &str) -> bool {
     ) || field_name.ends_with("_id")
 }
 
-fn validation_rule(param: &ParamSpec) -> Option<String> {
+fn ordered_message_ids_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        ("forwardMessages", "message_ids")
+    )
+}
+
+fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
     let field_ty = resolve_param_type(param);
     if type_has_validate(&field_ty) {
         if param.required {
@@ -563,6 +570,13 @@ fn validation_rule(param: &ParamSpec) -> Option<String> {
 
     if field_ty == "Vec<crate::types::common::MessageId>" {
         if param.required {
+            if ordered_message_ids_field(method, param) {
+                return Some(format!(
+                    "        validate_required_ordered_message_ids(\"{}\", &self.{})?;",
+                    param.name, param.field_name
+                ));
+            }
+
             return Some(format!(
                 "        validate_required_message_ids(\"{}\", &self.{})?;",
                 param.name, param.field_name
@@ -570,8 +584,8 @@ fn validation_rule(param: &ParamSpec) -> Option<String> {
         }
 
         return Some(format!(
-            "        if let Some(values) = self.{}.as_deref() {{\n            validate_message_ids(values)?;\n        }}",
-            param.field_name
+            "        if let Some(values) = self.{}.as_deref() {{\n            validate_message_ids(\"{}\", values)?;\n        }}",
+            param.field_name, param.name
         ));
     }
 
@@ -740,6 +754,90 @@ fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
     }
 }
 
+fn param_by_field<'a>(method: &'a MethodSpec, field: &str) -> Option<&'a ParamSpec> {
+    method.params.iter().find(|param| param.field_name == field)
+}
+
+fn optional_field_expr(param: Option<&ParamSpec>, field: &str) -> String {
+    match param {
+        Some(param) if param.required => format!("Some(self.{field})"),
+        Some(_) => format!("self.{field}"),
+        None => "None".to_owned(),
+    }
+}
+
+fn optional_entities_expr(param: Option<&ParamSpec>, field: &str) -> String {
+    match param {
+        Some(param) if param.required => format!("Some(self.{field}.as_slice())"),
+        Some(_) => format!("self.{field}.as_deref()"),
+        None => "None".to_owned(),
+    }
+}
+
+fn formatting_validation_rules(method: &MethodSpec) -> Vec<String> {
+    const FORMATTING_FIELDS: [(&str, &str, &str); 8] = [
+        ("text", "parse_mode", "entities"),
+        ("text", "text_parse_mode", "text_entities"),
+        ("caption", "parse_mode", "caption_entities"),
+        ("caption", "caption_parse_mode", "caption_entities"),
+        ("question", "question_parse_mode", "question_entities"),
+        (
+            "explanation",
+            "explanation_parse_mode",
+            "explanation_entities",
+        ),
+        (
+            "description",
+            "description_parse_mode",
+            "description_entities",
+        ),
+        ("quote", "quote_parse_mode", "quote_entities"),
+    ];
+
+    let mut rules = Vec::new();
+    let mut generated_entity_fields = Vec::new();
+    for (text_field, parse_field, entities_field) in FORMATTING_FIELDS {
+        let Some(text_param) = param_by_field(method, text_field) else {
+            continue;
+        };
+        let parse_param = param_by_field(method, parse_field);
+        let entities_param = param_by_field(method, entities_field);
+        if parse_param.is_none() && entities_param.is_none() {
+            continue;
+        }
+        if generated_entity_fields.contains(&(text_field, entities_field)) {
+            continue;
+        }
+        if parse_param.is_none()
+            && FORMATTING_FIELDS
+                .iter()
+                .any(|(other_text, other_parse, other_entities)| {
+                    *other_text == text_field
+                        && *other_entities == entities_field
+                        && *other_parse != parse_field
+                        && param_by_field(method, other_parse).is_some()
+                })
+        {
+            continue;
+        }
+        generated_entity_fields.push((text_field, entities_field));
+
+        let parse_expr = optional_field_expr(parse_param, parse_field);
+        let entities_expr = optional_entities_expr(entities_param, entities_field);
+        if text_param.required {
+            rules.push(format!(
+                "        validate_text_formatting(\"{text_field}\", &self.{text_field}, {parse_expr}, {entities_expr})?;"
+            ));
+        } else {
+            rules.push(format!(
+                "        validate_optional_text_formatting(\"{text_field}\", self.{text_field}.as_deref(), {parse_expr}, {entities_expr})?;"
+            ));
+        }
+    }
+
+    rules
+}
+
 fn domain_for_method(fn_name: &str) -> &'static str {
     if fn_name.contains("business") {
         return "business";
@@ -776,7 +874,8 @@ fn render_request(method: &MethodSpec) -> String {
         .params
         .iter()
         .filter(|param| !method_specific_validation_owns_param(method, param))
-        .filter_map(validation_rule)
+        .filter_map(|param| validation_rule(method, param))
+        .chain(formatting_validation_rules(method))
         .chain(method_specific_validation_rules(method))
         .collect::<Vec<_>>();
     let derive = if required_params.is_empty() {
@@ -953,19 +1052,26 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         body.contains("validate_string_id(") || uses_string_items_validator;
     let uses_required_vec_validator =
         body.contains("validate_required_vec(") || body.contains("validate_required_string_items(");
-    let uses_required_message_ids_validator = body.contains("validate_required_message_ids(");
-    let uses_message_ids_validator = body.contains("validate_message_ids(");
+    let uses_required_ordered_message_ids_validator =
+        body.contains("validate_required_ordered_message_ids(");
+    let uses_required_message_ids_validator = body.contains("validate_required_message_ids(")
+        || uses_required_ordered_message_ids_validator;
+    let uses_message_ids_validator =
+        body.contains("validate_message_ids(") || uses_required_message_ids_validator;
     let uses_required_items_validator = body.contains("validate_required_items::<");
     let uses_items_validator = body.contains("validate_items(");
     let uses_positive_i64_validator = body.contains("validate_positive_i64(");
     let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
+    let uses_text_formatting_validator = body.contains("validate_text_formatting(")
+        || body.contains("validate_optional_text_formatting(");
     let generated_validate_types = generated_validate_types(methods);
     let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
         || uses_positive_i64_validator
-        || uses_non_negative_i64_validator;
-    let uses_error = uses_required_message_ids_validator
+        || uses_non_negative_i64_validator
+        || uses_text_formatting_validator;
+    let uses_error = uses_message_ids_validator
         || uses_required_items_validator
         || body.contains("Error::InvalidRequest");
     let uses_result = body.contains("fn validate(&self) -> Result<()>")
@@ -977,7 +1083,8 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         || uses_required_items_validator
         || uses_items_validator
         || uses_positive_i64_validator
-        || uses_non_negative_i64_validator;
+        || uses_non_negative_i64_validator
+        || uses_text_formatting_validator;
 
     let mut out = String::new();
     let _ = writeln!(
@@ -1011,6 +1118,12 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         if uses_positive_i64_validator {
             let _ = writeln!(&mut out, "    positive_i64 as validate_positive_i64,");
         }
+        if body.contains("validate_optional_text_formatting(") {
+            let _ = writeln!(
+                &mut out,
+                "    optional_text_formatting as validate_optional_text_formatting,"
+            );
+        }
         if uses_required_vec_validator {
             let _ = writeln!(&mut out, "    required_len as validate_required_vec,");
         }
@@ -1019,6 +1132,9 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         }
         if uses_string_id_validator {
             let _ = writeln!(&mut out, "    string_id as validate_string_id,");
+        }
+        if body.contains("validate_text_formatting(") {
+            let _ = writeln!(&mut out, "    text_formatting as validate_text_formatting,");
         }
         let _ = writeln!(&mut out, "}};");
         let _ = writeln!(&mut out);
@@ -1072,12 +1188,37 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out);
     }
     if uses_message_ids_validator || uses_required_message_ids_validator {
+        let _ = writeln!(&mut out, "const MAX_MESSAGE_IDS: usize = 100;");
+        let _ = writeln!(&mut out);
         let _ = writeln!(
             &mut out,
-            "fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {{"
+            "fn validate_message_ids(field: &str, values: &[crate::types::common::MessageId]) -> Result<()> {{"
         );
-        let _ = writeln!(&mut out, "    for value in values {{");
+        let _ = writeln!(&mut out, "    if values.len() > MAX_MESSAGE_IDS {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} accepts at most {{MAX_MESSAGE_IDS}} message ids\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(
+            &mut out,
+            "    for (index, value) in values.iter().enumerate() {{"
+        );
         let _ = writeln!(&mut out, "        value.validate()?;");
+        let _ = writeln!(
+            &mut out,
+            "        if values[..index].iter().any(|existing| existing == value) {{"
+        );
+        let _ = writeln!(&mut out, "            return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "                reason: format!(\"{{field}} message ids must be unique\"),"
+        );
+        let _ = writeln!(&mut out, "            }});");
+        let _ = writeln!(&mut out, "        }}");
         let _ = writeln!(&mut out, "    }}");
         let _ = writeln!(&mut out);
         let _ = writeln!(&mut out, "    Ok(())");
@@ -1125,7 +1266,37 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "        }});");
         let _ = writeln!(&mut out, "    }}");
         let _ = writeln!(&mut out);
-        let _ = writeln!(&mut out, "    validate_message_ids(values)");
+        let _ = writeln!(&mut out, "    validate_message_ids(field, values)");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+    }
+    if uses_required_ordered_message_ids_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_required_ordered_message_ids(field: &str, values: &[crate::types::common::MessageId]) -> Result<()> {{"
+        );
+        let _ = writeln!(
+            &mut out,
+            "    validate_required_message_ids(field, values)?;"
+        );
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    let mut previous = None;");
+        let _ = writeln!(&mut out, "    for value in values {{");
+        let _ = writeln!(
+            &mut out,
+            "        if previous.is_some_and(|previous| value.0 <= previous) {{"
+        );
+        let _ = writeln!(&mut out, "            return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "                reason: format!(\"{{field}} message ids must be strictly increasing\"),"
+        );
+        let _ = writeln!(&mut out, "            }});");
+        let _ = writeln!(&mut out, "        }}");
+        let _ = writeln!(&mut out, "        previous = Some(value.0);");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    Ok(())");
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
     }
@@ -1443,6 +1614,152 @@ mod tests {
         assert!(generated.contains("validate_required_string_items(\"custom_emoji_ids\""));
         assert!(generated.contains("if let Some(values) = self.keywords.as_deref()"));
         assert!(generated.contains("validate_string_items(\"keywords\", values)?;"));
+    }
+
+    #[test]
+    fn generated_forward_messages_requires_ordered_message_ids() {
+        let method = MethodSpec {
+            fn_name: "forward_messages".to_owned(),
+            method: "forwardMessages".to_owned(),
+            return_desc: String::new(),
+            params: vec![ParamSpec {
+                name: "message_ids".to_owned(),
+                field_name: "message_ids".to_owned(),
+                required: true,
+                type_raw: "Array of Integer".to_owned(),
+                type_rust: "Vec<MessageId>".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains(
+            "validate_required_ordered_message_ids(\"message_ids\", &self.message_ids)?;"
+        ));
+        assert!(generated.contains("const MAX_MESSAGE_IDS: usize = 100;"));
+        assert!(generated.contains("message ids must be strictly increasing"));
+    }
+
+    #[test]
+    fn generated_formatting_fields_use_shared_validation() {
+        let draft = MethodSpec {
+            fn_name: "send_message_draft".to_owned(),
+            method: "sendMessageDraft".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "text".to_owned(),
+                    field_name: "text".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "parse_mode".to_owned(),
+                    field_name: "parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "entities".to_owned(),
+                    field_name: "entities".to_owned(),
+                    required: false,
+                    type_raw: "Array of MessageEntity".to_owned(),
+                    type_rust: "Vec<MessageEntity>".to_owned(),
+                },
+            ],
+        };
+        let gift = MethodSpec {
+            fn_name: "send_gift".to_owned(),
+            method: "sendGift".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "text".to_owned(),
+                    field_name: "text".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "text_parse_mode".to_owned(),
+                    field_name: "text_parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "text_entities".to_owned(),
+                    field_name: "text_entities".to_owned(),
+                    required: false,
+                    type_raw: "Array of MessageEntity".to_owned(),
+                    type_rust: "Vec<MessageEntity>".to_owned(),
+                },
+            ],
+        };
+        let paid_media = MethodSpec {
+            fn_name: "send_paid_media".to_owned(),
+            method: "sendPaidMedia".to_owned(),
+            return_desc: "Returns Message on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "caption".to_owned(),
+                    field_name: "caption".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "parse_mode".to_owned(),
+                    field_name: "parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "caption_entities".to_owned(),
+                    field_name: "caption_entities".to_owned(),
+                    required: false,
+                    type_raw: "Array of MessageEntity".to_owned(),
+                    type_rust: "Vec<MessageEntity>".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&draft, &gift, &paid_media]);
+        assert!(generated.contains("text_formatting as validate_text_formatting"));
+        assert!(
+            generated.contains("optional_text_formatting as validate_optional_text_formatting")
+        );
+        assert!(generated.contains(
+            "validate_text_formatting(\"text\", &self.text, self.parse_mode, self.entities.as_deref())?;"
+        ));
+        assert!(generated.contains(
+            "validate_optional_text_formatting(\"text\", self.text.as_deref(), self.text_parse_mode, self.text_entities.as_deref())?;"
+        ));
+        assert!(generated.contains(
+            "validate_optional_text_formatting(\"caption\", self.caption.as_deref(), self.parse_mode, self.caption_entities.as_deref())?;"
+        ));
+    }
+
+    #[test]
+    fn optional_generated_message_ids_import_error_for_bounds_validation() {
+        let method = MethodSpec {
+            fn_name: "demo".to_owned(),
+            method: "demo".to_owned(),
+            return_desc: String::new(),
+            params: vec![ParamSpec {
+                name: "message_ids".to_owned(),
+                field_name: "message_ids".to_owned(),
+                required: false,
+                type_raw: "Array of Integer".to_owned(),
+                type_rust: "Vec<MessageId>".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("use crate::{Error, Result};"));
+        assert!(generated.contains("validate_message_ids(\"message_ids\", values)?;"));
     }
 
     #[test]

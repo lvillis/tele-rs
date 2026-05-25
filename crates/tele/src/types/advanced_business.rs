@@ -11,9 +11,22 @@ use crate::types::validation::{
 
 use super::AdvancedRequest;
 
-fn validate_message_ids(values: &[crate::types::common::MessageId]) -> Result<()> {
-    for value in values {
+const MAX_MESSAGE_IDS: usize = 100;
+
+fn validate_message_ids(field: &str, values: &[crate::types::common::MessageId]) -> Result<()> {
+    if values.len() > MAX_MESSAGE_IDS {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} accepts at most {MAX_MESSAGE_IDS} message ids"),
+        });
+    }
+
+    for (index, value) in values.iter().enumerate() {
         value.validate()?;
+        if values[..index].iter().any(|existing| existing == value) {
+            return Err(Error::InvalidRequest {
+                reason: format!("{field} message ids must be unique"),
+            });
+        }
     }
 
     Ok(())
@@ -29,7 +42,7 @@ fn validate_required_message_ids(
         });
     }
 
-    validate_message_ids(values)
+    validate_message_ids(field, values)
 }
 
 /// Auto-generated request for `getBusinessConnection`.
