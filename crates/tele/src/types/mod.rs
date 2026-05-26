@@ -5,6 +5,7 @@ pub mod bot;
 pub mod chat;
 pub mod command;
 pub mod common;
+pub(crate) mod extra;
 pub mod file;
 pub mod gift;
 pub mod message;
@@ -63,18 +64,18 @@ pub use message::{
     InputPollOption, Invoice, Location, MaybeInaccessibleMessage, Message,
     MessageAutoDeleteTimerChanged, MessageEntity, MessageEntityKind, MessageIdObject, MessageKind,
     MessageOrigin, MessageOriginChannel, MessageOriginChat, MessageOriginHiddenUser,
-    MessageOriginUser, OrderInfo, PaidMedia, PaidMediaInfo, PaidMessagePriceChanged, PhotoSize,
-    Poll, PollKind, PollOption, ProximityAlertTriggered, RefundedPayment, SendAnimationRequest,
-    SendAudioRequest, SendChatActionRequest, SendContactRequest, SendDiceRequest,
-    SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest, SendMessageRequest,
-    SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest,
-    SendVoiceRequest, SentWebAppMessage, SharedUser, ShippingAddress, StarAmount,
-    StopMessageLiveLocationRequest, StopPollRequest, Story, SuccessfulPayment,
-    SuggestedPostApprovalFailed, SuggestedPostApproved, SuggestedPostDeclined, SuggestedPostInfo,
-    SuggestedPostPaid, SuggestedPostPrice, SuggestedPostRefundReason, SuggestedPostRefunded,
-    SuggestedPostState, TextQuote, UsersShared, Venue, Video, VideoChatEnded,
-    VideoChatParticipantsInvited, VideoChatScheduled, VideoChatStarted, VideoNote, VideoQuality,
-    Voice, WriteAccessAllowed,
+    MessageOriginUser, OrderInfo, PaidMedia, PaidMediaInfo, PaidMediaPhoto, PaidMediaPreview,
+    PaidMediaVideo, PaidMessagePriceChanged, PhotoSize, Poll, PollKind, PollOption,
+    ProximityAlertTriggered, RefundedPayment, SendAnimationRequest, SendAudioRequest,
+    SendChatActionRequest, SendContactRequest, SendDiceRequest, SendDocumentRequest,
+    SendLocationRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
+    SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest,
+    SentWebAppMessage, SharedUser, ShippingAddress, StarAmount, StopMessageLiveLocationRequest,
+    StopPollRequest, Story, SuccessfulPayment, SuggestedPostApprovalFailed, SuggestedPostApproved,
+    SuggestedPostDeclined, SuggestedPostInfo, SuggestedPostPaid, SuggestedPostPrice,
+    SuggestedPostRefundReason, SuggestedPostRefunded, SuggestedPostState, TextQuote, UsersShared,
+    Venue, Video, VideoChatEnded, VideoChatParticipantsInvited, VideoChatScheduled,
+    VideoChatStarted, VideoNote, VideoQuality, Voice, WriteAccessAllowed,
 };
 pub use payment::{
     AnswerPreCheckoutQueryRequest, AnswerShippingQueryRequest, CreateInvoiceLinkRequest,
@@ -95,10 +96,10 @@ pub use telegram::{
     InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultArticle,
     InlineQueryResultArticleKind, InlineQueryResultsButton, InputChecklist, InputPaidMedia,
     InputProfilePhoto, InputStoryContent, InputTextMessageContent, JsonCallbackCodec,
-    KeyboardButton, LinkPreviewOptions, MenuButton, MenuButtonKind, MenuButtonWebApp,
-    PassportElementError, PreparedInlineMessage, PreparedKeyboardButton, ReactionType,
-    ReplyKeyboardMarkup, ReplyKeyboardRemove, ReplyMarkup, ReplyParameters, StoryArea,
-    SuggestedPostParameters, WebAppData, WebAppInfo,
+    KeyboardButton, LinkPreviewOptions, MenuButton, MenuButtonCommands, MenuButtonDefault,
+    MenuButtonKind, MenuButtonWebApp, PassportElementError, PreparedInlineMessage,
+    PreparedKeyboardButton, ReactionType, ReplyKeyboardMarkup, ReplyKeyboardRemove, ReplyMarkup,
+    ReplyParameters, StoryArea, SuggestedPostParameters, WebAppData, WebAppInfo,
 };
 pub use update::{
     AllowedUpdate, AnswerCallbackQueryRequest, AnswerInlineQueryRequest, BusinessBotRights,

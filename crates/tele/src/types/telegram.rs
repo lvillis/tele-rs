@@ -3,12 +3,17 @@ use std::fmt::{Display, Write as _};
 use std::str::FromStr;
 
 use serde::de::DeserializeOwned;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode};
+use crate::types::extra::{
+    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
+};
 use crate::types::message::MessageEntity;
+use crate::types::tagged::{strip_type, tagged_kind};
 use crate::types::validation::optional_text_formatting as validate_optional_text_formatting;
 use crate::{Error, Result};
 
@@ -744,7 +749,7 @@ impl From<InlineQueryResult> for Value {
 }
 
 /// Input text content for inline query article results.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InputTextMessageContent {
     pub message_text: String,
@@ -771,6 +776,62 @@ impl InputTextMessageContent {
             extra: BTreeMap::new(),
         }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_display_text("input text message content text", &self.message_text)?;
+        validate_optional_text_formatting(
+            "input text message content text",
+            Some(&self.message_text),
+            self.parse_mode,
+            self.entities.as_deref(),
+        )?;
+        if self.disable_web_page_preview.is_some() && self.link_preview_options.is_some() {
+            return Err(invalid_request(
+                "input text message content cannot combine disable_web_page_preview with link_preview_options",
+            ));
+        }
+        if let Some(link_preview_options) = self.link_preview_options.as_ref() {
+            link_preview_options.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for InputTextMessageContent {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "message_text",
+            "parse_mode",
+            "entities",
+            "link_preview_options",
+            "disable_web_page_preview",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.parse_mode.is_some())
+            + usize::from(self.entities.is_some())
+            + usize::from(self.link_preview_options.is_some())
+            + usize::from(self.disable_web_page_preview.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("message_text", &self.message_text)?;
+        if let Some(parse_mode) = self.parse_mode {
+            object.serialize_entry("parse_mode", &parse_mode)?;
+        }
+        if let Some(entities) = self.entities.as_ref() {
+            object.serialize_entry("entities", entities)?;
+        }
+        if let Some(link_preview_options) = self.link_preview_options.as_ref() {
+            object.serialize_entry("link_preview_options", link_preview_options)?;
+        }
+        if let Some(disable_web_page_preview) = self.disable_web_page_preview {
+            object.serialize_entry("disable_web_page_preview", &disable_web_page_preview)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
 }
 
 /// Typed inline query article result.
@@ -782,7 +843,7 @@ pub enum InlineQueryResultArticleKind {
 }
 
 /// Typed inline query article result.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineQueryResultArticle {
     #[serde(rename = "type")]
@@ -829,13 +890,90 @@ impl InlineQueryResultArticle {
             extra: BTreeMap::new(),
         }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        let value =
+            serde_json::to_value(self).map_err(|source| Error::SerializeRequest { source })?;
+        validate_inline_query_result_value(&value)?;
+        validate_required_visible_text("inline query article title", &self.title)?;
+        self.input_message_content.validate()?;
+        if let Some(reply_markup) = self.reply_markup.as_ref() {
+            reply_markup.validate()?;
+        }
+        if let Some(url) = self.url.as_deref() {
+            validate_url("inline query article url", url)?;
+        }
+        if let Some(thumbnail_url) = self.thumbnail_url.as_deref() {
+            validate_url("inline query article thumbnail_url", thumbnail_url)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl TryFrom<InlineQueryResultArticle> for InlineQueryResult {
     type Error = Error;
 
     fn try_from(value: InlineQueryResultArticle) -> std::result::Result<Self, Self::Error> {
+        value.validate()?;
         Self::try_from_typed(value)
+    }
+}
+
+impl Serialize for InlineQueryResultArticle {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "type",
+            "id",
+            "title",
+            "input_message_content",
+            "reply_markup",
+            "url",
+            "hide_url",
+            "description",
+            "thumbnail_url",
+            "thumbnail_width",
+            "thumbnail_height",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.reply_markup.is_some())
+            + usize::from(self.url.is_some())
+            + usize::from(self.hide_url.is_some())
+            + usize::from(self.description.is_some())
+            + usize::from(self.thumbnail_url.is_some())
+            + usize::from(self.thumbnail_width.is_some())
+            + usize::from(self.thumbnail_height.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 4))?;
+        object.serialize_entry("type", &self.kind)?;
+        object.serialize_entry("id", &self.id)?;
+        object.serialize_entry("title", &self.title)?;
+        object.serialize_entry("input_message_content", &self.input_message_content)?;
+        if let Some(reply_markup) = self.reply_markup.as_ref() {
+            object.serialize_entry("reply_markup", reply_markup)?;
+        }
+        if let Some(url) = self.url.as_ref() {
+            object.serialize_entry("url", url)?;
+        }
+        if let Some(hide_url) = self.hide_url {
+            object.serialize_entry("hide_url", &hide_url)?;
+        }
+        if let Some(description) = self.description.as_ref() {
+            object.serialize_entry("description", description)?;
+        }
+        if let Some(thumbnail_url) = self.thumbnail_url.as_ref() {
+            object.serialize_entry("thumbnail_url", thumbnail_url)?;
+        }
+        if let Some(thumbnail_width) = self.thumbnail_width {
+            object.serialize_entry("thumbnail_width", &thumbnail_width)?;
+        }
+        if let Some(thumbnail_height) = self.thumbnail_height {
+            object.serialize_entry("thumbnail_height", &thumbnail_height)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
     }
 }
 
@@ -907,17 +1045,36 @@ pub struct PreparedKeyboardButton {
     pub extra: BTreeMap<String, Value>,
 }
 
-/// Typed menu button union.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+/// Menu button returned by Telegram or sent through `setChatMenuButton`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum MenuButton {
-    Typed(MenuButtonKind),
-    Other(Value),
+    Commands(MenuButtonCommands),
+    Default(MenuButtonDefault),
+    WebApp(MenuButtonWebApp),
+    Unknown(Value),
 }
 
-/// Known menu button variants.
+/// `commands` menu button payload.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MenuButtonCommands {
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// `default` menu button payload.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct MenuButtonDefault {
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Known menu button variants for constructing `MenuButton` values.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MenuButtonKind {
     Commands,
     Default,
@@ -930,30 +1087,207 @@ impl MenuButton {
     }
 
     pub fn commands() -> Self {
-        Self::Typed(MenuButtonKind::Commands)
+        Self::Commands(MenuButtonCommands::default())
     }
 
     pub fn default_button() -> Self {
-        Self::Typed(MenuButtonKind::Default)
+        Self::Default(MenuButtonDefault::default())
     }
 
     pub fn web_app(text: impl Into<String>, web_app: impl Into<WebAppInfo>) -> Self {
-        Self::Typed(MenuButtonKind::WebApp(MenuButtonWebApp::new(text, web_app)))
+        Self::WebApp(MenuButtonWebApp::new(text, web_app))
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::Commands(_) => Some("commands"),
+            Self::Default(_) => Some("default"),
+            Self::WebApp(_) => Some("web_app"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn is_commands(&self) -> bool {
+        matches!(self, Self::Commands(_))
+    }
+
+    pub fn as_commands(&self) -> Option<&MenuButtonCommands> {
+        match self {
+            Self::Commands(value) => Some(value),
+            Self::Default(_) | Self::WebApp(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_commands(self) -> Option<MenuButtonCommands> {
+        match self {
+            Self::Commands(value) => Some(value),
+            Self::Default(_) | Self::WebApp(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Default(_))
+    }
+
+    pub fn as_default(&self) -> Option<&MenuButtonDefault> {
+        match self {
+            Self::Default(value) => Some(value),
+            Self::Commands(_) | Self::WebApp(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_default(self) -> Option<MenuButtonDefault> {
+        match self {
+            Self::Default(value) => Some(value),
+            Self::Commands(_) | Self::WebApp(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn is_web_app(&self) -> bool {
+        matches!(self, Self::WebApp(_))
     }
 
     pub fn as_web_app(&self) -> Option<&MenuButtonWebApp> {
         match self {
-            Self::Typed(MenuButtonKind::WebApp(value)) => Some(value),
-            Self::Typed(_) | Self::Other(_) => None,
+            Self::WebApp(value) => Some(value),
+            Self::Commands(_) | Self::Default(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_web_app(self) -> Option<MenuButtonWebApp> {
+        match self {
+            Self::WebApp(value) => Some(value),
+            Self::Commands(_) | Self::Default(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_unknown_value(&self) -> Option<&Value> {
+        match self {
+            Self::Unknown(value) => Some(value),
+            Self::Commands(_) | Self::Default(_) | Self::WebApp(_) => None,
+        }
+    }
+
+    pub fn into_unknown_value(self) -> Option<Value> {
+        match self {
+            Self::Unknown(value) => Some(value),
+            Self::Commands(_) | Self::Default(_) | Self::WebApp(_) => None,
         }
     }
 
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Typed(MenuButtonKind::Commands | MenuButtonKind::Default) => Ok(()),
-            Self::Typed(MenuButtonKind::WebApp(value)) => value.validate(),
-            Self::Other(value) => validate_typed_object_payload("menu_button", value),
+            Self::Commands(_) | Self::Default(_) => Ok(()),
+            Self::WebApp(value) => value.validate(),
+            Self::Unknown(value) => validate_unknown_menu_button(value),
         }
+    }
+}
+
+fn deserialize_menu_button_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> MenuButton,
+) -> MenuButton
+where
+    T: DeserializeOwned,
+{
+    match serde_json::from_value::<T>(strip_type(value.clone())) {
+        Ok(payload) => constructor(payload),
+        Err(_error) => MenuButton::Unknown(value),
+    }
+}
+
+fn validate_unknown_menu_button(value: &Value) -> Result<()> {
+    match tagged_kind(value) {
+        Some("web_app") => {
+            match serde_json::from_value::<MenuButtonWebApp>(strip_type(value.clone())) {
+                Ok(payload) => payload.validate(),
+                Err(error) => Err(invalid_request(format!(
+                    "invalid menu_button web_app payload: {error}"
+                ))),
+            }
+        }
+        Some("commands" | "default") => Ok(()),
+        Some(_) | None => validate_typed_object_payload("menu_button", value),
+    }
+}
+
+fn menu_button_object(kind: &str, extra: BTreeMap<String, Value>) -> Value {
+    let mut object = serde_json::Map::new();
+    for (key, value) in extra {
+        object.insert(key, value);
+    }
+    object.insert("type".to_owned(), Value::String(kind.to_owned()));
+    Value::Object(object)
+}
+
+fn web_app_info_object(value: WebAppInfo) -> Value {
+    let mut object = serde_json::Map::new();
+    for (key, extra_value) in value.extra {
+        object.insert(key, extra_value);
+    }
+    object.insert("url".to_owned(), Value::String(value.url));
+    Value::Object(object)
+}
+
+impl Serialize for MenuButton {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Commands(value) => {
+                serialize_menu_button_object(serializer, "commands", &value.extra)
+            }
+            Self::Default(value) => {
+                serialize_menu_button_object(serializer, "default", &value.extra)
+            }
+            Self::WebApp(value) => serialize_menu_button_web_app(serializer, value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+fn serialize_menu_button_object<S>(
+    serializer: S,
+    kind: &str,
+    extra: &BTreeMap<String, Value>,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let reserved = ["type"];
+    let extra_len = extra_field_len(extra, &reserved);
+    let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+    object.serialize_entry("type", kind)?;
+    serialize_extra_fields(&mut object, extra, &reserved)?;
+    object.end()
+}
+
+fn serialize_menu_button_web_app<S>(
+    serializer: S,
+    value: &MenuButtonWebApp,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let reserved = ["type", "text", "web_app"];
+    let extra_len = extra_field_len(&value.extra, &reserved);
+    let mut object = serializer.serialize_map(Some(extra_len + 3))?;
+    object.serialize_entry("type", "web_app")?;
+    object.serialize_entry("text", &value.text)?;
+    object.serialize_entry("web_app", &value.web_app)?;
+    serialize_extra_fields(&mut object, &value.extra, &reserved)?;
+    object.end()
+}
+
+impl<'de> Deserialize<'de> for MenuButton {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Ok(Self::from(value))
     }
 }
 
@@ -965,53 +1299,60 @@ impl Default for MenuButton {
 
 impl From<Value> for MenuButton {
     fn from(value: Value) -> Self {
-        match serde_json::from_value::<MenuButtonKind>(value.clone()) {
-            Ok(known) => Self::Typed(known),
-            Err(_error) => Self::Other(value),
+        match tagged_kind(&value) {
+            Some("commands") => deserialize_menu_button_known(value, Self::Commands),
+            Some("default") => deserialize_menu_button_known(value, Self::Default),
+            Some("web_app") => deserialize_menu_button_known(value, Self::WebApp),
+            Some(_) | None => Self::Unknown(value),
         }
     }
 }
 
 impl From<MenuButtonKind> for MenuButton {
     fn from(value: MenuButtonKind) -> Self {
-        Self::Typed(value)
+        match value {
+            MenuButtonKind::Commands => Self::commands(),
+            MenuButtonKind::Default => Self::default_button(),
+            MenuButtonKind::WebApp(value) => Self::WebApp(value),
+        }
     }
 }
 
 impl From<MenuButton> for Value {
     fn from(value: MenuButton) -> Self {
         match value {
-            MenuButton::Typed(known) => match known {
-                MenuButtonKind::Commands => serde_json::json!({"type": "commands"}),
-                MenuButtonKind::Default => serde_json::json!({"type": "default"}),
-                MenuButtonKind::WebApp(mut value) => {
-                    let mut object = serde_json::Map::new();
-                    let mut web_app = serde_json::Map::new();
-                    web_app.insert("url".to_owned(), Value::String(value.web_app.url));
-                    object.insert("type".to_owned(), Value::String("web_app".to_owned()));
-                    object.insert("text".to_owned(), Value::String(value.text));
-                    object.insert("web_app".to_owned(), Value::Object(web_app));
-                    for (key, extra_value) in std::mem::take(&mut value.extra) {
-                        object.insert(key, extra_value);
-                    }
-                    Value::Object(object)
+            MenuButton::Commands(value) => menu_button_object("commands", value.extra),
+            MenuButton::Default(value) => menu_button_object("default", value.extra),
+            MenuButton::WebApp(value) => {
+                let mut object = serde_json::Map::new();
+                for (key, extra_value) in value.extra {
+                    object.insert(key, extra_value);
                 }
-            },
-            MenuButton::Other(value) => value,
+                object.insert("type".to_owned(), Value::String("web_app".to_owned()));
+                object.insert("text".to_owned(), Value::String(value.text));
+                object.insert("web_app".to_owned(), web_app_info_object(value.web_app));
+                Value::Object(object)
+            }
+            MenuButton::Unknown(value) => value,
         }
     }
 }
 
 /// Mini App Web App descriptor.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[non_exhaustive]
 pub struct WebAppInfo {
     pub url: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl WebAppInfo {
     pub fn new(url: impl Into<String>) -> Self {
-        Self { url: url.into() }
+        Self {
+            url: url.into(),
+            extra: BTreeMap::new(),
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -1031,8 +1372,22 @@ impl From<&str> for WebAppInfo {
     }
 }
 
+impl Serialize for WebAppInfo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["url"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("url", &self.url)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Button shown above inline query results.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[non_exhaustive]
 pub struct InlineQueryResultsButton {
     pub text: String,
@@ -1090,7 +1445,11 @@ impl InlineQueryResultsButton {
                 "inline query results button cannot set both web_app and start_parameter",
             ));
         }
-        if self.web_app.is_none() && self.start_parameter.is_none() && self.extra.is_empty() {
+        let reserved = ["text", "web_app", "start_parameter"];
+        if self.web_app.is_none()
+            && self.start_parameter.is_none()
+            && extra_field_len(&self.extra, &reserved) == 0
+        {
             return Err(invalid_request(
                 "inline query results button must define an action",
             ));
@@ -1100,8 +1459,30 @@ impl InlineQueryResultsButton {
     }
 }
 
+impl Serialize for InlineQueryResultsButton {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["text", "web_app", "start_parameter"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len =
+            usize::from(self.web_app.is_some()) + usize::from(self.start_parameter.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("text", &self.text)?;
+        if let Some(web_app) = self.web_app.as_ref() {
+            object.serialize_entry("web_app", web_app)?;
+        }
+        if let Some(start_parameter) = self.start_parameter.as_ref() {
+            object.serialize_entry("start_parameter", start_parameter)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Menu button launching a Mini App.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[non_exhaustive]
 pub struct MenuButtonWebApp {
     pub text: String,
@@ -1125,14 +1506,29 @@ impl MenuButtonWebApp {
     }
 }
 
+impl Serialize for MenuButtonWebApp {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["text", "web_app"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
+        object.serialize_entry("text", &self.text)?;
+        object.serialize_entry("web_app", &self.web_app)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 impl From<MenuButtonWebApp> for MenuButton {
     fn from(value: MenuButtonWebApp) -> Self {
-        Self::Typed(MenuButtonKind::WebApp(value))
+        Self::WebApp(value)
     }
 }
 
 /// Data sent from Mini App via `Telegram.WebApp.sendData`.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[non_exhaustive]
 pub struct WebAppData {
     pub data: String,
@@ -1148,6 +1544,21 @@ impl WebAppData {
             button_text: button_text.into(),
             extra: BTreeMap::new(),
         }
+    }
+}
+
+impl Serialize for WebAppData {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["data", "button_text"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
+        object.serialize_entry("data", &self.data)?;
+        object.serialize_entry("button_text", &self.button_text)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
     }
 }
 
@@ -1197,7 +1608,7 @@ json_payload_wrapper!(
 );
 
 /// Inline keyboard button.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineKeyboardButton {
     pub text: String,
@@ -1356,7 +1767,8 @@ impl InlineKeyboardButton {
                 "inline keyboard button must define exactly one known action",
             ));
         }
-        if known_actions == 0 && self.extra.is_empty() {
+        let reserved = ["text", "web_app"];
+        if known_actions == 0 && extra_field_len(&self.extra, &reserved) == 0 {
             return Err(invalid_request(
                 "inline keyboard button must define an action",
             ));
@@ -1366,8 +1778,26 @@ impl InlineKeyboardButton {
     }
 }
 
+impl Serialize for InlineKeyboardButton {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["text", "web_app"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.web_app.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("text", &self.text)?;
+        if let Some(web_app) = self.web_app.as_ref() {
+            object.serialize_entry("web_app", web_app)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Inline keyboard markup.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineKeyboardMarkup {
     pub inline_keyboard: Vec<Vec<InlineKeyboardButton>>,
@@ -1409,8 +1839,22 @@ impl InlineKeyboardMarkup {
     }
 }
 
+impl Serialize for InlineKeyboardMarkup {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["inline_keyboard"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("inline_keyboard", &self.inline_keyboard)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Reply keyboard button.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct KeyboardButton {
     pub text: String,
@@ -1471,8 +1915,26 @@ impl KeyboardButton {
     }
 }
 
+impl Serialize for KeyboardButton {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["text", "web_app"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.web_app.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("text", &self.text)?;
+        if let Some(web_app) = self.web_app.as_ref() {
+            object.serialize_entry("web_app", web_app)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Reply keyboard markup.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ReplyKeyboardMarkup {
     pub keyboard: Vec<Vec<KeyboardButton>>,
@@ -1523,8 +1985,49 @@ impl ReplyKeyboardMarkup {
     }
 }
 
+impl Serialize for ReplyKeyboardMarkup {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "keyboard",
+            "is_persistent",
+            "resize_keyboard",
+            "one_time_keyboard",
+            "input_field_placeholder",
+            "selective",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.is_persistent.is_some())
+            + usize::from(self.resize_keyboard.is_some())
+            + usize::from(self.one_time_keyboard.is_some())
+            + usize::from(self.input_field_placeholder.is_some())
+            + usize::from(self.selective.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("keyboard", &self.keyboard)?;
+        if let Some(is_persistent) = self.is_persistent {
+            object.serialize_entry("is_persistent", &is_persistent)?;
+        }
+        if let Some(resize_keyboard) = self.resize_keyboard {
+            object.serialize_entry("resize_keyboard", &resize_keyboard)?;
+        }
+        if let Some(one_time_keyboard) = self.one_time_keyboard {
+            object.serialize_entry("one_time_keyboard", &one_time_keyboard)?;
+        }
+        if let Some(input_field_placeholder) = self.input_field_placeholder.as_ref() {
+            object.serialize_entry("input_field_placeholder", input_field_placeholder)?;
+        }
+        if let Some(selective) = self.selective {
+            object.serialize_entry("selective", &selective)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Remove reply keyboard marker.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ReplyKeyboardRemove {
     pub remove_keyboard: bool,
@@ -1554,8 +2057,26 @@ impl ReplyKeyboardRemove {
     }
 }
 
+impl Serialize for ReplyKeyboardRemove {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["remove_keyboard", "selective"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.selective.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("remove_keyboard", &self.remove_keyboard)?;
+        if let Some(selective) = self.selective {
+            object.serialize_entry("selective", &selective)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Force reply marker.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ForceReply {
     pub force_reply: bool,
@@ -1588,6 +2109,28 @@ impl ForceReply {
         }
 
         Ok(())
+    }
+}
+
+impl Serialize for ForceReply {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["force_reply", "input_field_placeholder", "selective"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.input_field_placeholder.is_some())
+            + usize::from(self.selective.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("force_reply", &self.force_reply)?;
+        if let Some(input_field_placeholder) = self.input_field_placeholder.as_ref() {
+            object.serialize_entry("input_field_placeholder", input_field_placeholder)?;
+        }
+        if let Some(selective) = self.selective {
+            object.serialize_entry("selective", &selective)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
     }
 }
 
@@ -1637,7 +2180,7 @@ impl ReplyMarkup {
 }
 
 /// Reply-to reference parameters.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ReplyParameters {
     pub message_id: MessageId,
@@ -1699,8 +2242,54 @@ impl ReplyParameters {
     }
 }
 
+impl Serialize for ReplyParameters {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "message_id",
+            "chat_id",
+            "allow_sending_without_reply",
+            "quote",
+            "quote_parse_mode",
+            "quote_entities",
+            "quote_position",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.chat_id.is_some())
+            + usize::from(self.allow_sending_without_reply.is_some())
+            + usize::from(self.quote.is_some())
+            + usize::from(self.quote_parse_mode.is_some())
+            + usize::from(self.quote_entities.is_some())
+            + usize::from(self.quote_position.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("message_id", &self.message_id)?;
+        if let Some(chat_id) = self.chat_id.as_ref() {
+            object.serialize_entry("chat_id", chat_id)?;
+        }
+        if let Some(allow_sending_without_reply) = self.allow_sending_without_reply {
+            object.serialize_entry("allow_sending_without_reply", &allow_sending_without_reply)?;
+        }
+        if let Some(quote) = self.quote.as_ref() {
+            object.serialize_entry("quote", quote)?;
+        }
+        if let Some(quote_parse_mode) = self.quote_parse_mode {
+            object.serialize_entry("quote_parse_mode", &quote_parse_mode)?;
+        }
+        if let Some(quote_entities) = self.quote_entities.as_ref() {
+            object.serialize_entry("quote_entities", quote_entities)?;
+        }
+        if let Some(quote_position) = self.quote_position {
+            object.serialize_entry("quote_position", &quote_position)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Link preview options for text messages.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct LinkPreviewOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1765,6 +2354,45 @@ impl Default for LinkPreviewOptions {
     }
 }
 
+impl Serialize for LinkPreviewOptions {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "is_disabled",
+            "url",
+            "prefer_small_media",
+            "prefer_large_media",
+            "show_above_text",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.is_disabled.is_some())
+            + usize::from(self.url.is_some())
+            + usize::from(self.prefer_small_media.is_some())
+            + usize::from(self.prefer_large_media.is_some())
+            + usize::from(self.show_above_text.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len))?;
+        if let Some(is_disabled) = self.is_disabled {
+            object.serialize_entry("is_disabled", &is_disabled)?;
+        }
+        if let Some(url) = self.url.as_ref() {
+            object.serialize_entry("url", url)?;
+        }
+        if let Some(prefer_small_media) = self.prefer_small_media {
+            object.serialize_entry("prefer_small_media", &prefer_small_media)?;
+        }
+        if let Some(prefer_large_media) = self.prefer_large_media {
+            object.serialize_entry("prefer_large_media", &prefer_large_media)?;
+        }
+        if let Some(show_above_text) = self.show_above_text {
+            object.serialize_entry("show_above_text", &show_above_text)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1780,6 +2408,25 @@ mod tests {
         let parsed: InlineQueryResultArticle = serde_json::from_value(value)?;
         assert_eq!(parsed.kind, InlineQueryResultArticleKind::Article);
 
+        let mut reserved_extra = InlineQueryResultArticle::new("article-id", "Title", "hello");
+        reserved_extra
+            .extra
+            .insert("type".to_owned(), serde_json::json!("photo"));
+        reserved_extra
+            .extra
+            .insert("id".to_owned(), serde_json::json!("overridden-id"));
+        reserved_extra.input_message_content.extra.insert(
+            "message_text".to_owned(),
+            serde_json::json!("overridden text"),
+        );
+        let reserved_extra_value = serde_json::to_value(&reserved_extra)?;
+        assert_eq!(reserved_extra_value["type"], "article");
+        assert_eq!(reserved_extra_value["id"], "article-id");
+        assert_eq!(
+            reserved_extra_value["input_message_content"]["message_text"],
+            "hello"
+        );
+
         let invalid = serde_json::json!({
             "type": "photo",
             "id": "article-id",
@@ -1789,6 +2436,19 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<InlineQueryResultArticle>(invalid).is_err());
+
+        let mut conflicting_link_preview =
+            InlineQueryResultArticle::new("article-id", "Title", "hello");
+        conflicting_link_preview
+            .input_message_content
+            .disable_web_page_preview = Some(true);
+        conflicting_link_preview
+            .input_message_content
+            .link_preview_options = Some(LinkPreviewOptions::disabled());
+        assert!(matches!(
+            InlineQueryResult::try_from(conflicting_link_preview),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         Ok(())
     }
@@ -1821,6 +2481,271 @@ mod tests {
             "id": "\n"
         }));
         assert!(decoded.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn markup_extra_cannot_override_reserved_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut inline_button = InlineKeyboardButton::callback("Open", "real-action")?;
+        inline_button
+            .extra
+            .insert("text".to_owned(), serde_json::json!("overridden"));
+        inline_button.extra.insert(
+            "web_app".to_owned(),
+            serde_json::json!({"url": "https://example.com/overridden"}),
+        );
+        let inline_button_json = serde_json::to_value(&inline_button)?;
+        assert_eq!(inline_button_json["text"], "Open");
+        assert!(inline_button_json.get("web_app").is_none());
+        assert_eq!(inline_button_json["callback_data"], "real-action");
+
+        let mut missing_action = InlineKeyboardButton::new("No action");
+        missing_action
+            .extra
+            .insert("text".to_owned(), serde_json::json!("still no action"));
+        assert!(matches!(
+            missing_action.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut inline_markup = InlineKeyboardMarkup::single_row(vec![inline_button]);
+        inline_markup
+            .extra
+            .insert("inline_keyboard".to_owned(), serde_json::json!([]));
+        let inline_markup_json = serde_json::to_value(&inline_markup)?;
+        assert_eq!(
+            inline_markup_json["inline_keyboard"][0][0]["callback_data"],
+            "real-action"
+        );
+
+        let mut keyboard_button = KeyboardButton::new("Share");
+        keyboard_button
+            .extra
+            .insert("text".to_owned(), serde_json::json!("overridden"));
+        keyboard_button.extra.insert(
+            "web_app".to_owned(),
+            serde_json::json!({"url": "https://example.com/overridden"}),
+        );
+        let keyboard_button_json = serde_json::to_value(&keyboard_button)?;
+        assert_eq!(keyboard_button_json["text"], "Share");
+        assert!(keyboard_button_json.get("web_app").is_none());
+
+        let mut reply_keyboard = ReplyKeyboardMarkup::new(vec![vec![keyboard_button]]);
+        reply_keyboard.selective = Some(true);
+        reply_keyboard
+            .extra
+            .insert("keyboard".to_owned(), serde_json::json!([]));
+        reply_keyboard
+            .extra
+            .insert("selective".to_owned(), serde_json::json!(false));
+        let reply_keyboard_json = serde_json::to_value(&reply_keyboard)?;
+        assert_eq!(reply_keyboard_json["keyboard"][0][0]["text"], "Share");
+        assert_eq!(reply_keyboard_json["selective"], true);
+
+        let mut remove = ReplyKeyboardRemove {
+            selective: Some(true),
+            ..ReplyKeyboardRemove::default()
+        };
+        remove
+            .extra
+            .insert("remove_keyboard".to_owned(), serde_json::json!(false));
+        remove
+            .extra
+            .insert("selective".to_owned(), serde_json::json!(false));
+        let remove_json = serde_json::to_value(&remove)?;
+        assert_eq!(remove_json["remove_keyboard"], true);
+        assert_eq!(remove_json["selective"], true);
+
+        let mut force_reply = ForceReply {
+            selective: Some(true),
+            ..ForceReply::default()
+        };
+        force_reply
+            .extra
+            .insert("force_reply".to_owned(), serde_json::json!(false));
+        force_reply
+            .extra
+            .insert("selective".to_owned(), serde_json::json!(false));
+        let force_reply_json = serde_json::to_value(&force_reply)?;
+        assert_eq!(force_reply_json["force_reply"], true);
+        assert_eq!(force_reply_json["selective"], true);
+
+        let mut link_preview = LinkPreviewOptions::disabled();
+        link_preview
+            .extra
+            .insert("is_disabled".to_owned(), serde_json::json!(false));
+        link_preview.extra.insert(
+            "url".to_owned(),
+            serde_json::json!("https://example.com/overridden"),
+        );
+        let link_preview_json = serde_json::to_value(&link_preview)?;
+        assert_eq!(link_preview_json["is_disabled"], true);
+        assert!(link_preview_json.get("url").is_none());
+
+        let mut inline_results_button =
+            InlineQueryResultsButton::web_app("Open results", "https://example.com/app");
+        inline_results_button
+            .extra
+            .insert("text".to_owned(), serde_json::json!("overridden"));
+        inline_results_button.extra.insert(
+            "web_app".to_owned(),
+            serde_json::json!({"url": "https://example.com/overridden"}),
+        );
+        let inline_results_button_json = serde_json::to_value(&inline_results_button)?;
+        assert_eq!(inline_results_button_json["text"], "Open results");
+        assert_eq!(
+            inline_results_button_json["web_app"]["url"],
+            "https://example.com/app"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn reply_parameters_extra_cannot_override_reserved_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut reply = ReplyParameters::new(MessageId(42));
+        reply.chat_id = Some(ChatId::from(1001));
+        reply.allow_sending_without_reply = Some(true);
+        reply.quote = Some("quoted text".to_owned());
+        reply.quote_parse_mode = Some(ParseMode::MarkdownV2);
+        reply.quote_position = Some(3);
+        reply
+            .extra
+            .insert("message_id".to_owned(), serde_json::json!(1));
+        reply
+            .extra
+            .insert("chat_id".to_owned(), serde_json::json!(2));
+        reply.extra.insert(
+            "allow_sending_without_reply".to_owned(),
+            serde_json::json!(false),
+        );
+        reply
+            .extra
+            .insert("quote".to_owned(), serde_json::json!("overridden"));
+        reply
+            .extra
+            .insert("quote_position".to_owned(), serde_json::json!(99));
+        reply
+            .extra
+            .insert("future_field".to_owned(), serde_json::json!("kept"));
+
+        let value = serde_json::to_value(&reply)?;
+        assert_eq!(value["message_id"], 42);
+        assert_eq!(value["chat_id"], 1001);
+        assert_eq!(value["allow_sending_without_reply"], true);
+        assert_eq!(value["quote"], "quoted text");
+        assert_eq!(value["quote_parse_mode"], "MarkdownV2");
+        assert_eq!(value["quote_position"], 3);
+        assert_eq!(value["future_field"], "kept");
+
+        Ok(())
+    }
+
+    #[test]
+    fn web_app_data_extra_cannot_override_reserved_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut web_app_data = WebAppData::new(r#"{"query_id":"q-1","item":"coffee"}"#, "Open");
+        web_app_data
+            .extra
+            .insert("data".to_owned(), serde_json::json!("overridden"));
+        web_app_data
+            .extra
+            .insert("button_text".to_owned(), serde_json::json!("overridden"));
+        web_app_data
+            .extra
+            .insert("future_field".to_owned(), serde_json::json!("kept"));
+
+        let value = serde_json::to_value(&web_app_data)?;
+        assert_eq!(value["data"], r#"{"query_id":"q-1","item":"coffee"}"#);
+        assert_eq!(value["button_text"], "Open");
+        assert_eq!(value["future_field"], "kept");
+
+        let parsed = serde_json::from_value::<WebAppData>(value)?;
+        assert_eq!(parsed.data, r#"{"query_id":"q-1","item":"coffee"}"#);
+        assert_eq!(parsed.button_text, "Open");
+        assert_eq!(
+            parsed.extra.get("future_field"),
+            Some(&serde_json::json!("kept"))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn menu_button_preserves_known_and_unknown_payloads()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let future = serde_json::json!({"kept": true});
+        let commands = MenuButton::new(serde_json::json!({
+            "type": "commands",
+            "future": future,
+        }));
+        assert_eq!(commands.kind(), Some("commands"));
+        assert!(commands.is_commands());
+        assert_eq!(
+            commands
+                .as_commands()
+                .and_then(|value| value.extra.get("future")),
+            Some(&future)
+        );
+        let commands_json = serde_json::to_value(&commands)?;
+        assert_eq!(commands_json["type"], "commands");
+        assert_eq!(commands_json["future"], future);
+        assert_eq!(
+            commands
+                .clone()
+                .into_commands()
+                .and_then(|value| value.extra.get("future").cloned()),
+            Some(future.clone())
+        );
+
+        let default_button = MenuButton::new(serde_json::json!({
+            "type": "default",
+            "future": "value",
+        }));
+        assert_eq!(default_button.kind(), Some("default"));
+        assert!(default_button.is_default());
+        let default_json = serde_json::to_value(&default_button)?;
+        assert_eq!(default_json["future"], "value");
+
+        let nested_future = serde_json::json!({"nested": true});
+        let web_app = MenuButton::new(serde_json::json!({
+            "type": "web_app",
+            "text": "Open",
+            "web_app": {
+                "url": "https://example.com/app",
+                "future": nested_future,
+            },
+            "future": "outer",
+        }));
+        assert_eq!(web_app.kind(), Some("web_app"));
+        assert!(web_app.is_web_app());
+        assert_eq!(
+            web_app
+                .as_web_app()
+                .and_then(|value| value.web_app.extra.get("future")),
+            Some(&nested_future)
+        );
+        let web_app_json = serde_json::to_value(&web_app)?;
+        assert_eq!(web_app_json["future"], "outer");
+        assert_eq!(web_app_json["web_app"]["future"], nested_future);
+
+        let raw_unknown = serde_json::json!({
+            "type": "custom_menu_button",
+            "raw_field": "raw_value",
+        });
+        let unknown = MenuButton::new(raw_unknown.clone());
+        assert_eq!(unknown.kind(), Some("custom_menu_button"));
+        assert_eq!(unknown.as_unknown_value(), Some(&raw_unknown));
+        assert_eq!(serde_json::to_value(&unknown)?, raw_unknown);
+        assert_eq!(unknown.into_unknown_value(), Some(raw_unknown));
+
+        assert!(matches!(
+            MenuButton::new(serde_json::json!({"type": "web_app"})).validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         Ok(())
     }

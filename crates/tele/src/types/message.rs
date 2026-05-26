@@ -31,8 +31,8 @@ pub use forum::{
     GeneralForumTopicHidden, GeneralForumTopicUnhidden,
 };
 pub use media::{
-    Animation, Audio, Document, PaidMedia, PaidMediaInfo, Story, Video, VideoNote, VideoQuality,
-    Voice,
+    Animation, Audio, Document, PaidMedia, PaidMediaInfo, PaidMediaPhoto, PaidMediaPreview,
+    PaidMediaVideo, Story, Video, VideoNote, VideoQuality, Voice,
 };
 pub use metadata::{
     MessageKind, SuggestedPostApprovalFailed, SuggestedPostApproved, SuggestedPostDeclined,

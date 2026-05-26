@@ -216,11 +216,10 @@ where
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| invalid_request("web_app_data payload is missing non-empty `query_id`"))?;
 
-    let payload = serde_json::from_value::<T>(serde_json::Value::Object(object.clone())).map_err(
-        |source| Error::InvalidRequest {
+    let payload = serde_json::from_value::<T>(serde_json::Value::Object(std::mem::take(object)))
+        .map_err(|source| Error::InvalidRequest {
             reason: format!("failed to parse typed web_app_data payload: {source}"),
-        },
-    )?;
+        })?;
 
     Ok(WebAppQueryPayload { query_id, payload })
 }

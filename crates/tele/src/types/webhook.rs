@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::types::extra::{
+    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
+};
 use crate::types::update::{AllowedUpdate, UpdateKind, validate_allowed_updates};
 use crate::{Error, Result};
 
@@ -149,7 +153,7 @@ pub struct DeleteWebhookRequest {
 }
 
 /// Telegram webhook info response.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookInfo {
     pub url: String,
@@ -167,6 +171,51 @@ pub struct WebhookInfo {
     pub allowed_updates: Option<Vec<AllowedUpdate>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl Serialize for WebhookInfo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "url",
+            "has_custom_certificate",
+            "pending_update_count",
+            "ip_address",
+            "last_error_date",
+            "last_error_message",
+            "max_connections",
+            "allowed_updates",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.ip_address.is_some())
+            + usize::from(self.last_error_date.is_some())
+            + usize::from(self.last_error_message.is_some())
+            + usize::from(self.max_connections.is_some())
+            + usize::from(self.allowed_updates.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 3))?;
+        object.serialize_entry("url", &self.url)?;
+        object.serialize_entry("has_custom_certificate", &self.has_custom_certificate)?;
+        object.serialize_entry("pending_update_count", &self.pending_update_count)?;
+        if let Some(ip_address) = self.ip_address.as_ref() {
+            object.serialize_entry("ip_address", ip_address)?;
+        }
+        if let Some(last_error_date) = self.last_error_date {
+            object.serialize_entry("last_error_date", &last_error_date)?;
+        }
+        if let Some(last_error_message) = self.last_error_message.as_ref() {
+            object.serialize_entry("last_error_message", last_error_message)?;
+        }
+        if let Some(max_connections) = self.max_connections {
+            object.serialize_entry("max_connections", &max_connections)?;
+        }
+        if let Some(allowed_updates) = self.allowed_updates.as_ref() {
+            object.serialize_entry("allowed_updates", allowed_updates)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
 }
 
 fn validate_secret_token(token: &str) -> Result<()> {
@@ -274,6 +323,51 @@ mod tests {
             invalid_ip.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn webhook_info_extra_cannot_override_reserved_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut info = WebhookInfo {
+            url: "https://example.com/hook".to_owned(),
+            has_custom_certificate: true,
+            pending_update_count: 7,
+            ip_address: Some("127.0.0.1".to_owned()),
+            last_error_date: Some(1_700_000_000),
+            last_error_message: Some("temporary failure".to_owned()),
+            max_connections: Some(40),
+            allowed_updates: Some(AllowedUpdate::from_kinds([UpdateKind::Message])?),
+            extra: BTreeMap::new(),
+        };
+        info.extra.insert(
+            "url".to_owned(),
+            serde_json::json!("https://example.com/overridden"),
+        );
+        info.extra.insert(
+            "has_custom_certificate".to_owned(),
+            serde_json::json!(false),
+        );
+        info.extra
+            .insert("pending_update_count".to_owned(), serde_json::json!(1));
+        info.extra.insert(
+            "allowed_updates".to_owned(),
+            serde_json::json!(["callback_query"]),
+        );
+        info.extra
+            .insert("future_field".to_owned(), serde_json::json!("kept"));
+
+        let value = serde_json::to_value(&info)?;
+        assert_eq!(value["url"], "https://example.com/hook");
+        assert_eq!(value["has_custom_certificate"], true);
+        assert_eq!(value["pending_update_count"], 7);
+        assert_eq!(value["ip_address"], "127.0.0.1");
+        assert_eq!(value["last_error_date"], 1_700_000_000);
+        assert_eq!(value["last_error_message"], "temporary failure");
+        assert_eq!(value["max_connections"], 40);
+        assert_eq!(value["allowed_updates"], serde_json::json!(["message"]));
+        assert_eq!(value["future_field"], "kept");
 
         Ok(())
     }

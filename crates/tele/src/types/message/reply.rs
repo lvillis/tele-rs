@@ -1,21 +1,25 @@
 use std::collections::BTreeMap;
 
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::common::MessageId;
+use crate::types::extra::{
+    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
+    serialize_optional_field,
+};
 use crate::types::sticker::Sticker;
 use crate::types::telegram::LinkPreviewOptions;
 
 use super::common::{Chat, MessageEntity, MessageOrigin, PhotoSize};
 use super::content::{Checklist, Contact, Dice, Game, Location, Poll, Venue};
-use super::is_false;
 use super::media::{Animation, Audio, Document, PaidMediaInfo, Story, Video, VideoNote, Voice};
 use super::model::Message;
 use super::payments::Invoice;
 use super::service::{Giveaway, GiveawayWinners};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TextQuote {
     pub text: String,
@@ -28,7 +32,27 @@ pub struct TextQuote {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+impl Serialize for TextQuote {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["text", "entities", "position", "is_manual"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.entities.is_some()) + usize::from(self.is_manual);
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 2))?;
+        object.serialize_entry("text", &self.text)?;
+        serialize_optional_field(&mut object, "entities", &self.entities)?;
+        object.serialize_entry("position", &self.position)?;
+        if self.is_manual {
+            object.serialize_entry("is_manual", &self.is_manual)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ExternalReplyInfo {
     pub origin: MessageOrigin,
@@ -84,7 +108,101 @@ pub struct ExternalReplyInfo {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+impl Serialize for ExternalReplyInfo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "origin",
+            "chat",
+            "message_id",
+            "link_preview_options",
+            "animation",
+            "audio",
+            "document",
+            "paid_media",
+            "photo",
+            "sticker",
+            "story",
+            "video",
+            "video_note",
+            "voice",
+            "has_media_spoiler",
+            "checklist",
+            "contact",
+            "dice",
+            "game",
+            "giveaway",
+            "giveaway_winners",
+            "invoice",
+            "location",
+            "poll",
+            "venue",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.chat.is_some())
+            + usize::from(self.message_id.is_some())
+            + usize::from(self.link_preview_options.is_some())
+            + usize::from(self.animation.is_some())
+            + usize::from(self.audio.is_some())
+            + usize::from(self.document.is_some())
+            + usize::from(self.paid_media.is_some())
+            + usize::from(self.photo.is_some())
+            + usize::from(self.sticker.is_some())
+            + usize::from(self.story.is_some())
+            + usize::from(self.video.is_some())
+            + usize::from(self.video_note.is_some())
+            + usize::from(self.voice.is_some())
+            + usize::from(self.has_media_spoiler)
+            + usize::from(self.checklist.is_some())
+            + usize::from(self.contact.is_some())
+            + usize::from(self.dice.is_some())
+            + usize::from(self.game.is_some())
+            + usize::from(self.giveaway.is_some())
+            + usize::from(self.giveaway_winners.is_some())
+            + usize::from(self.invoice.is_some())
+            + usize::from(self.location.is_some())
+            + usize::from(self.poll.is_some())
+            + usize::from(self.venue.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("origin", &self.origin)?;
+        serialize_optional_field(&mut object, "chat", &self.chat)?;
+        serialize_optional_field(&mut object, "message_id", &self.message_id)?;
+        serialize_optional_field(
+            &mut object,
+            "link_preview_options",
+            &self.link_preview_options,
+        )?;
+        serialize_optional_field(&mut object, "animation", &self.animation)?;
+        serialize_optional_field(&mut object, "audio", &self.audio)?;
+        serialize_optional_field(&mut object, "document", &self.document)?;
+        serialize_optional_field(&mut object, "paid_media", &self.paid_media)?;
+        serialize_optional_field(&mut object, "photo", &self.photo)?;
+        serialize_optional_field(&mut object, "sticker", &self.sticker)?;
+        serialize_optional_field(&mut object, "story", &self.story)?;
+        serialize_optional_field(&mut object, "video", &self.video)?;
+        serialize_optional_field(&mut object, "video_note", &self.video_note)?;
+        serialize_optional_field(&mut object, "voice", &self.voice)?;
+        if self.has_media_spoiler {
+            object.serialize_entry("has_media_spoiler", &self.has_media_spoiler)?;
+        }
+        serialize_optional_field(&mut object, "checklist", &self.checklist)?;
+        serialize_optional_field(&mut object, "contact", &self.contact)?;
+        serialize_optional_field(&mut object, "dice", &self.dice)?;
+        serialize_optional_field(&mut object, "game", &self.game)?;
+        serialize_optional_field(&mut object, "giveaway", &self.giveaway)?;
+        serialize_optional_field(&mut object, "giveaway_winners", &self.giveaway_winners)?;
+        serialize_optional_field(&mut object, "invoice", &self.invoice)?;
+        serialize_optional_field(&mut object, "location", &self.location)?;
+        serialize_optional_field(&mut object, "poll", &self.poll)?;
+        serialize_optional_field(&mut object, "venue", &self.venue)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InaccessibleMessage {
     pub chat: Chat,
@@ -92,6 +210,22 @@ pub struct InaccessibleMessage {
     pub date: i64,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl Serialize for InaccessibleMessage {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["chat", "message_id", "date"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 3))?;
+        object.serialize_entry("chat", &self.chat)?;
+        object.serialize_entry("message_id", &self.message_id)?;
+        object.serialize_entry("date", &self.date)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -206,7 +340,74 @@ impl MaybeInaccessibleMessage {
 mod tests {
     use serde_json::json;
 
-    use super::MaybeInaccessibleMessage;
+    use super::{ExternalReplyInfo, InaccessibleMessage, MaybeInaccessibleMessage, TextQuote};
+
+    #[test]
+    fn text_quote_extra_cannot_override_reserved_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut quote: TextQuote = serde_json::from_value(json!({
+            "text": "quoted",
+            "position": 4,
+            "future": {"kept": true}
+        }))?;
+        quote.extra.insert("text".to_owned(), json!("spoofed"));
+        quote.extra.insert("position".to_owned(), json!(0));
+        quote.extra.insert("is_manual".to_owned(), json!(true));
+        quote.extra.insert("entities".to_owned(), json!([]));
+        quote
+            .extra
+            .insert("another_future".to_owned(), json!("kept"));
+
+        let value = serde_json::to_value(quote)?;
+        assert_eq!(value["text"], "quoted");
+        assert_eq!(value["position"], 4);
+        assert!(value.get("is_manual").is_none());
+        assert!(value.get("entities").is_none());
+        assert_eq!(value["future"], json!({"kept": true}));
+        assert_eq!(value["another_future"], "kept");
+        Ok(())
+    }
+
+    #[test]
+    fn external_reply_info_extra_cannot_override_reserved_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut reply: ExternalReplyInfo = serde_json::from_value(json!({
+            "origin": {
+                "type": "user",
+                "date": 10,
+                "sender_user": {"id": 1, "is_bot": false, "first_name": "Alice"}
+            },
+            "message_id": 55,
+            "future": {"kept": true}
+        }))?;
+        reply.extra.insert(
+            "origin".to_owned(),
+            json!({
+                "type": "hidden_user",
+                "date": 1,
+                "sender_user_name": "spoofed"
+            }),
+        );
+        reply.extra.insert("message_id".to_owned(), json!(1));
+        reply
+            .extra
+            .insert("has_media_spoiler".to_owned(), json!(true));
+        reply.extra.insert("photo".to_owned(), json!([]));
+        reply
+            .extra
+            .insert("another_future".to_owned(), json!("kept"));
+
+        let value = serde_json::to_value(reply)?;
+        assert_eq!(value["origin"]["type"], "user");
+        assert_eq!(value["origin"]["date"], 10);
+        assert_eq!(value["origin"]["sender_user"]["id"], 1);
+        assert_eq!(value["message_id"], 55);
+        assert!(value.get("has_media_spoiler").is_none());
+        assert!(value.get("photo").is_none());
+        assert_eq!(value["future"], json!({"kept": true}));
+        assert_eq!(value["another_future"], "kept");
+        Ok(())
+    }
 
     #[test]
     fn inaccessible_message_preserves_future_fields() -> Result<(), Box<dyn std::error::Error>> {
@@ -235,6 +436,35 @@ mod tests {
                 .and_then(|message| message.extra.get("future").cloned()),
             Some(json!({"kept": true}))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn inaccessible_message_extra_cannot_override_reserved_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut message: InaccessibleMessage = serde_json::from_value(json!({
+            "message_id": 55,
+            "date": 0,
+            "chat": {"id": -10010, "type": "supergroup", "title": "mods"},
+            "future": {"kept": true}
+        }))?;
+        message.extra.insert(
+            "chat".to_owned(),
+            json!({"id": 1, "type": "private", "first_name": "spoofed"}),
+        );
+        message.extra.insert("message_id".to_owned(), json!(1));
+        message.extra.insert("date".to_owned(), json!(123));
+        message
+            .extra
+            .insert("another_future".to_owned(), json!("kept"));
+
+        let value = serde_json::to_value(message)?;
+        assert_eq!(value["chat"]["id"], -10010);
+        assert_eq!(value["chat"]["type"], "supergroup");
+        assert_eq!(value["message_id"], 55);
+        assert_eq!(value["date"], 0);
+        assert_eq!(value["future"], json!({"kept": true}));
+        assert_eq!(value["another_future"], "kept");
         Ok(())
     }
 

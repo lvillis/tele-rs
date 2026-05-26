@@ -1054,7 +1054,8 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
                     "file_unique_id": "pmu-1",
                     "width": 32,
                     "height": 32
-                }]
+                }],
+                "future": {"kept": true}
             }]
         },
         "checklist": {
@@ -1094,10 +1095,32 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
     assert_eq!(message.kind(), MessageKind::PaidMedia);
     let paid_media = message.paid_media.as_ref().ok_or("missing paid media")?;
     assert_eq!(paid_media.star_count, 5);
-    assert!(matches!(
-        paid_media.paid_media.first(),
-        Some(PaidMedia::Photo { .. })
-    ));
+    let paid_media_photo = paid_media
+        .paid_media
+        .first()
+        .and_then(PaidMedia::as_photo)
+        .ok_or("missing paid media photo")?;
+    assert_eq!(
+        paid_media.paid_media.first().and_then(PaidMedia::kind),
+        Some("photo")
+    );
+    assert!(
+        paid_media
+            .paid_media
+            .first()
+            .is_some_and(PaidMedia::is_photo)
+    );
+    assert_eq!(paid_media_photo.photo.len(), 1);
+    assert_eq!(paid_media_photo.extra["future"], json!({"kept": true}));
+    assert_eq!(
+        paid_media
+            .paid_media
+            .first()
+            .cloned()
+            .and_then(PaidMedia::into_photo)
+            .and_then(|value| value.extra.get("future").cloned()),
+        Some(json!({"kept": true}))
+    );
 
     let checklist = message.checklist.as_ref().ok_or("missing checklist")?;
     assert_eq!(checklist.tasks.len(), 1);
@@ -1124,6 +1147,37 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
         Some(&SuggestedPostRefundReason::PaymentRefunded)
     );
 
+    Ok(())
+}
+
+#[test]
+fn preserves_unknown_paid_media_payload() -> std::result::Result<(), Box<dyn StdError>> {
+    let input = json!({
+        "type": "future_paid_media",
+        "payload": {"kept": true}
+    });
+    let message: Message = serde_json::from_value(json!({
+        "message_id": 46,
+        "date": 1700000046,
+        "chat": {"id": -1003, "type": "channel", "title": "channel"},
+        "paid_media": {
+            "star_count": 1,
+            "paid_media": [input]
+        }
+    }))?;
+
+    let paid_media = message.paid_media.as_ref().ok_or("missing paid media")?;
+    let media = paid_media
+        .paid_media
+        .first()
+        .ok_or("missing paid media item")?;
+    assert_eq!(media.kind(), Some("future_paid_media"));
+    assert_eq!(media.as_unknown_value(), Some(&input));
+    assert_eq!(media.clone().into_unknown_value(), Some(input.clone()));
+    assert_eq!(
+        serde_json::to_value(message)?["paid_media"]["paid_media"][0],
+        input
+    );
     Ok(())
 }
 
