@@ -558,6 +558,7 @@ fn non_negative_i64_field(field_name: &str) -> bool {
 
 fn i64_field_range(method: &MethodSpec, param: &ParamSpec) -> Option<(i64, i64)> {
     match (method.method.as_str(), param.field_name.as_str()) {
+        ("sendPaidMedia", "star_count") => Some((1, 25_000)),
         (
             "getUserProfileAudios"
             | "getUserGifts"
@@ -566,6 +567,15 @@ fn i64_field_range(method: &MethodSpec, param: &ParamSpec) -> Option<(i64, i64)>
             | "getStarTransactions",
             "limit",
         ) => Some((1, 100)),
+        _ => None,
+    }
+}
+
+fn i64_field_values(method: &MethodSpec, param: &ParamSpec) -> Option<&'static str> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("postStory" | "repostStory", "active_period") => {
+            Some("&[21_600, 43_200, 86_400, 172_800]")
+        }
         _ => None,
     }
 }
@@ -590,6 +600,13 @@ fn ordered_message_ids_field(method: &MethodSpec, param: &ParamSpec) -> bool {
     matches!(
         (method.method.as_str(), param.field_name.as_str()),
         ("forwardMessages", "message_ids")
+    )
+}
+
+fn story_areas_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        ("postStory" | "editStory", "areas")
     )
 }
 
@@ -649,6 +666,21 @@ fn text_length_range(method: &MethodSpec, param: &ParamSpec) -> Option<(usize, u
         ("setBusinessAccountBio", "bio") => Some((0, 140)),
         ("declineSuggestedPost", "comment") => Some((0, 128)),
         ("sendGift" | "giftPremiumSubscription", "text") => Some((0, 128)),
+        _ => None,
+    }
+}
+
+fn optional_message_text_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        ("sendMessageDraft", "text")
+    )
+}
+
+fn optional_display_text_limit(method: &MethodSpec, param: &ParamSpec) -> Option<usize> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("sendPaidMedia", "caption") => Some(1024),
+        ("postStory" | "editStory", "caption") => Some(2048),
         _ => None,
     }
 }
@@ -746,6 +778,20 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
     }
 
     if let Some(item_ty) = validated_vec_item_type(&field_ty) {
+        if story_areas_field(method, param) {
+            if param.required {
+                return Some(format!(
+                    "        validate_required_vec(\"{}\", self.{}.len())?;\n        crate::types::telegram::validate_story_areas(\"{}\", &self.{})?;",
+                    param.name, param.field_name, param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(values) = self.{}.as_deref() {{\n            crate::types::telegram::validate_story_areas(\"{}\", values)?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+
         if param.required {
             return Some(format!(
                 "        validate_required_items::<{}>(\"{}\", &self.{})?;",
@@ -770,6 +816,20 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
 
             return Some(format!(
                 "        if let Some(value) = self.{} {{\n            validate_suggested_post_approval_send_date(\"{}\", value)?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+
+        if let Some(values) = i64_field_values(method, param) {
+            if param.required {
+                return Some(format!(
+                    "        validate_i64_values(\"{}\", self.{}, {values})?;",
+                    param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(value) = self.{} {{\n            validate_i64_values(\"{}\", value, {values})?;\n        }}",
                 param.field_name, param.name
             ));
         }
@@ -893,6 +953,36 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
         ));
     }
 
+    if field_ty == "String" && optional_message_text_field(method, param) {
+        if param.required {
+            return Some(format!(
+                "        validate_message_text(\"{}\", &self.{})?;",
+                method.method, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        validate_optional_message_text(\"{}\", self.{}.as_deref())?;",
+            method.method, param.field_name
+        ));
+    }
+
+    if field_ty == "String"
+        && let Some(max_chars) = optional_display_text_limit(method, param)
+    {
+        if param.required {
+            return Some(format!(
+                "        validate_optional_display_text(\"{}\", Some(&self.{}), {max_chars})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        validate_optional_display_text(\"{}\", self.{}.as_deref(), {max_chars})?;",
+            param.name, param.field_name
+        ));
+    }
+
     if field_ty == "String" && username_or_empty_field(method, param) {
         if param.required {
             return Some(format!(
@@ -954,6 +1044,7 @@ fn method_specific_validation_owns_param(method: &MethodSpec, param: &ParamSpec)
                 "createInvoiceLink",
                 "business_connection_id" | "subscription_period"
             )
+            | ("sendPaidMedia", "media" | "payload")
     )
 }
 
@@ -995,6 +1086,18 @@ fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
             &self.prices,
         )?;"#
                 .to_owned(),
+        ],
+        "sendPaidMedia" => vec![
+            r#"        validate_required_limited_items::<crate::types::telegram::InputPaidMedia>(
+            "media",
+            &self.media,
+            10,
+        )?;"#
+                .to_owned(),
+            r#"        if let Some(value) = self.payload.as_deref() {
+            validate_bytes_len("payload", value, 128)?;
+        }"#
+            .to_owned(),
         ],
         "answerShippingQuery" => vec![
             r#"        if self.ok {
@@ -1154,6 +1257,13 @@ fn optional_entities_expr(param: Option<&ParamSpec>, field: &str) -> String {
     }
 }
 
+fn rich_text_entities_field(method: &MethodSpec, text_field: &str) -> bool {
+    matches!(
+        (method.method.as_str(), text_field),
+        ("sendGift" | "giftPremiumSubscription", "text")
+    )
+}
+
 fn formatting_validation_rules(method: &MethodSpec) -> Vec<String> {
     const FORMATTING_FIELDS: [(&str, &str, &str); 8] = [
         ("text", "parse_mode", "entities"),
@@ -1204,13 +1314,25 @@ fn formatting_validation_rules(method: &MethodSpec) -> Vec<String> {
 
         let parse_expr = optional_field_expr(parse_param, parse_field);
         let entities_expr = optional_entities_expr(entities_param, entities_field);
+        let (required_validator, optional_validator) =
+            if rich_text_entities_field(method, text_field) {
+                (
+                    "validate_rich_text_formatting",
+                    "validate_optional_rich_text_formatting",
+                )
+            } else {
+                (
+                    "validate_text_formatting",
+                    "validate_optional_text_formatting",
+                )
+            };
         if text_param.required {
             rules.push(format!(
-                "        validate_text_formatting(\"{text_field}\", &self.{text_field}, {parse_expr}, {entities_expr})?;"
+                "        {required_validator}(\"{text_field}\", &self.{text_field}, {parse_expr}, {entities_expr})?;"
             ));
         } else {
             rules.push(format!(
-                "        validate_optional_text_formatting(\"{text_field}\", self.{text_field}.as_deref(), {parse_expr}, {entities_expr})?;"
+                "        {optional_validator}(\"{text_field}\", self.{text_field}.as_deref(), {parse_expr}, {entities_expr})?;"
             ));
         }
     }
@@ -1437,16 +1559,25 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         body.contains("validate_string_id(") || uses_string_items_validator;
     let uses_required_vec_validator = body.contains("validate_required_vec(")
         || uses_required_string_items_validator
-        || body.contains("validate_required_limited_string_items(");
+        || body.contains("validate_required_limited_string_items(")
+        || body.contains("validate_required_limited_items::<");
     let uses_required_ordered_message_ids_validator =
         body.contains("validate_required_ordered_message_ids(");
     let uses_required_message_ids_validator = body.contains("validate_required_message_ids(")
         || uses_required_ordered_message_ids_validator;
     let uses_message_ids_validator =
         body.contains("validate_message_ids(") || uses_required_message_ids_validator;
+    let uses_required_limited_items_validator = body.contains("validate_required_limited_items::<");
+    let uses_limited_items_validator =
+        body.contains("validate_limited_items::<") || uses_required_limited_items_validator;
     let uses_required_items_validator = body.contains("validate_required_items::<");
-    let uses_items_validator = body.contains("validate_items(");
+    let uses_items_validator = body.contains("validate_items(") || uses_limited_items_validator;
     let uses_i64_range_validator = body.contains("validate_i64_range(");
+    let uses_i64_values_validator = body.contains("validate_i64_values(");
+    let uses_bytes_len_validator = body.contains("validate_bytes_len(");
+    let uses_message_text_validator = body.contains("validate_message_text(");
+    let uses_optional_message_text_validator = body.contains("validate_optional_message_text(");
+    let uses_optional_display_text_validator = body.contains("validate_optional_display_text(");
     let uses_emoji_free_text_validator = body.contains("validate_emoji_free_text(");
     let uses_text_length_range_validator = body.contains("validate_text_length_range(");
     let uses_username_or_empty_validator = body.contains("validate_username_or_empty(");
@@ -1477,13 +1608,20 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         || uses_invoice_tip_configuration_validator
         || uses_invoice_title_validator;
     let uses_text_formatting_validator = body.contains("validate_text_formatting(")
-        || body.contains("validate_optional_text_formatting(");
+        || body.contains("validate_optional_text_formatting(")
+        || body.contains("validate_rich_text_formatting(")
+        || body.contains("validate_optional_rich_text_formatting(");
     let uses_message_target_validator = body.contains("validate_chat_or_inline_message_target(");
     let generated_validate_types = generated_validate_types(methods);
     let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
         || uses_i64_range_validator
+        || uses_i64_values_validator
+        || uses_bytes_len_validator
+        || uses_message_text_validator
+        || uses_optional_message_text_validator
+        || uses_optional_display_text_validator
         || uses_emoji_free_text_validator
         || uses_text_length_range_validator
         || uses_username_or_empty_validator
@@ -1495,6 +1633,7 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let uses_error = uses_message_ids_validator
         || uses_required_items_validator
         || uses_message_target_validator
+        || uses_limited_items_validator
         || uses_limited_string_items_validator
         || body.contains("Error::InvalidRequest");
     let uses_result = body.contains("fn validate(&self) -> Result<()>")
@@ -1506,6 +1645,11 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         || uses_required_items_validator
         || uses_items_validator
         || uses_i64_range_validator
+        || uses_i64_values_validator
+        || uses_bytes_len_validator
+        || uses_message_text_validator
+        || uses_optional_message_text_validator
+        || uses_optional_display_text_validator
         || uses_emoji_free_text_validator
         || uses_text_length_range_validator
         || uses_username_or_empty_validator
@@ -1538,8 +1682,29 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     }
     if uses_shared_validation {
         let _ = writeln!(&mut out, "use crate::types::validation::{{");
+        if uses_bytes_len_validator {
+            let _ = writeln!(&mut out, "    bytes_len as validate_bytes_len,");
+        }
         if uses_i64_range_validator {
             let _ = writeln!(&mut out, "    i64_range as validate_i64_range,");
+        }
+        if uses_i64_values_validator {
+            let _ = writeln!(&mut out, "    i64_values as validate_i64_values,");
+        }
+        if uses_message_text_validator {
+            let _ = writeln!(&mut out, "    message_text as validate_message_text,");
+        }
+        if uses_optional_display_text_validator {
+            let _ = writeln!(
+                &mut out,
+                "    optional_display_text as validate_optional_display_text,"
+            );
+        }
+        if uses_optional_message_text_validator {
+            let _ = writeln!(
+                &mut out,
+                "    optional_message_text as validate_optional_message_text,"
+            );
         }
         if uses_emoji_free_text_validator {
             let _ = writeln!(&mut out, "    emoji_free_text as validate_emoji_free_text,");
@@ -1583,6 +1748,12 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
                 "    optional_text_formatting as validate_optional_text_formatting,"
             );
         }
+        if body.contains("validate_optional_rich_text_formatting(") {
+            let _ = writeln!(
+                &mut out,
+                "    optional_rich_text_formatting as validate_optional_rich_text_formatting,"
+            );
+        }
         if uses_required_vec_validator {
             let _ = writeln!(&mut out, "    required_len as validate_required_vec,");
         }
@@ -1594,6 +1765,12 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         }
         if body.contains("validate_text_formatting(") {
             let _ = writeln!(&mut out, "    text_formatting as validate_text_formatting,");
+        }
+        if body.contains("validate_rich_text_formatting(") {
+            let _ = writeln!(
+                &mut out,
+                "    rich_text_formatting as validate_rich_text_formatting,"
+            );
         }
         let _ = writeln!(&mut out, "}};");
         let _ = writeln!(&mut out);
@@ -1719,6 +1896,37 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "    validate_items(values)");
         let _ = writeln!(&mut out, "}}");
         let _ = writeln!(&mut out);
+    }
+    if uses_limited_items_validator {
+        let _ = writeln!(
+            &mut out,
+            "fn validate_limited_items<T: GeneratedValidate>(field: &str, values: &[T], max_items: usize) -> Result<()> {{"
+        );
+        let _ = writeln!(&mut out, "    if values.len() > max_items {{");
+        let _ = writeln!(&mut out, "        return Err(Error::InvalidRequest {{");
+        let _ = writeln!(
+            &mut out,
+            "            reason: format!(\"{{field}} accepts at most {{max_items}} items\"),"
+        );
+        let _ = writeln!(&mut out, "        }});");
+        let _ = writeln!(&mut out, "    }}");
+        let _ = writeln!(&mut out);
+        let _ = writeln!(&mut out, "    validate_items(values)");
+        let _ = writeln!(&mut out, "}}");
+        let _ = writeln!(&mut out);
+        if uses_required_limited_items_validator {
+            let _ = writeln!(
+                &mut out,
+                "fn validate_required_limited_items<T: GeneratedValidate>(field: &str, values: &[T], max_items: usize) -> Result<()> {{"
+            );
+            let _ = writeln!(&mut out, "    validate_required_vec(field, values.len())?;");
+            let _ = writeln!(
+                &mut out,
+                "    validate_limited_items(field, values, max_items)"
+            );
+            let _ = writeln!(&mut out, "}}");
+            let _ = writeln!(&mut out);
+        }
     }
     if uses_message_ids_validator || uses_required_message_ids_validator {
         let _ = writeln!(&mut out, "const MAX_MESSAGE_IDS: usize = 100;");
@@ -2435,7 +2643,7 @@ mod tests {
                 ParamSpec {
                     name: "text".to_owned(),
                     field_name: "text".to_owned(),
-                    required: true,
+                    required: false,
                     type_raw: "String".to_owned(),
                     type_rust: "String".to_owned(),
                 },
@@ -2511,17 +2719,60 @@ mod tests {
                 },
             ],
         };
+        let story = MethodSpec {
+            fn_name: "post_story".to_owned(),
+            method: "postStory".to_owned(),
+            return_desc: "Returns Story on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "caption".to_owned(),
+                    field_name: "caption".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "parse_mode".to_owned(),
+                    field_name: "parse_mode".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "caption_entities".to_owned(),
+                    field_name: "caption_entities".to_owned(),
+                    required: false,
+                    type_raw: "Array of MessageEntity".to_owned(),
+                    type_rust: "Vec<MessageEntity>".to_owned(),
+                },
+            ],
+        };
 
-        let generated = generate_domain_module(&[&draft, &gift, &paid_media]);
-        assert!(generated.contains("text_formatting as validate_text_formatting"));
+        let generated = generate_domain_module(&[&draft, &gift, &paid_media, &story]);
+        assert!(generated.contains("optional_display_text as validate_optional_display_text"));
+        assert!(generated.contains("optional_message_text as validate_optional_message_text"));
         assert!(
             generated.contains("optional_text_formatting as validate_optional_text_formatting")
         );
+        assert!(
+            generated.contains(
+                "optional_rich_text_formatting as validate_optional_rich_text_formatting"
+            )
+        );
         assert!(generated.contains(
-            "validate_text_formatting(\"text\", &self.text, self.parse_mode, self.entities.as_deref())?;"
+            "validate_optional_message_text(\"sendMessageDraft\", self.text.as_deref())?;"
         ));
         assert!(generated.contains(
-            "validate_optional_text_formatting(\"text\", self.text.as_deref(), self.text_parse_mode, self.text_entities.as_deref())?;"
+            "validate_optional_text_formatting(\"text\", self.text.as_deref(), self.parse_mode, self.entities.as_deref())?;"
+        ));
+        assert!(generated.contains(
+            "validate_optional_rich_text_formatting(\"text\", self.text.as_deref(), self.text_parse_mode, self.text_entities.as_deref())?;"
+        ));
+        assert!(generated.contains(
+            "validate_optional_display_text(\"caption\", self.caption.as_deref(), 1024)?;"
+        ));
+        assert!(generated.contains(
+            "validate_optional_display_text(\"caption\", self.caption.as_deref(), 2048)?;"
         ));
         assert!(generated.contains(
             "validate_optional_text_formatting(\"caption\", self.caption.as_deref(), self.parse_mode, self.caption_entities.as_deref())?;"
@@ -2858,6 +3109,122 @@ mod tests {
         assert!(generated.contains("validate_positive_i64(\"limit\", value)?;"));
         assert!(generated.contains("validate_non_negative_i64(\"position\", self.position)?;"));
         assert!(generated.contains("validate_non_negative_i64(\"offset\", value)?;"));
+    }
+
+    #[test]
+    fn generated_send_paid_media_uses_api_bounds() {
+        let method = MethodSpec {
+            fn_name: "send_paid_media".to_owned(),
+            method: "sendPaidMedia".to_owned(),
+            return_desc: "Returns Message on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "star_count".to_owned(),
+                    field_name: "star_count".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "media".to_owned(),
+                    field_name: "media".to_owned(),
+                    required: true,
+                    type_raw: "Array of InputPaidMedia".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
+                ParamSpec {
+                    name: "payload".to_owned(),
+                    field_name: "payload".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("bytes_len as validate_bytes_len"));
+        assert!(generated.contains("i64_range as validate_i64_range"));
+        assert!(
+            generated.contains("validate_i64_range(\"star_count\", self.star_count, 1, 25000)?;")
+        );
+        assert!(
+            generated.contains(
+                "validate_required_limited_items::<crate::types::telegram::InputPaidMedia>"
+            )
+        );
+        assert!(generated.contains("validate_bytes_len(\"payload\", value, 128)?;"));
+        assert!(!generated.contains("validate_positive_i64(\"star_count\", self.star_count)?;"));
+        assert!(
+            !generated
+                .contains("validate_required_items::<crate::types::telegram::InputPaidMedia>")
+        );
+    }
+
+    #[test]
+    fn generated_story_active_period_uses_api_values() {
+        let post = MethodSpec {
+            fn_name: "post_story".to_owned(),
+            method: "postStory".to_owned(),
+            return_desc: "Returns Story on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "active_period".to_owned(),
+                field_name: "active_period".to_owned(),
+                required: true,
+                type_raw: "Integer".to_owned(),
+                type_rust: "i64".to_owned(),
+            }],
+        };
+        let repost = MethodSpec {
+            fn_name: "repost_story".to_owned(),
+            method: "repostStory".to_owned(),
+            return_desc: "Returns Story on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "active_period".to_owned(),
+                field_name: "active_period".to_owned(),
+                required: true,
+                type_raw: "Integer".to_owned(),
+                type_rust: "i64".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&post, &repost]);
+        assert!(generated.contains("i64_values as validate_i64_values"));
+        assert_eq!(
+            generated
+                .matches(
+                    "validate_i64_values(\"active_period\", self.active_period, &[21_600, 43_200, 86_400, 172_800])?;"
+                )
+                .count(),
+            2
+        );
+        assert!(!generated.contains("validate_positive_i64(\"active_period\""));
+    }
+
+    #[test]
+    fn generated_story_areas_use_collection_validator() {
+        let method = MethodSpec {
+            fn_name: "post_story".to_owned(),
+            method: "postStory".to_owned(),
+            return_desc: "Returns Story on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "areas".to_owned(),
+                field_name: "areas".to_owned(),
+                required: false,
+                type_raw: "Array of StoryArea".to_owned(),
+                type_rust: "Vec<Value>".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("pub areas: Option<Vec<crate::types::telegram::StoryArea>>"));
+        assert!(
+            generated.contains("crate::types::telegram::validate_story_areas(\"areas\", values)?;")
+        );
+        assert!(!generated.contains("validate_items(values)?;"));
+        assert!(
+            !generated.contains("impl GeneratedValidate for crate::types::telegram::StoryArea")
+        );
     }
 
     #[test]

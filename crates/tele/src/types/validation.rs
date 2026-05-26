@@ -8,6 +8,8 @@ use super::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
 
 const SUGGESTED_POST_MAX_SEND_DELAY_SECONDS: i64 = 2_678_400;
 const SUGGESTED_POST_MIN_SEND_DELAY_SECONDS: i64 = 300;
+pub(crate) const MAX_MESSAGE_TEXT_CHARS: usize = 4096;
+pub(crate) const MAX_CAPTION_CHARS: usize = 1024;
 
 pub(crate) fn required_text(label: &str, value: &str) -> Result<(), Error> {
     if value.trim().is_empty() {
@@ -124,6 +126,97 @@ pub(crate) fn text_length_range(
     }
 
     control_free_string(field, value)
+}
+
+pub(crate) fn display_text_length_range(
+    field: &str,
+    value: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<(), Error> {
+    if min_chars > 0 && value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    let length = value.chars().count();
+    if length < min_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be at least {min_chars} characters"),
+        });
+    }
+    if length > max_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be at most {max_chars} characters"),
+        });
+    }
+    if value.chars().any(is_disallowed_display_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain non-whitespace control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn message_text(method: &str, value: &str) -> Result<(), Error> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires non-empty text"),
+        });
+    }
+
+    optional_display_text(
+        &format!("{method} text"),
+        Some(value),
+        MAX_MESSAGE_TEXT_CHARS,
+    )
+}
+
+pub(crate) fn optional_message_text(method: &str, value: Option<&str>) -> Result<(), Error> {
+    optional_display_text(&format!("{method} text"), value, MAX_MESSAGE_TEXT_CHARS)
+}
+
+pub(crate) fn optional_caption(value: Option<&str>) -> Result<(), Error> {
+    optional_display_text("caption", value, MAX_CAPTION_CHARS)
+}
+
+pub(crate) fn optional_display_text(
+    field: &str,
+    value: Option<&str>,
+    max_chars: usize,
+) -> Result<(), Error> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    if value.chars().count() > max_chars {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} exceeds {max_chars} characters"),
+        });
+    }
+    if value.chars().any(is_disallowed_display_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must not contain non-whitespace control characters"),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn required_display_text(field: &str, value: &str) -> Result<(), Error> {
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} cannot be empty"),
+        });
+    }
+
+    optional_display_text(field, Some(value), usize::MAX)
+}
+
+fn is_disallowed_display_control(character: char) -> bool {
+    character.is_control() && !matches!(character, '\n' | '\r' | '\t')
 }
 
 pub(crate) fn username_or_empty(field: &str, value: &str) -> Result<(), Error> {
@@ -304,6 +397,33 @@ pub(crate) fn i64_range(field: &str, value: i64, min: i64, max: i64) -> Result<(
     Ok(())
 }
 
+pub(crate) fn i64_values(field: &str, value: i64, allowed: &[i64]) -> Result<(), Error> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+
+    let allowed = allowed
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Err(Error::InvalidRequest {
+        reason: format!("{field} must be one of {allowed}"),
+    })
+}
+
+pub(crate) fn bytes_len(field: &str, value: &str, max_bytes: usize) -> Result<(), Error> {
+    let len = value.len();
+    if len > max_bytes {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} must be at most {max_bytes} bytes"),
+        });
+    }
+
+    Ok(())
+}
+
 pub(crate) fn request_non_empty(method: &str, field: &str, value: &str) -> Result<(), Error> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
@@ -426,7 +546,7 @@ pub(crate) fn text_formatting(
     entities: Option<&[MessageEntity]>,
 ) -> Result<(), Error> {
     parse_mode_entities_conflict(field, parse_mode, entities)?;
-    text_entities(field, text, entities)
+    text_entities(field, text, entities, EntityPolicy::Default)
 }
 
 pub(crate) fn optional_text_formatting(
@@ -447,10 +567,52 @@ pub(crate) fn optional_text_formatting(
         });
     };
 
-    text_entities(field, text, entities)
+    text_entities(field, text, entities, EntityPolicy::Default)
 }
 
-fn text_entities(field: &str, text: &str, entities: Option<&[MessageEntity]>) -> Result<(), Error> {
+pub(crate) fn rich_text_formatting(
+    field: &str,
+    text: &str,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    parse_mode_entities_conflict(field, parse_mode, entities)?;
+    text_entities(field, text, entities, EntityPolicy::RichTextDateTime)
+}
+
+pub(crate) fn optional_rich_text_formatting(
+    field: &str,
+    text: Option<&str>,
+    parse_mode: Option<ParseMode>,
+    entities: Option<&[MessageEntity]>,
+) -> Result<(), Error> {
+    parse_mode_entities_conflict(field, parse_mode, entities)?;
+
+    if parse_mode.is_none() && entities.is_none() {
+        return Ok(());
+    }
+
+    let Some(text) = text else {
+        return Err(Error::InvalidRequest {
+            reason: format!("{field} formatting requires text"),
+        });
+    };
+
+    text_entities(field, text, entities, EntityPolicy::RichTextDateTime)
+}
+
+#[derive(Clone, Copy)]
+enum EntityPolicy {
+    Default,
+    RichTextDateTime,
+}
+
+fn text_entities(
+    field: &str,
+    text: &str,
+    entities: Option<&[MessageEntity]>,
+    policy: EntityPolicy,
+) -> Result<(), Error> {
     let Some(entities) = entities else {
         return Ok(());
     };
@@ -462,7 +624,7 @@ fn text_entities(field: &str, text: &str, entities: Option<&[MessageEntity]>) ->
 
     let text_len = text.encode_utf16().count();
     for entity in entities {
-        validate_message_entity(field, entity, text_len)?;
+        validate_message_entity(field, entity, text_len, policy)?;
     }
 
     Ok(())
@@ -472,6 +634,7 @@ fn validate_message_entity(
     field: &str,
     entity: &MessageEntity,
     text_len: usize,
+    policy: EntityPolicy,
 ) -> Result<(), Error> {
     if entity.length == 0 {
         return Err(Error::InvalidRequest {
@@ -491,6 +654,8 @@ fn validate_message_entity(
             reason: format!("{field} entity range exceeds text length"),
         });
     }
+
+    validate_entity_policy(field, entity, policy)?;
 
     match &entity.kind {
         MessageEntityKind::TextLink => {
@@ -527,9 +692,14 @@ fn validate_message_entity(
             });
         }
         MessageEntityKind::DateTime => {
-            return Err(Error::InvalidRequest {
-                reason: format!("{field} contains unsupported entity type `date_time`"),
-            });
+            if let Some(date_time_format) = entity.date_time_format.as_deref() {
+                control_free_string("date_time_format", date_time_format)?;
+            }
+            reject_unsupported_message_entity_fields(
+                field,
+                entity,
+                &["unix_time", "date_time_format"],
+            )?;
         }
         MessageEntityKind::Mention
         | MessageEntityKind::Hashtag
@@ -552,6 +722,40 @@ fn validate_message_entity(
                 _ => &[][..],
             };
             reject_unsupported_message_entity_fields(field, entity, allowed)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_entity_policy(
+    field: &str,
+    entity: &MessageEntity,
+    policy: EntityPolicy,
+) -> Result<(), Error> {
+    match policy {
+        EntityPolicy::Default => {
+            if matches!(entity.kind, MessageEntityKind::DateTime) {
+                return Err(Error::InvalidRequest {
+                    reason: format!("{field} contains unsupported entity type `date_time`"),
+                });
+            }
+        }
+        EntityPolicy::RichTextDateTime => {
+            if !matches!(
+                entity.kind,
+                MessageEntityKind::Bold
+                    | MessageEntityKind::Italic
+                    | MessageEntityKind::Underline
+                    | MessageEntityKind::Strikethrough
+                    | MessageEntityKind::Spoiler
+                    | MessageEntityKind::CustomEmoji
+                    | MessageEntityKind::DateTime
+            ) {
+                return Err(Error::InvalidRequest {
+                    reason: format!("{field} does not support {} entities", entity.kind.as_str()),
+                });
+            }
         }
     }
 
@@ -592,6 +796,21 @@ mod tests {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs() as i64)
+    }
+
+    fn entity(kind: MessageEntityKind, length: u32) -> MessageEntity {
+        MessageEntity {
+            kind,
+            offset: 0,
+            length,
+            url: None,
+            user: None,
+            language: None,
+            custom_emoji_id: None,
+            unix_time: None,
+            date_time_format: None,
+            extra: Default::default(),
+        }
     }
 
     #[test]
@@ -695,6 +914,84 @@ mod tests {
         ));
         assert!(matches!(
             text_length_range("bio", &"a".repeat(141), 0, 140),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn display_text_validation_allows_layout_whitespace_but_rejects_control_chars() {
+        assert!(message_text("sendMessage", "hello\nworld\tagain").is_ok());
+        assert!(optional_message_text("sendMessageDraft", None).is_ok());
+        assert!(optional_message_text("sendMessageDraft", Some("")).is_ok());
+        assert!(optional_caption(Some("caption\nline")).is_ok());
+        assert!(display_text_length_range("title", "hello\nworld", 1, 20).is_ok());
+        assert!(required_display_text("reply quote", "hello\tworld").is_ok());
+
+        assert!(matches!(
+            message_text("sendMessage", ""),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            message_text("sendMessage", &"a".repeat(MAX_MESSAGE_TEXT_CHARS + 1)),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            optional_caption(Some(&"a".repeat(MAX_CAPTION_CHARS + 1))),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            optional_display_text("caption", Some("bad\u{0007}"), MAX_CAPTION_CHARS),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            required_display_text("reply quote", "   "),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            display_text_length_range("title", "hello", 1, 4),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn rich_text_formatting_allows_date_time_but_rejects_ignored_entities() {
+        let mut date_time = entity(MessageEntityKind::DateTime, 4);
+        date_time.unix_time = Some(1_700_000_000);
+        date_time.date_time_format = Some("MMM d".to_owned());
+
+        let mut custom_emoji = entity(MessageEntityKind::CustomEmoji, 1);
+        custom_emoji.custom_emoji_id = Some("emoji-id".to_owned());
+
+        assert!(rich_text_formatting("gift text", "date", None, Some(&[date_time])).is_ok());
+        assert!(rich_text_formatting("gift text", "x", None, Some(&[custom_emoji])).is_ok());
+
+        assert!(matches!(
+            text_formatting(
+                "message text",
+                "date",
+                None,
+                Some(&[entity(MessageEntityKind::DateTime, 4)])
+            ),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            rich_text_formatting(
+                "gift text",
+                "https://example.com",
+                None,
+                Some(&[entity(MessageEntityKind::Url, 19)])
+            ),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn i64_values_accepts_only_explicit_values() {
+        let allowed = [21_600, 43_200, 86_400, 172_800];
+
+        assert!(i64_values("active_period", 86_400, &allowed).is_ok());
+        assert!(matches!(
+            i64_values("active_period", 86_401, &allowed),
             Err(Error::InvalidRequest { .. })
         ));
     }

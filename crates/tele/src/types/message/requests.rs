@@ -10,6 +10,7 @@ use crate::types::telegram::{
 };
 use crate::types::upload::{UploadPart, validate_upload_part_name};
 use crate::types::validation::{
+    message_text as validate_message_text, optional_caption as validate_optional_caption,
     optional_positive_i64 as validate_optional_positive_i64,
     optional_text_formatting as validate_optional_text_formatting,
     reply_markup as validate_reply_markup, reply_parameters as validate_reply_parameters,
@@ -22,8 +23,6 @@ use super::common::MessageEntity;
 use super::content::{DiceEmoji, PollKind};
 use super::model::Message;
 
-const MAX_MESSAGE_TEXT_CHARS: usize = 4096;
-const MAX_CAPTION_CHARS: usize = 1024;
 const MIN_MEDIA_GROUP_ITEMS: usize = 2;
 const MAX_MEDIA_GROUP_ITEMS: usize = 10;
 const MAX_BULK_MESSAGE_IDS: usize = 100;
@@ -2618,28 +2617,6 @@ fn validate_edit_target(
     })
 }
 
-fn validate_message_text(method: &str, text: &str) -> Result<(), Error> {
-    if text.trim().is_empty() {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} requires non-empty text"),
-        });
-    }
-
-    let length = text.chars().count();
-    if length > MAX_MESSAGE_TEXT_CHARS {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} text exceeds {MAX_MESSAGE_TEXT_CHARS} characters"),
-        });
-    }
-    if text.chars().any(is_disallowed_display_control) {
-        return Err(Error::InvalidRequest {
-            reason: format!("{method} text must not contain non-whitespace control characters"),
-        });
-    }
-
-    Ok(())
-}
-
 fn validate_file_reference(label: &str, value: &str) -> Result<(), Error> {
     if value.trim().is_empty() {
         return Err(Error::InvalidRequest {
@@ -2727,24 +2704,6 @@ fn validate_attach_upload_parts<'a>(
                 reason: format!("multipart file part `{name}` is not referenced by attach://"),
             });
         }
-    }
-
-    Ok(())
-}
-
-fn validate_optional_caption(caption: Option<&str>) -> Result<(), Error> {
-    let Some(caption) = caption else {
-        return Ok(());
-    };
-    if caption.chars().count() > MAX_CAPTION_CHARS {
-        return Err(Error::InvalidRequest {
-            reason: format!("caption exceeds {MAX_CAPTION_CHARS} characters"),
-        });
-    }
-    if caption.chars().any(is_disallowed_display_control) {
-        return Err(Error::InvalidRequest {
-            reason: "caption must not contain non-whitespace control characters".to_owned(),
-        });
     }
 
     Ok(())
@@ -3715,6 +3674,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::types::validation::{MAX_CAPTION_CHARS, MAX_MESSAGE_TEXT_CHARS};
 
     fn valid_suggested_post_send_date() -> i64 {
         std::time::SystemTime::now()

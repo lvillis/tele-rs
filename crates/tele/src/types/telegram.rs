@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Write as _};
 use std::str::FromStr;
 
@@ -12,9 +12,16 @@ use crate::types::extra::{
     field_len as extra_field_len, serialize_fields as serialize_extra_fields,
 };
 use crate::types::message::MessageEntity;
+#[cfg(test)]
+use crate::types::message::MessageEntityKind;
 use crate::types::tagged::{strip_type, tagged_kind};
 use crate::types::validation::{
-    https_url as validate_https_url, optional_text_formatting as validate_optional_text_formatting,
+    display_text_length_range as validate_display_text_length_range,
+    https_url as validate_https_url,
+    optional_rich_text_formatting as validate_optional_rich_text_formatting,
+    optional_text_formatting as validate_optional_text_formatting,
+    required_display_text as validate_required_display_text,
+    rich_text_formatting as validate_rich_text_formatting,
     suggested_post_parameters_send_date as validate_suggested_post_parameters_send_date,
     url as validate_url,
 };
@@ -49,23 +56,6 @@ fn validate_required_visible_text(field: &str, value: &str) -> Result<()> {
     if value.chars().any(char::is_control) {
         return Err(invalid_request(format!(
             "{field} must not contain control characters"
-        )));
-    }
-
-    Ok(())
-}
-
-fn is_disallowed_display_control(character: char) -> bool {
-    character.is_control() && !matches!(character, '\n' | '\r' | '\t')
-}
-
-fn validate_required_display_text(field: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(invalid_request(format!("{field} cannot be empty")));
-    }
-    if value.chars().any(is_disallowed_display_control) {
-        return Err(invalid_request(format!(
-            "{field} must not contain non-whitespace control characters"
         )));
     }
 
@@ -247,17 +237,6 @@ fn validate_typed_object_payload(field: &str, value: &Value) -> Result<()> {
     validate_required_visible_text(&format!("{field}.type"), kind)
 }
 
-fn validate_object_payload(field: &str, value: &Value) -> Result<()> {
-    let Some(object) = value.as_object() else {
-        return Err(invalid_request(format!("{field} must be a JSON object")));
-    };
-    if object.is_empty() {
-        return Err(invalid_request(format!("{field} cannot be empty")));
-    }
-
-    Ok(())
-}
-
 fn validate_suggested_post_parameters_payload(field: &str, value: &Value) -> Result<()> {
     let object = value_as_object(field, value)?;
     if object.is_empty() {
@@ -338,6 +317,42 @@ fn validate_accepted_gift_types_payload(field: &str, value: &Value) -> Result<()
     Ok(())
 }
 
+fn validate_finite_float(field: &str, value: f64) -> Result<()> {
+    if !value.is_finite() {
+        return Err(invalid_request(format!("{field} must be finite")));
+    }
+
+    Ok(())
+}
+
+fn validate_float_range(field: &str, value: f64, min: f64, max: f64) -> Result<()> {
+    validate_finite_float(field, value)?;
+    if !(min..=max).contains(&value) {
+        return Err(invalid_request(format!(
+            "{field} must be between {min} and {max}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_positive_percentage(field: &str, value: f64) -> Result<()> {
+    validate_float_range(field, value, 0.0, 100.0)?;
+    if value <= 0.0 {
+        return Err(invalid_request(format!("{field} must be greater than 0")));
+    }
+
+    Ok(())
+}
+
+fn validate_optional_visible_text(field: &str, value: Option<&str>) -> Result<()> {
+    if let Some(value) = value {
+        validate_string_without_control_chars(field, value)?;
+    }
+
+    Ok(())
+}
+
 macro_rules! json_payload_wrapper {
     ($(#[$meta:meta])* $name:ident, $label:literal, $validator:ident) => {
         $(#[$meta])*
@@ -397,6 +412,1555 @@ macro_rules! json_payload_wrapper {
             }
         }
     };
+}
+
+/// Photo content for a story to post.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputStoryContentPhoto {
+    pub photo: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputStoryContentPhoto {
+    pub fn new(photo: impl Into<String>) -> Self {
+        Self {
+            photo: photo.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_story_content.photo", &self.photo)
+    }
+}
+
+impl Serialize for InputStoryContentPhoto {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["photo"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("photo", &self.photo)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Video content for a story to post.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputStoryContentVideo {
+    pub video: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_frame_timestamp: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_animation: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputStoryContentVideo {
+    pub fn new(video: impl Into<String>) -> Self {
+        Self {
+            video: video.into(),
+            duration: None,
+            cover_frame_timestamp: None,
+            is_animation: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_duration(mut self, duration: f64) -> Self {
+        self.duration = Some(duration);
+        self
+    }
+
+    pub fn with_cover_frame_timestamp(mut self, cover_frame_timestamp: f64) -> Self {
+        self.cover_frame_timestamp = Some(cover_frame_timestamp);
+        self
+    }
+
+    pub fn with_animation(mut self, is_animation: bool) -> Self {
+        self.is_animation = Some(is_animation);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_story_content.video", &self.video)?;
+        if let Some(duration) = self.duration {
+            validate_float_range("input_story_content.duration", duration, 0.0, 60.0)?;
+        }
+        if let Some(cover_frame_timestamp) = self.cover_frame_timestamp {
+            validate_float_range(
+                "input_story_content.cover_frame_timestamp",
+                cover_frame_timestamp,
+                0.0,
+                f64::MAX,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for InputStoryContentVideo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["video", "duration", "cover_frame_timestamp", "is_animation"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.duration.is_some())
+            + usize::from(self.cover_frame_timestamp.is_some())
+            + usize::from(self.is_animation.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("video", &self.video)?;
+        if let Some(duration) = self.duration {
+            object.serialize_entry("duration", &duration)?;
+        }
+        if let Some(cover_frame_timestamp) = self.cover_frame_timestamp {
+            object.serialize_entry("cover_frame_timestamp", &cover_frame_timestamp)?;
+        }
+        if let Some(is_animation) = self.is_animation {
+            object.serialize_entry("is_animation", &is_animation)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Content of a story to post.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum InputStoryContent {
+    Photo(InputStoryContentPhoto),
+    Video(InputStoryContentVideo),
+    Unknown(Value),
+}
+
+impl InputStoryContent {
+    pub fn photo(photo: impl Into<String>) -> Self {
+        Self::Photo(InputStoryContentPhoto::new(photo))
+    }
+
+    pub fn video(video: impl Into<String>) -> Self {
+        Self::Video(InputStoryContentVideo::new(video))
+    }
+
+    pub fn new(value: Value) -> Result<Self> {
+        Self::try_from_value(value)
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let content = serde_json::from_value::<Self>(value).map_err(|source| {
+            invalid_request(format!("invalid input_story_content payload: {source}"))
+        })?;
+        content.validate()?;
+        Ok(content)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::Photo(_) => Some("photo"),
+            Self::Video(_) => Some("video"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Photo(value) => value.validate(),
+            Self::Video(value) => value.validate(),
+            Self::Unknown(value) => validate_typed_object_payload("input_story_content", value),
+        }
+    }
+}
+
+impl From<InputStoryContentPhoto> for InputStoryContent {
+    fn from(value: InputStoryContentPhoto) -> Self {
+        Self::Photo(value)
+    }
+}
+
+impl From<InputStoryContentVideo> for InputStoryContent {
+    fn from(value: InputStoryContentVideo) -> Self {
+        Self::Video(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for InputStoryContent {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<Value> for InputStoryContent {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match tagged_kind(&value) {
+            Some("photo") => deserialize_input_story_content_known(value, Self::Photo),
+            Some("video") => deserialize_input_story_content_known(value, Self::Video),
+            Some(_) => {
+                validate_typed_object_payload("input_story_content", &value)?;
+                Ok(Self::Unknown(value))
+            }
+            None => Err(invalid_request(
+                "input_story_content requires a string `type` field",
+            )),
+        }
+    }
+}
+
+fn deserialize_input_story_content_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> InputStoryContent,
+) -> Result<InputStoryContent>
+where
+    T: DeserializeOwned,
+{
+    let payload = serde_json::from_value::<T>(strip_type(value)).map_err(|source| {
+        invalid_request(format!("invalid input_story_content payload: {source}"))
+    })?;
+    let content = constructor(payload);
+    content.validate()?;
+    Ok(content)
+}
+
+impl Serialize for InputStoryContent {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Photo(value) => serialize_typed_payload(serializer, "photo", value),
+            Self::Video(value) => serialize_typed_payload(serializer, "video", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+/// Paid live photo media item.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputPaidMediaLivePhoto {
+    pub media: String,
+    pub photo: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputPaidMediaLivePhoto {
+    pub fn new(media: impl Into<String>, photo: impl Into<String>) -> Self {
+        Self {
+            media: media.into(),
+            photo: photo.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_paid_media.media", &self.media)?;
+        validate_required_visible_text("input_paid_media.photo", &self.photo)
+    }
+}
+
+impl Serialize for InputPaidMediaLivePhoto {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["media", "photo"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
+        object.serialize_entry("media", &self.media)?;
+        object.serialize_entry("photo", &self.photo)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Paid photo media item.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputPaidMediaPhoto {
+    pub media: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputPaidMediaPhoto {
+    pub fn new(media: impl Into<String>) -> Self {
+        Self {
+            media: media.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_paid_media.media", &self.media)
+    }
+}
+
+impl Serialize for InputPaidMediaPhoto {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["media"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("media", &self.media)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Paid video media item.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputPaidMediaVideo {
+    pub media: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_timestamp: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_streaming: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputPaidMediaVideo {
+    pub fn new(media: impl Into<String>) -> Self {
+        Self {
+            media: media.into(),
+            thumbnail: None,
+            cover: None,
+            start_timestamp: None,
+            width: None,
+            height: None,
+            duration: None,
+            supports_streaming: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_thumbnail(mut self, thumbnail: impl Into<String>) -> Self {
+        self.thumbnail = Some(thumbnail.into());
+        self
+    }
+
+    pub fn with_cover(mut self, cover: impl Into<String>) -> Self {
+        self.cover = Some(cover.into());
+        self
+    }
+
+    pub fn with_start_timestamp(mut self, start_timestamp: u32) -> Self {
+        self.start_timestamp = Some(start_timestamp);
+        self
+    }
+
+    pub fn with_dimensions(mut self, width: u32, height: u32) -> Self {
+        self.width = Some(width);
+        self.height = Some(height);
+        self
+    }
+
+    pub fn with_duration(mut self, duration: u32) -> Self {
+        self.duration = Some(duration);
+        self
+    }
+
+    pub fn with_streaming(mut self, supports_streaming: bool) -> Self {
+        self.supports_streaming = Some(supports_streaming);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_paid_media.media", &self.media)?;
+        if let Some(thumbnail) = self.thumbnail.as_deref() {
+            validate_required_visible_text("input_paid_media.thumbnail", thumbnail)?;
+        }
+        if let Some(cover) = self.cover.as_deref() {
+            validate_required_visible_text("input_paid_media.cover", cover)?;
+        }
+        validate_positive_optional_u32("input_paid_media.width", self.width)?;
+        validate_positive_optional_u32("input_paid_media.height", self.height)?;
+        validate_positive_optional_u32("input_paid_media.duration", self.duration)
+    }
+}
+
+impl Serialize for InputPaidMediaVideo {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "media",
+            "thumbnail",
+            "cover",
+            "start_timestamp",
+            "width",
+            "height",
+            "duration",
+            "supports_streaming",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.thumbnail.is_some())
+            + usize::from(self.cover.is_some())
+            + usize::from(self.start_timestamp.is_some())
+            + usize::from(self.width.is_some())
+            + usize::from(self.height.is_some())
+            + usize::from(self.duration.is_some())
+            + usize::from(self.supports_streaming.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("media", &self.media)?;
+        if let Some(thumbnail) = self.thumbnail.as_ref() {
+            object.serialize_entry("thumbnail", thumbnail)?;
+        }
+        if let Some(cover) = self.cover.as_ref() {
+            object.serialize_entry("cover", cover)?;
+        }
+        if let Some(start_timestamp) = self.start_timestamp {
+            object.serialize_entry("start_timestamp", &start_timestamp)?;
+        }
+        if let Some(width) = self.width {
+            object.serialize_entry("width", &width)?;
+        }
+        if let Some(height) = self.height {
+            object.serialize_entry("height", &height)?;
+        }
+        if let Some(duration) = self.duration {
+            object.serialize_entry("duration", &duration)?;
+        }
+        if let Some(supports_streaming) = self.supports_streaming {
+            object.serialize_entry("supports_streaming", &supports_streaming)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+fn validate_positive_optional_u32(field: &str, value: Option<u32>) -> Result<()> {
+    if value == Some(0) {
+        return Err(invalid_request(format!("{field} must be greater than 0")));
+    }
+
+    Ok(())
+}
+
+/// Paid media item for `sendPaidMedia`.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum InputPaidMedia {
+    LivePhoto(InputPaidMediaLivePhoto),
+    Photo(InputPaidMediaPhoto),
+    Video(InputPaidMediaVideo),
+    Unknown(Value),
+}
+
+impl InputPaidMedia {
+    pub fn live_photo(media: impl Into<String>, photo: impl Into<String>) -> Self {
+        Self::LivePhoto(InputPaidMediaLivePhoto::new(media, photo))
+    }
+
+    pub fn photo(media: impl Into<String>) -> Self {
+        Self::Photo(InputPaidMediaPhoto::new(media))
+    }
+
+    pub fn video(media: impl Into<String>) -> Self {
+        Self::Video(InputPaidMediaVideo::new(media))
+    }
+
+    pub fn new(value: Value) -> Result<Self> {
+        Self::try_from_value(value)
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let media = serde_json::from_value::<Self>(value).map_err(|source| {
+            invalid_request(format!("invalid input_paid_media payload: {source}"))
+        })?;
+        media.validate()?;
+        Ok(media)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::LivePhoto(_) => Some("live_photo"),
+            Self::Photo(_) => Some("photo"),
+            Self::Video(_) => Some("video"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::LivePhoto(value) => value.validate(),
+            Self::Photo(value) => value.validate(),
+            Self::Video(value) => value.validate(),
+            Self::Unknown(value) => validate_typed_object_payload("input_paid_media", value),
+        }
+    }
+}
+
+impl From<InputPaidMediaLivePhoto> for InputPaidMedia {
+    fn from(value: InputPaidMediaLivePhoto) -> Self {
+        Self::LivePhoto(value)
+    }
+}
+
+impl From<InputPaidMediaPhoto> for InputPaidMedia {
+    fn from(value: InputPaidMediaPhoto) -> Self {
+        Self::Photo(value)
+    }
+}
+
+impl From<InputPaidMediaVideo> for InputPaidMedia {
+    fn from(value: InputPaidMediaVideo) -> Self {
+        Self::Video(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for InputPaidMedia {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<Value> for InputPaidMedia {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match tagged_kind(&value) {
+            Some("live_photo") => deserialize_input_paid_media_known(value, Self::LivePhoto),
+            Some("photo") => deserialize_input_paid_media_known(value, Self::Photo),
+            Some("video") => deserialize_input_paid_media_known(value, Self::Video),
+            Some(_) => {
+                validate_typed_object_payload("input_paid_media", &value)?;
+                Ok(Self::Unknown(value))
+            }
+            None => Err(invalid_request(
+                "input_paid_media requires a string `type` field",
+            )),
+        }
+    }
+}
+
+fn deserialize_input_paid_media_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> InputPaidMedia,
+) -> Result<InputPaidMedia>
+where
+    T: DeserializeOwned,
+{
+    let payload = serde_json::from_value::<T>(strip_type(value))
+        .map_err(|source| invalid_request(format!("invalid input_paid_media payload: {source}")))?;
+    let media = constructor(payload);
+    media.validate()?;
+    Ok(media)
+}
+
+impl Serialize for InputPaidMedia {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::LivePhoto(value) => serialize_typed_payload(serializer, "live_photo", value),
+            Self::Photo(value) => serialize_typed_payload(serializer, "photo", value),
+            Self::Video(value) => serialize_typed_payload(serializer, "video", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+/// Emoji reaction payload.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct ReactionTypeEmoji {
+    pub emoji: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ReactionTypeEmoji {
+    pub fn new(emoji: impl Into<String>) -> Self {
+        Self {
+            emoji: emoji.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("reaction_type.emoji", &self.emoji)
+    }
+}
+
+impl Serialize for ReactionTypeEmoji {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["emoji"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("emoji", &self.emoji)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Custom emoji reaction payload.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct ReactionTypeCustomEmoji {
+    pub custom_emoji_id: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ReactionTypeCustomEmoji {
+    pub fn new(custom_emoji_id: impl Into<String>) -> Self {
+        Self {
+            custom_emoji_id: custom_emoji_id.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("reaction_type.custom_emoji_id", &self.custom_emoji_id)
+    }
+}
+
+impl Serialize for ReactionTypeCustomEmoji {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["custom_emoji_id"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("custom_emoji_id", &self.custom_emoji_id)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Paid reaction payload.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct ReactionTypePaid {
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl ReactionTypePaid {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Serialize for ReactionTypePaid {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["type"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len))?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Reaction type payload.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ReactionType {
+    Emoji(ReactionTypeEmoji),
+    CustomEmoji(ReactionTypeCustomEmoji),
+    Paid(ReactionTypePaid),
+    Unknown(Value),
+}
+
+impl ReactionType {
+    pub fn emoji(emoji: impl Into<String>) -> Self {
+        Self::Emoji(ReactionTypeEmoji::new(emoji))
+    }
+
+    pub fn custom_emoji(custom_emoji_id: impl Into<String>) -> Self {
+        Self::CustomEmoji(ReactionTypeCustomEmoji::new(custom_emoji_id))
+    }
+
+    pub fn paid() -> Self {
+        Self::Paid(ReactionTypePaid::new())
+    }
+
+    pub fn new(value: Value) -> Result<Self> {
+        Self::try_from_value(value)
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let reaction = serde_json::from_value::<Self>(value).map_err(|source| {
+            invalid_request(format!("invalid reaction_type payload: {source}"))
+        })?;
+        reaction.validate()?;
+        Ok(reaction)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::Emoji(_) => Some("emoji"),
+            Self::CustomEmoji(_) => Some("custom_emoji"),
+            Self::Paid(_) => Some("paid"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Emoji(value) => value.validate(),
+            Self::CustomEmoji(value) => value.validate(),
+            Self::Paid(value) => value.validate(),
+            Self::Unknown(value) => validate_typed_object_payload("reaction_type", value),
+        }
+    }
+}
+
+impl From<ReactionTypeEmoji> for ReactionType {
+    fn from(value: ReactionTypeEmoji) -> Self {
+        Self::Emoji(value)
+    }
+}
+
+impl From<ReactionTypeCustomEmoji> for ReactionType {
+    fn from(value: ReactionTypeCustomEmoji) -> Self {
+        Self::CustomEmoji(value)
+    }
+}
+
+impl From<ReactionTypePaid> for ReactionType {
+    fn from(value: ReactionTypePaid) -> Self {
+        Self::Paid(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for ReactionType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<Value> for ReactionType {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match tagged_kind(&value) {
+            Some("emoji") => deserialize_reaction_type_known(value, Self::Emoji),
+            Some("custom_emoji") => deserialize_reaction_type_known(value, Self::CustomEmoji),
+            Some("paid") => deserialize_reaction_type_known(value, Self::Paid),
+            Some(_) => {
+                validate_typed_object_payload("reaction_type", &value)?;
+                Ok(Self::Unknown(value))
+            }
+            None => Err(invalid_request(
+                "reaction_type requires a string `type` field",
+            )),
+        }
+    }
+}
+
+fn deserialize_reaction_type_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> ReactionType,
+) -> Result<ReactionType>
+where
+    T: DeserializeOwned,
+{
+    let payload = serde_json::from_value::<T>(strip_type(value))
+        .map_err(|source| invalid_request(format!("invalid reaction_type payload: {source}")))?;
+    let reaction = constructor(payload);
+    reaction.validate()?;
+    Ok(reaction)
+}
+
+impl Serialize for ReactionType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Emoji(value) => serialize_typed_payload(serializer, "emoji", value),
+            Self::CustomEmoji(value) => serialize_typed_payload(serializer, "custom_emoji", value),
+            Self::Paid(value) => serialize_typed_payload(serializer, "paid", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+/// Position and shape of a clickable story area, expressed in percentages.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaPosition {
+    pub x_percentage: f64,
+    pub y_percentage: f64,
+    pub width_percentage: f64,
+    pub height_percentage: f64,
+    pub rotation_angle: f64,
+    pub corner_radius_percentage: f64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaPosition {
+    pub fn new(
+        x_percentage: f64,
+        y_percentage: f64,
+        width_percentage: f64,
+        height_percentage: f64,
+        rotation_angle: f64,
+        corner_radius_percentage: f64,
+    ) -> Self {
+        Self {
+            x_percentage,
+            y_percentage,
+            width_percentage,
+            height_percentage,
+            rotation_angle,
+            corner_radius_percentage,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_float_range(
+            "story_area.position.x_percentage",
+            self.x_percentage,
+            0.0,
+            100.0,
+        )?;
+        validate_float_range(
+            "story_area.position.y_percentage",
+            self.y_percentage,
+            0.0,
+            100.0,
+        )?;
+        validate_positive_percentage(
+            "story_area.position.width_percentage",
+            self.width_percentage,
+        )?;
+        validate_positive_percentage(
+            "story_area.position.height_percentage",
+            self.height_percentage,
+        )?;
+        validate_float_range(
+            "story_area.position.rotation_angle",
+            self.rotation_angle,
+            0.0,
+            360.0,
+        )?;
+        validate_float_range(
+            "story_area.position.corner_radius_percentage",
+            self.corner_radius_percentage,
+            0.0,
+            100.0,
+        )
+    }
+}
+
+impl Serialize for StoryAreaPosition {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "x_percentage",
+            "y_percentage",
+            "width_percentage",
+            "height_percentage",
+            "rotation_angle",
+            "corner_radius_percentage",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 6))?;
+        object.serialize_entry("x_percentage", &self.x_percentage)?;
+        object.serialize_entry("y_percentage", &self.y_percentage)?;
+        object.serialize_entry("width_percentage", &self.width_percentage)?;
+        object.serialize_entry("height_percentage", &self.height_percentage)?;
+        object.serialize_entry("rotation_angle", &self.rotation_angle)?;
+        object.serialize_entry("corner_radius_percentage", &self.corner_radius_percentage)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Physical address attached to a location story area.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct LocationAddress {
+    pub country_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub street: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl LocationAddress {
+    pub fn new(country_code: impl Into<String>) -> Self {
+        Self {
+            country_code: country_code.into(),
+            state: None,
+            city: None,
+            street: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.country_code.len() != 2
+            || !self
+                .country_code
+                .bytes()
+                .all(|byte| byte.is_ascii_alphabetic())
+        {
+            return Err(invalid_request(
+                "location_address.country_code must be a two-letter ISO country code",
+            ));
+        }
+        validate_optional_visible_text("location_address.state", self.state.as_deref())?;
+        validate_optional_visible_text("location_address.city", self.city.as_deref())?;
+        validate_optional_visible_text("location_address.street", self.street.as_deref())
+    }
+}
+
+impl Serialize for LocationAddress {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["country_code", "state", "city", "street"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.state.is_some())
+            + usize::from(self.city.is_some())
+            + usize::from(self.street.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("country_code", &self.country_code)?;
+        if let Some(state) = self.state.as_ref() {
+            object.serialize_entry("state", state)?;
+        }
+        if let Some(city) = self.city.as_ref() {
+            object.serialize_entry("city", city)?;
+        }
+        if let Some(street) = self.street.as_ref() {
+            object.serialize_entry("street", street)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Story area type that points to a location.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaTypeLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<LocationAddress>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaTypeLocation {
+    pub fn new(latitude: f64, longitude: f64) -> Self {
+        Self {
+            latitude,
+            longitude,
+            address: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_address(mut self, address: impl Into<LocationAddress>) -> Self {
+        self.address = Some(address.into());
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_float_range("story_area.type.latitude", self.latitude, -90.0, 90.0)?;
+        validate_float_range("story_area.type.longitude", self.longitude, -180.0, 180.0)?;
+        if let Some(address) = self.address.as_ref() {
+            address.validate()?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Story area type that suggests a reaction.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaTypeSuggestedReaction {
+    pub reaction_type: ReactionType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_dark: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_flipped: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaTypeSuggestedReaction {
+    pub fn new(reaction_type: ReactionType) -> Self {
+        Self {
+            reaction_type,
+            is_dark: None,
+            is_flipped: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.reaction_type.validate()
+    }
+}
+
+impl Serialize for StoryAreaTypeSuggestedReaction {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["reaction_type", "is_dark", "is_flipped"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len =
+            usize::from(self.is_dark.is_some()) + usize::from(self.is_flipped.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("reaction_type", &self.reaction_type)?;
+        if let Some(is_dark) = self.is_dark {
+            object.serialize_entry("is_dark", &is_dark)?;
+        }
+        if let Some(is_flipped) = self.is_flipped {
+            object.serialize_entry("is_flipped", &is_flipped)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Story area type that opens an HTTP, HTTPS, or tg:// URL.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaTypeLink {
+    pub url: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaTypeLink {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_url("story_area.type.url", &self.url)
+    }
+}
+
+/// Story area type that displays weather information.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaTypeWeather {
+    pub temperature: f64,
+    pub emoji: String,
+    pub background_color: u32,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaTypeWeather {
+    pub fn new(temperature: f64, emoji: impl Into<String>, background_color: u32) -> Self {
+        Self {
+            temperature,
+            emoji: emoji.into(),
+            background_color,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_finite_float("story_area.type.temperature", self.temperature)?;
+        validate_required_visible_text("story_area.type.emoji", &self.emoji)
+    }
+}
+
+/// Story area type that points to a unique gift.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct StoryAreaTypeUniqueGift {
+    pub name: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryAreaTypeUniqueGift {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("story_area.type.name", &self.name)
+    }
+}
+
+/// Clickable story area type.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum StoryAreaType {
+    Location(StoryAreaTypeLocation),
+    SuggestedReaction(StoryAreaTypeSuggestedReaction),
+    Link(StoryAreaTypeLink),
+    Weather(StoryAreaTypeWeather),
+    UniqueGift(StoryAreaTypeUniqueGift),
+    Unknown(Value),
+}
+
+impl StoryAreaType {
+    pub fn location(latitude: f64, longitude: f64) -> Self {
+        Self::Location(StoryAreaTypeLocation::new(latitude, longitude))
+    }
+
+    pub fn suggested_reaction(reaction_type: ReactionType) -> Self {
+        Self::SuggestedReaction(StoryAreaTypeSuggestedReaction::new(reaction_type))
+    }
+
+    pub fn link(url: impl Into<String>) -> Self {
+        Self::Link(StoryAreaTypeLink::new(url))
+    }
+
+    pub fn weather(temperature: f64, emoji: impl Into<String>, background_color: u32) -> Self {
+        Self::Weather(StoryAreaTypeWeather::new(
+            temperature,
+            emoji,
+            background_color,
+        ))
+    }
+
+    pub fn unique_gift(name: impl Into<String>) -> Self {
+        Self::UniqueGift(StoryAreaTypeUniqueGift::new(name))
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::Location(_) => Some("location"),
+            Self::SuggestedReaction(_) => Some("suggested_reaction"),
+            Self::Link(_) => Some("link"),
+            Self::Weather(_) => Some("weather"),
+            Self::UniqueGift(_) => Some("unique_gift"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Location(value) => value.validate(),
+            Self::SuggestedReaction(value) => value.validate(),
+            Self::Link(value) => value.validate(),
+            Self::Weather(value) => value.validate(),
+            Self::UniqueGift(value) => value.validate(),
+            Self::Unknown(value) => validate_typed_object_payload("story_area.type", value),
+        }
+    }
+}
+
+impl From<StoryAreaTypeLocation> for StoryAreaType {
+    fn from(value: StoryAreaTypeLocation) -> Self {
+        Self::Location(value)
+    }
+}
+
+impl From<StoryAreaTypeSuggestedReaction> for StoryAreaType {
+    fn from(value: StoryAreaTypeSuggestedReaction) -> Self {
+        Self::SuggestedReaction(value)
+    }
+}
+
+impl From<StoryAreaTypeLink> for StoryAreaType {
+    fn from(value: StoryAreaTypeLink) -> Self {
+        Self::Link(value)
+    }
+}
+
+impl From<StoryAreaTypeWeather> for StoryAreaType {
+    fn from(value: StoryAreaTypeWeather) -> Self {
+        Self::Weather(value)
+    }
+}
+
+impl From<StoryAreaTypeUniqueGift> for StoryAreaType {
+    fn from(value: StoryAreaTypeUniqueGift) -> Self {
+        Self::UniqueGift(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for StoryAreaType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<Value> for StoryAreaType {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match tagged_kind(&value) {
+            Some("location") => deserialize_story_area_type_known(value, Self::Location),
+            Some("suggested_reaction") => {
+                deserialize_story_area_type_known(value, Self::SuggestedReaction)
+            }
+            Some("link") => deserialize_story_area_type_known(value, Self::Link),
+            Some("weather") => deserialize_story_area_type_known(value, Self::Weather),
+            Some("unique_gift") => deserialize_story_area_type_known(value, Self::UniqueGift),
+            Some(_) => {
+                validate_typed_object_payload("story_area.type", &value)?;
+                Ok(Self::Unknown(value))
+            }
+            None => Err(invalid_request(
+                "story_area.type requires a string `type` field",
+            )),
+        }
+    }
+}
+
+impl Serialize for StoryAreaType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Location(value) => serialize_typed_payload(serializer, "location", value),
+            Self::SuggestedReaction(value) => {
+                serialize_typed_payload(serializer, "suggested_reaction", value)
+            }
+            Self::Link(value) => serialize_typed_payload(serializer, "link", value),
+            Self::Weather(value) => serialize_typed_payload(serializer, "weather", value),
+            Self::UniqueGift(value) => serialize_typed_payload(serializer, "unique_gift", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+fn serialize_typed_payload<S, T>(
+    serializer: S,
+    kind: &str,
+    payload: &T,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    T: Serialize,
+{
+    let mut value = serde_json::to_value(payload).map_err(serde::ser::Error::custom)?;
+    let object = value.as_object_mut().ok_or_else(|| {
+        serde::ser::Error::custom("story area type payload must serialize to a JSON object")
+    })?;
+    object.insert("type".to_owned(), Value::String(kind.to_owned()));
+    value.serialize(serializer)
+}
+
+fn deserialize_story_area_type_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> StoryAreaType,
+) -> Result<StoryAreaType>
+where
+    T: DeserializeOwned,
+{
+    let payload = serde_json::from_value::<T>(strip_type(value))
+        .map_err(|source| invalid_request(format!("invalid story_area.type payload: {source}")))?;
+    let area_type = constructor(payload);
+    area_type.validate()?;
+    Ok(area_type)
+}
+
+impl Serialize for StoryAreaTypeLocation {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["latitude", "longitude", "address"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.address.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 2))?;
+        object.serialize_entry("latitude", &self.latitude)?;
+        object.serialize_entry("longitude", &self.longitude)?;
+        if let Some(address) = self.address.as_ref() {
+            object.serialize_entry("address", address)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+impl Serialize for StoryAreaTypeLink {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["url"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("url", &self.url)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+impl Serialize for StoryAreaTypeWeather {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["temperature", "emoji", "background_color"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 3))?;
+        object.serialize_entry("temperature", &self.temperature)?;
+        object.serialize_entry("emoji", &self.emoji)?;
+        object.serialize_entry("background_color", &self.background_color)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+impl Serialize for StoryAreaTypeUniqueGift {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["name"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("name", &self.name)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Clickable area on a story media.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct StoryArea {
+    pub position: StoryAreaPosition,
+    pub kind: StoryAreaType,
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl StoryArea {
+    pub fn new(position: StoryAreaPosition, kind: impl Into<StoryAreaType>) -> Self {
+        Self {
+            position,
+            kind: kind.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn location(position: StoryAreaPosition, latitude: f64, longitude: f64) -> Self {
+        Self::new(position, StoryAreaTypeLocation::new(latitude, longitude))
+    }
+
+    pub fn link(position: StoryAreaPosition, url: impl Into<String>) -> Self {
+        Self::new(position, StoryAreaTypeLink::new(url))
+    }
+
+    pub fn weather(
+        position: StoryAreaPosition,
+        temperature: f64,
+        emoji: impl Into<String>,
+        background_color: u32,
+    ) -> Self {
+        Self::new(
+            position,
+            StoryAreaTypeWeather::new(temperature, emoji, background_color),
+        )
+    }
+
+    pub fn unique_gift(position: StoryAreaPosition, name: impl Into<String>) -> Self {
+        Self::new(position, StoryAreaTypeUniqueGift::new(name))
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let story_area = serde_json::from_value::<Self>(value)
+            .map_err(|source| invalid_request(format!("invalid story_area payload: {source}")))?;
+        story_area.validate()?;
+        Ok(story_area)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.position.validate()?;
+        self.kind.validate()
+    }
+}
+
+impl<'de> Deserialize<'de> for StoryArea {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawStoryArea {
+            position: StoryAreaPosition,
+            #[serde(rename = "type")]
+            kind: StoryAreaType,
+            #[serde(flatten)]
+            extra: BTreeMap<String, Value>,
+        }
+
+        let raw = RawStoryArea::deserialize(deserializer)?;
+        let story_area = Self {
+            position: raw.position,
+            kind: raw.kind,
+            extra: raw.extra,
+        };
+        story_area.validate().map_err(serde::de::Error::custom)?;
+        Ok(story_area)
+    }
+}
+
+impl TryFrom<Value> for StoryArea {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        Self::try_from_value(value)
+    }
+}
+
+impl Serialize for StoryArea {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["position", "type"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
+        object.serialize_entry("position", &self.position)?;
+        object.serialize_entry("type", &self.kind)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+pub(crate) fn validate_story_areas(field: &str, values: &[StoryArea]) -> Result<()> {
+    let mut location_count = 0;
+    let mut suggested_reaction_count = 0;
+    let mut link_count = 0;
+    let mut weather_count = 0;
+    let mut unique_gift_count = 0;
+
+    for value in values {
+        value.validate()?;
+        match value.kind.kind() {
+            Some("location") => location_count += 1,
+            Some("suggested_reaction") => suggested_reaction_count += 1,
+            Some("link") => link_count += 1,
+            Some("weather") => weather_count += 1,
+            Some("unique_gift") => unique_gift_count += 1,
+            Some(_) | None => {}
+        }
+    }
+
+    validate_story_area_type_count(field, "location", location_count, 10)?;
+    validate_story_area_type_count(field, "suggested_reaction", suggested_reaction_count, 5)?;
+    validate_story_area_type_count(field, "link", link_count, 3)?;
+    validate_story_area_type_count(field, "weather", weather_count, 3)?;
+    validate_story_area_type_count(field, "unique_gift", unique_gift_count, 1)
+}
+
+fn validate_story_area_type_count(field: &str, kind: &str, count: usize, max: usize) -> Result<()> {
+    if count > max {
+        return Err(invalid_request(format!(
+            "{field} accepts at most {max} {kind} story areas"
+        )));
+    }
+
+    Ok(())
 }
 
 fn is_compact_callback_safe(byte: u8) -> bool {
@@ -996,33 +2560,284 @@ impl Serialize for InlineQueryResultArticle {
     }
 }
 
-json_payload_wrapper!(
-    /// Generic checklist input payload.
-    InputChecklist,
-    "input_checklist",
-    validate_object_payload
-);
+/// Task to add to a checklist.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct InputChecklistTask {
+    pub id: i64,
+    pub text: String,
+    pub parse_mode: Option<ParseMode>,
+    pub text_entities: Option<Vec<MessageEntity>>,
+    pub extra: BTreeMap<String, Value>,
+}
 
-json_payload_wrapper!(
-    /// Generic story content payload.
-    InputStoryContent,
-    "input_story_content",
-    validate_typed_object_payload
-);
+impl InputChecklistTask {
+    pub fn new(id: i64, text: impl Into<String>) -> Self {
+        Self {
+            id,
+            text: text.into(),
+            parse_mode: None,
+            text_entities: None,
+            extra: BTreeMap::new(),
+        }
+    }
 
-json_payload_wrapper!(
-    /// Generic story area payload.
-    StoryArea,
-    "story_area",
-    validate_typed_object_payload
-);
+    pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
+        self.parse_mode = Some(parse_mode);
+        self
+    }
 
-json_payload_wrapper!(
-    /// Generic paid media item payload.
-    InputPaidMedia,
-    "input_paid_media",
-    validate_typed_object_payload
-);
+    pub fn text_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.text_entities = Some(entities);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.id <= 0 {
+            return Err(invalid_request("input_checklist_task.id must be positive"));
+        }
+        validate_display_text_length_range("input_checklist_task.text", &self.text, 1, 100)?;
+        validate_rich_text_formatting(
+            "input_checklist_task.text",
+            &self.text,
+            self.parse_mode,
+            self.text_entities.as_deref(),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for InputChecklistTask {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawInputChecklistTask {
+            id: i64,
+            text: String,
+            #[serde(default)]
+            parse_mode: Option<ParseMode>,
+            #[serde(default)]
+            text_entities: Option<Vec<MessageEntity>>,
+            #[serde(flatten)]
+            extra: BTreeMap<String, Value>,
+        }
+
+        let raw = RawInputChecklistTask::deserialize(deserializer)?;
+        let task = Self {
+            id: raw.id,
+            text: raw.text,
+            parse_mode: raw.parse_mode,
+            text_entities: raw.text_entities,
+            extra: raw.extra,
+        };
+        task.validate().map_err(serde::de::Error::custom)?;
+        Ok(task)
+    }
+}
+
+impl Serialize for InputChecklistTask {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["id", "text", "parse_mode", "text_entities"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len =
+            usize::from(self.parse_mode.is_some()) + usize::from(self.text_entities.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 2))?;
+        object.serialize_entry("id", &self.id)?;
+        object.serialize_entry("text", &self.text)?;
+        if let Some(parse_mode) = self.parse_mode {
+            object.serialize_entry("parse_mode", &parse_mode)?;
+        }
+        if let Some(text_entities) = self.text_entities.as_ref() {
+            object.serialize_entry("text_entities", text_entities)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Checklist payload to send or edit.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct InputChecklist {
+    pub title: String,
+    pub parse_mode: Option<ParseMode>,
+    pub title_entities: Option<Vec<MessageEntity>>,
+    pub tasks: Vec<InputChecklistTask>,
+    pub others_can_add_tasks: Option<bool>,
+    pub others_can_mark_tasks_as_done: Option<bool>,
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputChecklist {
+    pub fn new(
+        title: impl Into<String>,
+        tasks: impl IntoIterator<Item = InputChecklistTask>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            parse_mode: None,
+            title_entities: None,
+            tasks: tasks.into_iter().collect(),
+            others_can_add_tasks: None,
+            others_can_mark_tasks_as_done: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let checklist = serde_json::from_value::<Self>(value).map_err(|source| {
+            invalid_request(format!("invalid input_checklist payload: {source}"))
+        })?;
+        checklist.validate()?;
+        Ok(checklist)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn parse_mode(mut self, parse_mode: ParseMode) -> Self {
+        self.parse_mode = Some(parse_mode);
+        self
+    }
+
+    pub fn title_entities(mut self, entities: Vec<MessageEntity>) -> Self {
+        self.title_entities = Some(entities);
+        self
+    }
+
+    pub fn others_can_add_tasks(mut self, value: bool) -> Self {
+        self.others_can_add_tasks = Some(value);
+        self
+    }
+
+    pub fn others_can_mark_tasks_as_done(mut self, value: bool) -> Self {
+        self.others_can_mark_tasks_as_done = Some(value);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_display_text_length_range("input_checklist.title", &self.title, 1, 255)?;
+        validate_rich_text_formatting(
+            "input_checklist.title",
+            &self.title,
+            self.parse_mode,
+            self.title_entities.as_deref(),
+        )?;
+        if !(1..=30).contains(&self.tasks.len()) {
+            return Err(invalid_request(
+                "input_checklist.tasks must contain 1-30 tasks",
+            ));
+        }
+
+        let mut task_ids = BTreeSet::new();
+        for task in &self.tasks {
+            task.validate()?;
+            if !task_ids.insert(task.id) {
+                return Err(invalid_request(format!(
+                    "input_checklist.tasks contains duplicate id {}",
+                    task.id
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for InputChecklist {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawInputChecklist {
+            title: String,
+            #[serde(default)]
+            parse_mode: Option<ParseMode>,
+            #[serde(default)]
+            title_entities: Option<Vec<MessageEntity>>,
+            tasks: Vec<InputChecklistTask>,
+            #[serde(default)]
+            others_can_add_tasks: Option<bool>,
+            #[serde(default)]
+            others_can_mark_tasks_as_done: Option<bool>,
+            #[serde(flatten)]
+            extra: BTreeMap<String, Value>,
+        }
+
+        let raw = RawInputChecklist::deserialize(deserializer)?;
+        let checklist = Self {
+            title: raw.title,
+            parse_mode: raw.parse_mode,
+            title_entities: raw.title_entities,
+            tasks: raw.tasks,
+            others_can_add_tasks: raw.others_can_add_tasks,
+            others_can_mark_tasks_as_done: raw.others_can_mark_tasks_as_done,
+            extra: raw.extra,
+        };
+        checklist.validate().map_err(serde::de::Error::custom)?;
+        Ok(checklist)
+    }
+}
+
+impl TryFrom<Value> for InputChecklist {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        Self::try_from_value(value)
+    }
+}
+
+impl Serialize for InputChecklist {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "title",
+            "parse_mode",
+            "title_entities",
+            "tasks",
+            "others_can_add_tasks",
+            "others_can_mark_tasks_as_done",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.parse_mode.is_some())
+            + usize::from(self.title_entities.is_some())
+            + usize::from(self.others_can_add_tasks.is_some())
+            + usize::from(self.others_can_mark_tasks_as_done.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 2))?;
+        object.serialize_entry("title", &self.title)?;
+        if let Some(parse_mode) = self.parse_mode {
+            object.serialize_entry("parse_mode", &parse_mode)?;
+        }
+        if let Some(title_entities) = self.title_entities.as_ref() {
+            object.serialize_entry("title_entities", title_entities)?;
+        }
+        object.serialize_entry("tasks", &self.tasks)?;
+        if let Some(others_can_add_tasks) = self.others_can_add_tasks {
+            object.serialize_entry("others_can_add_tasks", &others_can_add_tasks)?;
+        }
+        if let Some(others_can_mark_tasks_as_done) = self.others_can_mark_tasks_as_done {
+            object.serialize_entry(
+                "others_can_mark_tasks_as_done",
+                &others_can_mark_tasks_as_done,
+            )?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
 
 json_payload_wrapper!(
     /// Generic suggested-post payload.
@@ -1596,13 +3411,6 @@ impl crate::types::advanced::AdvancedSetChatMenuButtonRequest {
         self
     }
 }
-
-json_payload_wrapper!(
-    /// Generic reaction type payload.
-    ReactionType,
-    "reaction_type",
-    validate_typed_object_payload
-);
 
 json_payload_wrapper!(
     /// Generic passport element error payload.
@@ -2248,7 +4056,7 @@ impl ReplyParameters {
                 "quote formatting options require reply quote",
             ));
         }
-        validate_optional_text_formatting(
+        validate_optional_rich_text_formatting(
             "reply quote",
             self.quote.as_deref(),
             self.quote_parse_mode,
@@ -2413,6 +4221,21 @@ impl Serialize for LinkPreviewOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_entity(kind: MessageEntityKind, length: u32) -> MessageEntity {
+        MessageEntity {
+            kind,
+            offset: 0,
+            length,
+            url: None,
+            user: None,
+            language: None,
+            custom_emoji_id: None,
+            unix_time: None,
+            date_time_format: None,
+            extra: BTreeMap::new(),
+        }
+    }
 
     #[test]
     fn inline_query_article_kind_is_fixed() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -2921,6 +4744,22 @@ mod tests {
         reply.quote_parse_mode = Some(ParseMode::MarkdownV2);
         assert!(reply.validate().is_ok());
 
+        let mut date_time_entity = test_entity(MessageEntityKind::DateTime, 4);
+        date_time_entity.unix_time = Some(1_700_000_000);
+        let mut reply_with_date_time = ReplyParameters::new(MessageId(1));
+        reply_with_date_time.quote = Some("date".to_owned());
+        reply_with_date_time.quote_entities = Some(vec![date_time_entity]);
+        assert!(reply_with_date_time.validate().is_ok());
+
+        let mut reply_with_unsupported_entity = ReplyParameters::new(MessageId(1));
+        reply_with_unsupported_entity.quote = Some("https://example.com".to_owned());
+        reply_with_unsupported_entity.quote_entities =
+            Some(vec![test_entity(MessageEntityKind::Url, 19)]);
+        assert!(matches!(
+            reply_with_unsupported_entity.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         reply.quote_entities = Some(Vec::new());
         assert!(matches!(
             reply.validate(),
@@ -2969,23 +4808,51 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
 
-        let checklist = InputChecklist::new(serde_json::json!({
-            "title": "Deploy",
-            "tasks": []
-        }))?;
-        assert_eq!(checklist.as_value()["title"], "Deploy");
+        let mut date_time_entity = test_entity(MessageEntityKind::DateTime, 4);
+        date_time_entity.unix_time = Some(1_700_000_000);
+        date_time_entity.date_time_format = Some("MMM d".to_owned());
+        let checklist = InputChecklist::new(
+            "Deploy",
+            [InputChecklistTask::new(1, "Ship").text_entities(vec![date_time_entity.clone()])],
+        )
+        .title_entities(vec![date_time_entity]);
+        checklist.validate()?;
+        let checklist_json = serde_json::to_value(&checklist)?;
+        assert_eq!(checklist_json["title"], "Deploy");
+        assert_eq!(checklist_json["tasks"][0]["id"], 1);
+        assert_eq!(
+            checklist_json["tasks"][0]["text_entities"][0]["type"],
+            "date_time"
+        );
 
-        let story_content = InputStoryContent::new(serde_json::json!({
-            "type": "photo",
-            "photo": "file-id"
-        }))?;
-        assert_eq!(story_content.as_value()["type"], "photo");
+        let story_content = InputStoryContent::photo("file-id");
+        assert_eq!(story_content.kind(), Some("photo"));
+        let story_content_json = serde_json::to_value(&story_content)?;
+        assert_eq!(story_content_json["type"], "photo");
+        assert_eq!(story_content_json["photo"], "file-id");
 
-        let paid_media = InputPaidMedia::new(serde_json::json!({
-            "type": "photo",
-            "media": "file-id"
+        let story_video = InputStoryContent::video("video-file-id");
+        assert_eq!(story_video.kind(), Some("video"));
+        InputStoryContent::try_from_value(serde_json::json!({
+            "type": "video",
+            "video": "video-file-id",
+            "duration": 60.0
         }))?;
-        assert_eq!(paid_media.as_value()["type"], "photo");
+
+        let paid_media = InputPaidMedia::photo("file-id");
+        assert_eq!(paid_media.kind(), Some("photo"));
+        let paid_media_json = serde_json::to_value(&paid_media)?;
+        assert_eq!(paid_media_json["type"], "photo");
+        assert_eq!(paid_media_json["media"], "file-id");
+
+        let paid_video = InputPaidMedia::try_from_value(serde_json::json!({
+            "type": "video",
+            "media": "video-file-id",
+            "duration": 1
+        }))?;
+        assert_eq!(paid_video.kind(), Some("video"));
+        let paid_live_photo = InputPaidMedia::live_photo("video-file-id", "photo-file-id");
+        paid_live_photo.validate()?;
 
         let profile_photo = InputProfilePhoto::new(serde_json::json!({
             "type": "static",
@@ -2993,8 +4860,18 @@ mod tests {
         }))?;
         assert_eq!(profile_photo.as_value()["type"], "static");
 
-        let reaction = ReactionType::new(serde_json::json!({"type": "emoji", "emoji": "ok"}))?;
-        assert_eq!(reaction.as_value()["type"], "emoji");
+        let reaction = ReactionType::emoji("👍");
+        assert_eq!(reaction.kind(), Some("emoji"));
+        let reaction_json = serde_json::to_value(&reaction)?;
+        assert_eq!(reaction_json["type"], "emoji");
+        assert_eq!(reaction_json["emoji"], "👍");
+        let custom_reaction = ReactionType::try_from_value(serde_json::json!({
+            "type": "custom_emoji",
+            "custom_emoji_id": "custom-emoji-id"
+        }))?;
+        assert_eq!(custom_reaction.kind(), Some("custom_emoji"));
+        let paid_reaction_json = serde_json::to_value(ReactionType::paid())?;
+        assert_eq!(paid_reaction_json["type"], "paid");
 
         let passport_error = PassportElementError::new(serde_json::json!({
             "source": "data",
@@ -3029,20 +4906,76 @@ mod tests {
             }))
             .is_ok()
         );
-        assert!(
-            StoryArea::new(serde_json::json!({
+        let position = StoryAreaPosition::new(50.0, 50.0, 20.0, 10.0, 0.0, 4.0);
+        let story_area = StoryArea::try_from_value(serde_json::json!({
+            "position": {
+                "x_percentage": 50.0,
+                "y_percentage": 50.0,
+                "width_percentage": 20.0,
+                "height_percentage": 10.0,
+                "rotation_angle": 0.0,
+                "corner_radius_percentage": 4.0
+            },
+            "type": {
                 "type": "location",
-                "position": {}
-            }))
-            .is_ok()
-        );
+                "latitude": 1.0,
+                "longitude": 2.0
+            }
+        }))?;
+        assert_eq!(story_area.kind.kind(), Some("location"));
+
+        let link_area = StoryArea::link(position.clone(), "https://example.com");
+        link_area.validate()?;
+        let link_area_value = serde_json::to_value(&link_area)?;
+        assert_eq!(link_area_value["type"]["type"], "link");
+        assert_eq!(link_area_value["type"]["url"], "https://example.com");
 
         assert!(matches!(
-            InputChecklist::new(Value::Null),
+            InputChecklist::try_from_value(Value::Null),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputChecklist::new("Deploy", Vec::<InputChecklistTask>::new()).validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputChecklist::new(
+                "Deploy",
+                [
+                    InputChecklistTask::new(1, "Ship"),
+                    InputChecklistTask::new(1, "Verify")
+                ],
+            )
+            .validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputChecklistTask::new(1, "https://example.com")
+                .text_entities(vec![test_entity(MessageEntityKind::Url, 19)])
+                .validate(),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(
             InputPaidMedia::new(serde_json::json!({"media": "file-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputPaidMedia::try_from_value(serde_json::json!({"type": "photo"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputPaidMedia::try_from_value(serde_json::json!({
+                "type": "live_photo",
+                "media": "video-file-id"
+            })),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputPaidMedia::try_from_value(serde_json::json!({
+                "type": "video",
+                "media": "video-file-id",
+                "duration": 0
+            })),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(
@@ -3051,6 +4984,16 @@ mod tests {
         ));
         assert!(matches!(
             ReactionType::new(serde_json::json!({"type": ""})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            ReactionType::try_from_value(serde_json::json!({"type": "emoji"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            ReactionType::try_from_value(serde_json::json!({
+                "type": "custom_emoji"
+            })),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(
@@ -3067,6 +5010,45 @@ mod tests {
         ));
         assert!(matches!(
             SuggestedPostParameters::new(serde_json::json!({"send_date": "soon"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputStoryContent::try_from_value(serde_json::json!({"type": "photo"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputStoryContent::try_from_value(serde_json::json!({
+                "type": "video",
+                "video": "file-id",
+                "duration": 60.1
+            })),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            StoryArea::try_from_value(serde_json::json!({
+                "type": "location",
+                "position": {}
+            })),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            StoryArea::try_from_value(serde_json::json!({
+                "position": {
+                    "x_percentage": 50.0,
+                    "y_percentage": 50.0,
+                    "width_percentage": 20.0,
+                    "height_percentage": 10.0,
+                    "rotation_angle": 0.0,
+                    "corner_radius_percentage": 4.0
+                },
+                "type": {
+                    "type": "location"
+                }
+            })),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            validate_story_areas("areas", &vec![StoryArea::location(position, 1.0, 2.0); 11]),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(

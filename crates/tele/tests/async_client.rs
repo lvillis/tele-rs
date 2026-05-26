@@ -15,9 +15,10 @@ use tele::types::advanced::{
     AdvancedGetGameHighScoresRequest, AdvancedGetStarTransactionsRequest,
     AdvancedGetStickerSetRequest, AdvancedGetUserChatBoostsRequest, AdvancedGetUserGiftsRequest,
     AdvancedGetUserProfileAudiosRequest, AdvancedGiftPremiumSubscriptionRequest,
-    AdvancedPostStoryRequest, AdvancedSavePreparedInlineMessageRequest,
+    AdvancedPostStoryRequest, AdvancedRepostStoryRequest, AdvancedSavePreparedInlineMessageRequest,
     AdvancedSavePreparedKeyboardButtonRequest, AdvancedSendGameRequest, AdvancedSendGiftRequest,
-    AdvancedSendInvoiceRequest, AdvancedSendStickerRequest, AdvancedSetBusinessAccountBioRequest,
+    AdvancedSendInvoiceRequest, AdvancedSendMessageDraftRequest, AdvancedSendPaidMediaRequest,
+    AdvancedSendStickerRequest, AdvancedSetBusinessAccountBioRequest,
     AdvancedSetBusinessAccountNameRequest, AdvancedSetBusinessAccountUsernameRequest,
     AdvancedSetChatMemberTagRequest, AdvancedSetStickerEmojiListRequest,
     AdvancedSetStickerKeywordsRequest, AdvancedSetStickerSetTitleRequest,
@@ -27,10 +28,11 @@ use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
     CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton,
     InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMediaGroupItem,
-    InputMediaPhoto, InputMediaVideo, InputStoryContent, KeyboardButton, LabeledPrice, MessageId,
-    ParseMode, SendDocumentRequest, SendMediaGroupRequest, SendPhotoRequest, SendStickerRequest,
-    SetChatPhotoRequest, SetMyCommandsRequest, ShippingOption, StickerFormat,
-    SuggestedPostParameters, Update, UploadStickerFileRequest, WebAppData,
+    InputMediaPhoto, InputMediaVideo, InputPaidMedia, InputStoryContent, KeyboardButton,
+    LabeledPrice, MessageEntity, MessageId, ParseMode, SendDocumentRequest, SendMediaGroupRequest,
+    SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest,
+    ShippingOption, StickerFormat, StoryArea, StoryAreaPosition, SuggestedPostParameters, Update,
+    UploadStickerFileRequest, WebAppData,
 };
 use tele::{
     BanMemberOptions, BootstrapPlan, BootstrapRetryPolicy, BootstrapStepPhase, BootstrapStepStatus,
@@ -48,6 +50,14 @@ fn valid_suggested_post_send_date() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(600, |duration| duration.as_secs() as i64 + 600)
+}
+
+fn message_entity(kind: &str, length: u32) -> serde_json::Result<MessageEntity> {
+    serde_json::from_value(serde_json::json!({
+        "type": kind,
+        "offset": 0,
+        "length": length
+    }))
 }
 
 fn spawn_server(
@@ -255,6 +265,20 @@ async fn typed_layer_validates_advanced_request_before_transport() -> Result<(),
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let mut request = AdvancedSendGiftRequest::new("gift-id");
+    request.user_id = Some(tele::types::UserId(1));
+    request.text = Some("https://example.com".to_owned());
+    request.text_entities = Some(vec![message_entity("url", 19)?]);
+    let error = match client
+        .advanced()
+        .send_gift::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sendGift must reject entities Telegram ignores".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     let request = AdvancedGiftPremiumSubscriptionRequest::new(tele::types::UserId(1), 3, 1500);
     let error = match client
         .advanced()
@@ -296,6 +320,109 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("unordered message ids must be rejected before transport".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let paid_media = InputPaidMedia::photo("file-id");
+
+    let request = AdvancedSendPaidMediaRequest::new(1_i64, 25_001, vec![paid_media.clone()]);
+    let error = match client
+        .advanced()
+        .send_paid_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("paid media star_count must enforce the Bot API maximum".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedSendPaidMediaRequest::new(1_i64, 1, vec![paid_media.clone(); 11]);
+    let error = match client
+        .advanced()
+        .send_paid_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("paid media must enforce the Bot API media item limit".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSendPaidMediaRequest::new(1_i64, 1, vec![paid_media]);
+    request.payload = Some("x".repeat(129));
+    let error = match client
+        .advanced()
+        .send_paid_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("paid media payload must enforce the Bot API byte limit".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request =
+        AdvancedSendPaidMediaRequest::new(1_i64, 1, vec![InputPaidMedia::photo("file-id")]);
+    request.caption = Some("x".repeat(1025));
+    let error = match client
+        .advanced()
+        .send_paid_media::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("paid media captions must enforce the Bot API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let invalid_paid_media = InputPaidMedia::new(serde_json::json!({"type": "photo"}));
+    assert!(matches!(
+        invalid_paid_media,
+        Err(Error::InvalidRequest { .. })
+    ));
+
+    let mut request = AdvancedSendMessageDraftRequest::new(1_i64, 1);
+    request.text = Some("x".repeat(4097));
+    let error = match client
+        .advanced()
+        .send_message_draft::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("message drafts must enforce text length when present".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let story_content = InputStoryContent::photo("file-id");
+    let request = AdvancedPostStoryRequest::new("business-id", story_content.clone(), 86_401);
+    let error = match client
+        .advanced()
+        .post_story::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("postStory active_period must use Bot API enum values".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let position = StoryAreaPosition::new(50.0, 50.0, 20.0, 10.0, 0.0, 4.0);
+    let mut request = AdvancedPostStoryRequest::new("business-id", story_content, 86_400);
+    request.areas = Some(vec![StoryArea::location(position, 1.0, 2.0); 11]);
+    let error = match client
+        .advanced()
+        .post_story::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("postStory areas must enforce StoryArea type limits".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedRepostStoryRequest::new("business-id", 1_i64, 1, 86_401);
+    let error = match client
+        .advanced()
+        .repost_story::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("repostStory active_period must use Bot API enum values".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -3236,10 +3363,7 @@ async fn advanced_post_story_typed_returns_story() -> Result<(), DynError> {
     )?;
 
     let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
-    let content = InputStoryContent::new(serde_json::json!({
-        "type": "photo",
-        "photo": "file-id"
-    }))?;
+    let content = InputStoryContent::photo("file-id");
     let request = AdvancedPostStoryRequest::new("business-id", content, 86_400);
     let story = client.advanced().post_story_typed(&request).await?;
     assert_eq!(story.id, 77);

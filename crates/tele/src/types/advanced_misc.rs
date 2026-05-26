@@ -4,14 +4,16 @@ use serde::Serialize;
 use crate::{Error, Result};
 
 use crate::types::validation::{
-    control_free_string as validate_control_free_string,
+    bytes_len as validate_bytes_len, control_free_string as validate_control_free_string,
     emoji_free_text as validate_emoji_free_text, i64_range as validate_i64_range,
     non_negative_i64 as validate_non_negative_i64,
+    optional_display_text as validate_optional_display_text,
+    optional_message_text as validate_optional_message_text,
     optional_text_formatting as validate_optional_text_formatting,
-    positive_i64 as validate_positive_i64, required_string as validate_required_string,
-    string_id as validate_string_id,
+    positive_i64 as validate_positive_i64, required_len as validate_required_vec,
+    required_string as validate_required_string, string_id as validate_string_id,
     suggested_post_approval_send_date as validate_suggested_post_approval_send_date,
-    text_formatting as validate_text_formatting, text_length_range as validate_text_length_range,
+    text_length_range as validate_text_length_range,
 };
 
 use super::AdvancedRequest;
@@ -75,14 +77,27 @@ fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {
     Ok(())
 }
 
-fn validate_required_items<T: GeneratedValidate>(field: &str, values: &[T]) -> Result<()> {
-    if values.is_empty() {
+fn validate_limited_items<T: GeneratedValidate>(
+    field: &str,
+    values: &[T],
+    max_items: usize,
+) -> Result<()> {
+    if values.len() > max_items {
         return Err(Error::InvalidRequest {
-            reason: format!("{field} cannot be empty"),
+            reason: format!("{field} accepts at most {max_items} items"),
         });
     }
 
     validate_items(values)
+}
+
+fn validate_required_limited_items<T: GeneratedValidate>(
+    field: &str,
+    values: &[T],
+    max_items: usize,
+) -> Result<()> {
+    validate_required_vec(field, values.len())?;
+    validate_limited_items(field, values, max_items)
 }
 
 const MAX_MESSAGE_IDS: usize = 100;
@@ -384,8 +399,8 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
         if let Some(value) = self.direct_messages_topic_id {
             validate_positive_i64("direct_messages_topic_id", value)?;
         }
-        validate_positive_i64("star_count", self.star_count)?;
-        validate_required_items::<crate::types::telegram::InputPaidMedia>("media", &self.media)?;
+        validate_i64_range("star_count", self.star_count, 1, 25000)?;
+        validate_optional_display_text("caption", self.caption.as_deref(), 1024)?;
         if let Some(value) = self.suggested_post_parameters.as_ref() {
             value.validate()?;
         }
@@ -401,6 +416,14 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
             self.parse_mode,
             self.caption_entities.as_deref(),
         )?;
+        validate_required_limited_items::<crate::types::telegram::InputPaidMedia>(
+            "media",
+            &self.media,
+            10,
+        )?;
+        if let Some(value) = self.payload.as_deref() {
+            validate_bytes_len("payload", value, 128)?;
+        }
         Ok(())
     }
 }
@@ -470,7 +493,8 @@ pub struct AdvancedSendMessageDraftRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     pub draft_id: i64,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -478,16 +502,12 @@ pub struct AdvancedSendMessageDraftRequest {
 }
 
 impl AdvancedSendMessageDraftRequest {
-    pub fn new(
-        chat_id: impl Into<crate::types::common::NumericChatId>,
-        draft_id: i64,
-        text: impl Into<String>,
-    ) -> Self {
+    pub fn new(chat_id: impl Into<crate::types::common::NumericChatId>, draft_id: i64) -> Self {
         Self {
             chat_id: chat_id.into(),
             message_thread_id: None,
             draft_id,
-            text: text.into(),
+            text: None,
             parse_mode: None,
             entities: None,
         }
@@ -504,10 +524,10 @@ impl AdvancedRequest for AdvancedSendMessageDraftRequest {
             validate_positive_i64("message_thread_id", value)?;
         }
         validate_positive_i64("draft_id", self.draft_id)?;
-        validate_required_string("text", &self.text)?;
-        validate_text_formatting(
+        validate_optional_message_text("sendMessageDraft", self.text.as_deref())?;
+        validate_optional_text_formatting(
             "text",
-            &self.text,
+            self.text.as_deref(),
             self.parse_mode,
             self.entities.as_deref(),
         )?;

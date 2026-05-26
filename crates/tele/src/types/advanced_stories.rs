@@ -4,29 +4,12 @@ use serde::Serialize;
 use crate::Result;
 
 use crate::types::validation::{
+    i64_values as validate_i64_values, optional_display_text as validate_optional_display_text,
     optional_text_formatting as validate_optional_text_formatting,
     positive_i64 as validate_positive_i64, string_id as validate_string_id,
 };
 
 use super::AdvancedRequest;
-
-trait GeneratedValidate {
-    fn validate_generated(&self) -> Result<()>;
-}
-
-impl GeneratedValidate for crate::types::telegram::StoryArea {
-    fn validate_generated(&self) -> Result<()> {
-        self.validate()
-    }
-}
-
-fn validate_items<T: GeneratedValidate>(values: &[T]) -> Result<()> {
-    for value in values {
-        value.validate_generated()?;
-    }
-
-    Ok(())
-}
 
 /// Auto-generated request for `postStory`.
 #[derive(Clone, Debug, Serialize)]
@@ -75,9 +58,14 @@ impl AdvancedRequest for AdvancedPostStoryRequest {
     fn validate(&self) -> Result<()> {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
         self.content.validate()?;
-        validate_positive_i64("active_period", self.active_period)?;
+        validate_i64_values(
+            "active_period",
+            self.active_period,
+            &[21_600, 43_200, 86_400, 172_800],
+        )?;
+        validate_optional_display_text("caption", self.caption.as_deref(), 2048)?;
         if let Some(values) = self.areas.as_deref() {
-            validate_items(values)?;
+            crate::types::telegram::validate_story_areas("areas", values)?;
         }
         validate_optional_text_formatting(
             "caption",
@@ -128,7 +116,11 @@ impl AdvancedRequest for AdvancedRepostStoryRequest {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
         self.from_chat_id.validate()?;
         validate_positive_i64("from_story_id", self.from_story_id)?;
-        validate_positive_i64("active_period", self.active_period)?;
+        validate_i64_values(
+            "active_period",
+            self.active_period,
+            &[21_600, 43_200, 86_400, 172_800],
+        )?;
         Ok(())
     }
 }
@@ -175,8 +167,9 @@ impl AdvancedRequest for AdvancedEditStoryRequest {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
         validate_positive_i64("story_id", self.story_id)?;
         self.content.validate()?;
+        validate_optional_display_text("caption", self.caption.as_deref(), 2048)?;
         if let Some(values) = self.areas.as_deref() {
-            validate_items(values)?;
+            crate::types::telegram::validate_story_areas("areas", values)?;
         }
         validate_optional_text_formatting(
             "caption",

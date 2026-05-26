@@ -565,7 +565,7 @@
         {
           "name": "text",
           "field_name": "text",
-          "required": true,
+          "required": false,
           "type_raw": "String",
           "type_rust": "String"
         },

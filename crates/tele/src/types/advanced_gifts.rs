@@ -6,7 +6,7 @@ use crate::{Error, Result};
 use crate::types::validation::{
     control_free_string as validate_control_free_string, i64_range as validate_i64_range,
     non_negative_i64 as validate_non_negative_i64,
-    optional_text_formatting as validate_optional_text_formatting,
+    optional_rich_text_formatting as validate_optional_rich_text_formatting,
     positive_i64 as validate_positive_i64, string_id as validate_string_id,
     text_length_range as validate_text_length_range,
 };
@@ -75,7 +75,7 @@ impl AdvancedRequest for AdvancedSendGiftRequest {
         if let Some(value) = self.text.as_deref() {
             validate_text_length_range("text", value, 0, 128)?;
         }
-        validate_optional_text_formatting(
+        validate_optional_rich_text_formatting(
             "text",
             self.text.as_deref(),
             self.text_parse_mode,
@@ -136,7 +136,7 @@ impl AdvancedRequest for AdvancedGiftPremiumSubscriptionRequest {
         if let Some(value) = self.text.as_deref() {
             validate_text_length_range("text", value, 0, 128)?;
         }
-        validate_optional_text_formatting(
+        validate_optional_rich_text_formatting(
             "text",
             self.text.as_deref(),
             self.text_parse_mode,

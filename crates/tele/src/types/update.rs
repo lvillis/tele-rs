@@ -1644,6 +1644,10 @@ mod tests {
         assert_eq!(reaction.message_id, MessageId(20));
         assert_eq!(reaction.user.as_ref().map(|user| user.id.0), Some(1));
         assert_eq!(reaction.new_reaction.len(), 1);
+        assert!(matches!(
+            &reaction.new_reaction[0],
+            ReactionType::Emoji(value) if value.emoji == "👍"
+        ));
 
         let reaction_count = update_for_kind(UpdateKind::MessageReactionCount)?;
         let reaction_count = reaction_count
@@ -1651,6 +1655,7 @@ mod tests {
             .ok_or("missing message reaction count")?;
         assert_eq!(reaction_count.reactions.len(), 1);
         assert_eq!(reaction_count.reactions[0].total_count, 3);
+        assert_eq!(reaction_count.reactions[0].kind.kind(), Some("emoji"));
 
         let shipping = update_for_kind(UpdateKind::ShippingQuery)?;
         let shipping = shipping.shipping_query().ok_or("missing shipping query")?;
