@@ -34,7 +34,15 @@ fn commands_in_sync(current: &[BotCommand], commands: &SetMyCommandsRequest) -> 
 }
 
 fn menu_button_in_sync(current: &MenuButton, menu_button: &MenuButtonConfig) -> bool {
-    current == &menu_button.menu_button
+    match (current, &menu_button.menu_button) {
+        (MenuButton::Commands(_), MenuButton::Commands(_))
+        | (MenuButton::Default(_), MenuButton::Default(_)) => true,
+        (MenuButton::WebApp(current), MenuButton::WebApp(expected)) => {
+            current.text == expected.text && current.web_app.url == expected.web_app.url
+        }
+        (MenuButton::Unknown(current), MenuButton::Unknown(expected)) => current == expected,
+        _ => false,
+    }
 }
 
 fn single_attempt_bootstrap_policy() -> BootstrapRetryPolicy {

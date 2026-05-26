@@ -581,7 +581,7 @@ pub(crate) fn validate_route_command_name(command: &str) -> Result<String> {
     }
     if !is_valid_command_name(command) {
         return Err(invalid_request(format!(
-            "invalid command route name `{command}`: expected 1-32 lowercase ASCII letters, digits, or `_`, starting with a lowercase letter"
+            "invalid command route name `{command}`: expected 1-32 lowercase ASCII letters, digits, or `_`"
         )));
     }
 
@@ -589,11 +589,7 @@ pub(crate) fn validate_route_command_name(command: &str) -> Result<String> {
 }
 
 fn is_valid_command_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    first.is_ascii_lowercase()
+    !name.is_empty()
         && name.len() <= 32
         && name
             .chars()
@@ -1113,6 +1109,7 @@ pub fn command_definitions<C: BotCommands>() -> Vec<crate::types::command::BotCo
         .map(|description| crate::types::command::BotCommand {
             command: description.command.to_owned(),
             description: description.description.to_owned(),
+            extra: std::collections::BTreeMap::new(),
         })
         .collect()
 }

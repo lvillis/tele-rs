@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::types::common::ChatId;
-use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
+use crate::types::telegram::{InlineKeyboardMarkup, ReplyParameters, SuggestedPostParameters};
 use crate::types::validation::{
     optional_request_positive_i64 as validate_optional_positive_i64,
     optional_request_positive_u32 as validate_optional_positive_u32,
@@ -14,7 +14,9 @@ use crate::types::validation::{
 const INVOICE_TITLE_MAX_CHARS: usize = 32;
 const INVOICE_DESCRIPTION_MAX_CHARS: usize = 255;
 const INVOICE_PAYLOAD_MAX_BYTES: usize = 128;
+const TELEGRAM_STARS_CURRENCY: &str = "XTR";
 const TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS: u32 = 2_592_000;
+const TELEGRAM_STARS_SUBSCRIPTION_PRICE_MAX: i64 = 10_000;
 
 fn validate_bounded_text(
     method: &str,
@@ -85,6 +87,70 @@ fn validate_prices(method: &str, prices: &[LabeledPrice]) -> Result<(), Error> {
     Ok(())
 }
 
+pub(crate) fn validate_invoice_prices(
+    method: &str,
+    currency: &str,
+    prices: &[LabeledPrice],
+) -> Result<(), Error> {
+    validate_prices(method, prices)?;
+
+    if currency == TELEGRAM_STARS_CURRENCY && prices.len() != 1 {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires exactly one price item for Telegram Stars payments"),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_invoice_business_connection_id(
+    method: &str,
+    currency: &str,
+    value: Option<&str>,
+) -> Result<(), Error> {
+    validate_optional_id(method, "business_connection_id", value)?;
+
+    if value.is_some() && currency != TELEGRAM_STARS_CURRENCY {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} supports `business_connection_id` only for Telegram Stars payments"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_invoice_reply_markup(
+    method: &str,
+    reply_markup: Option<&InlineKeyboardMarkup>,
+) -> Result<(), Error> {
+    let Some(reply_markup) = reply_markup else {
+        return Ok(());
+    };
+
+    reply_markup.validate()?;
+    let Some(first_button) = reply_markup
+        .inline_keyboard
+        .first()
+        .and_then(|row| row.first())
+    else {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} requires a non-empty inline keyboard"),
+        });
+    };
+
+    if !first_button.is_pay_button() {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} requires the first inline keyboard button to be a Pay button"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 fn validate_shipping_options(
     method: &str,
     shipping_options: &[ShippingOption],
@@ -110,9 +176,18 @@ fn validate_shipping_options(
 
 pub(crate) fn validate_invoice_tip_configuration(
     method: &str,
+    currency: &str,
     max_tip_amount: Option<i64>,
     suggested_tip_amounts: Option<&[i64]>,
 ) -> Result<(), Error> {
+    if currency == TELEGRAM_STARS_CURRENCY
+        && (max_tip_amount.is_some() || suggested_tip_amounts.is_some())
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} does not support tips for Telegram Stars payments"),
+        });
+    }
+
     if let Some(max_tip_amount) = max_tip_amount
         && max_tip_amount <= 0
     {
@@ -174,14 +249,36 @@ pub(crate) fn validate_invoice_tip_configuration(
 
 pub(crate) fn validate_invoice_subscription_period(
     method: &str,
+    currency: &str,
     value: Option<i64>,
+    prices: &[LabeledPrice],
 ) -> Result<(), Error> {
-    if let Some(value) = value
-        && value != i64::from(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS)
-    {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    if currency != TELEGRAM_STARS_CURRENCY {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} requires `currency` to be {TELEGRAM_STARS_CURRENCY} when using `subscription_period`"
+            ),
+        });
+    }
+
+    if value != i64::from(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS) {
         return Err(Error::InvalidRequest {
             reason: format!(
                 "{method} requires `subscription_period` to be {TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS} seconds when provided"
+            ),
+        });
+    }
+
+    if let Some(price) = prices.first()
+        && price.amount > TELEGRAM_STARS_SUBSCRIPTION_PRICE_MAX
+    {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} requires subscription price to be at most {TELEGRAM_STARS_SUBSCRIPTION_PRICE_MAX} Telegram Stars"
             ),
         });
     }
@@ -301,7 +398,7 @@ pub struct SendInvoiceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
 }
 
 impl SendInvoiceRequest {
@@ -322,7 +419,7 @@ impl SendInvoiceRequest {
         validate_invoice_description("sendInvoice", &description)?;
         validate_invoice_payload("sendInvoice", &payload)?;
         validate_invoice_currency("sendInvoice", &currency)?;
-        validate_prices("sendInvoice", &prices)?;
+        validate_invoice_prices("sendInvoice", &currency, &prices)?;
 
         let request = Self {
             chat_id: chat_id.into(),
@@ -372,16 +469,15 @@ impl SendInvoiceRequest {
         if let Some(reply_parameters) = self.reply_parameters.as_ref() {
             reply_parameters.validate()?;
         }
-        if let Some(reply_markup) = self.reply_markup.as_ref() {
-            reply_markup.validate()?;
-        }
+        validate_invoice_reply_markup("sendInvoice", self.reply_markup.as_ref())?;
         validate_invoice_title("sendInvoice", &self.title)?;
         validate_invoice_description("sendInvoice", &self.description)?;
         validate_invoice_payload("sendInvoice", &self.payload)?;
         validate_invoice_currency("sendInvoice", &self.currency)?;
-        validate_prices("sendInvoice", &self.prices)?;
+        validate_invoice_prices("sendInvoice", &self.currency, &self.prices)?;
         validate_invoice_tip_configuration(
             "sendInvoice",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
@@ -410,7 +506,7 @@ impl SendInvoiceRequest {
         self
     }
 
-    pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
+    pub fn reply_markup(mut self, reply_markup: impl Into<InlineKeyboardMarkup>) -> Self {
         self.reply_markup = Some(reply_markup.into());
         self
     }
@@ -477,7 +573,7 @@ impl CreateInvoiceLinkRequest {
         validate_invoice_description("createInvoiceLink", &description)?;
         validate_invoice_payload("createInvoiceLink", &payload)?;
         validate_invoice_currency("createInvoiceLink", &currency)?;
-        validate_prices("createInvoiceLink", &prices)?;
+        validate_invoice_prices("createInvoiceLink", &currency, &prices)?;
 
         let request = Self {
             title,
@@ -508,24 +604,27 @@ impl CreateInvoiceLinkRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        validate_optional_id(
+        validate_invoice_business_connection_id(
             "createInvoiceLink",
-            "business_connection_id",
+            &self.currency,
             self.business_connection_id.as_deref(),
         )?;
         validate_invoice_title("createInvoiceLink", &self.title)?;
         validate_invoice_description("createInvoiceLink", &self.description)?;
         validate_invoice_payload("createInvoiceLink", &self.payload)?;
         validate_invoice_currency("createInvoiceLink", &self.currency)?;
-        validate_prices("createInvoiceLink", &self.prices)?;
+        validate_invoice_prices("createInvoiceLink", &self.currency, &self.prices)?;
         validate_invoice_tip_configuration(
             "createInvoiceLink",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
         validate_invoice_subscription_period(
             "createInvoiceLink",
+            &self.currency,
             self.subscription_period.map(i64::from),
+            &self.prices,
         )?;
         validate_optional_positive_u32("createInvoiceLink", "photo_size", self.photo_size)?;
         validate_optional_positive_u32("createInvoiceLink", "photo_width", self.photo_width)?;
@@ -651,6 +750,12 @@ impl AnswerPreCheckoutQueryRequest {
 mod tests {
     use super::*;
 
+    fn valid_suggested_post_send_date() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(600, |duration| duration.as_secs() as i64 + 600)
+    }
+
     #[test]
     fn validates_payment_request_ids_and_targets() -> Result<(), Error> {
         let invoice = SendInvoiceRequest::new(
@@ -709,12 +814,26 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
         invoice.photo_width = None;
-        invoice.reply_markup =
-            Some(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()).into());
+        invoice.reply_markup = Some(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()));
         assert!(matches!(
             invoice.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+
+        invoice.reply_markup = Some(crate::types::telegram::InlineKeyboardMarkup::single_row(
+            vec![crate::types::telegram::InlineKeyboardButton::callback(
+                "Open", "invoice",
+            )?],
+        ));
+        assert!(matches!(
+            invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        invoice.reply_markup = Some(crate::types::telegram::InlineKeyboardMarkup::single_row(
+            vec![crate::types::telegram::InlineKeyboardButton::pay("Pay")],
+        ));
+        invoice.validate()?;
         invoice.reply_markup = None;
         invoice.message_effect_id = Some("bad\nid".to_owned());
         assert!(matches!(
@@ -724,12 +843,39 @@ mod tests {
         invoice.message_effect_id = None;
         invoice.suggested_post_parameters =
             Some(SuggestedPostParameters::new(serde_json::json!({
-                "send_date": 1
+                "send_date": valid_suggested_post_send_date()
             }))?);
         invoice.validate()?;
         let serialized =
             serde_json::to_value(&invoice).map_err(|source| Error::SerializeRequest { source })?;
         assert!(serialized.get("suggested_post_parameters").is_some());
+
+        let stars_invoice = SendInvoiceRequest::new(
+            1_i64,
+            "title",
+            "description",
+            "payload",
+            "XTR",
+            vec![
+                LabeledPrice::new("item", 100),
+                LabeledPrice::new("shipping", 10),
+            ],
+        );
+        assert!(matches!(stars_invoice, Err(Error::InvalidRequest { .. })));
+
+        let mut stars_invoice = SendInvoiceRequest::new(
+            1_i64,
+            "title",
+            "description",
+            "payload",
+            "XTR",
+            vec![LabeledPrice::new("item", 100)],
+        )?;
+        stars_invoice.max_tip_amount = Some(10);
+        assert!(matches!(
+            stars_invoice.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let mut invoice_link = CreateInvoiceLinkRequest::new(
             "title",
@@ -744,13 +890,39 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
         invoice_link.business_connection_id = None;
+        invoice_link.business_connection_id = Some("business-1".to_owned());
+        assert!(matches!(
+            invoice_link.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        invoice_link.business_connection_id = None;
         invoice_link.subscription_period = Some(0);
         assert!(matches!(
             invoice_link.validate(),
             Err(Error::InvalidRequest { .. })
         ));
         invoice_link.subscription_period = Some(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS);
+        assert!(matches!(
+            invoice_link.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invoice_link = CreateInvoiceLinkRequest::new(
+            "title",
+            "description",
+            "payload",
+            "XTR",
+            vec![LabeledPrice::new("item", 100)],
+        )?;
+        invoice_link.business_connection_id = Some("business-1".to_owned());
+        invoice_link.subscription_period = Some(TELEGRAM_STARS_SUBSCRIPTION_PERIOD_SECS);
         invoice_link.validate()?;
+
+        invoice_link.prices = vec![LabeledPrice::new("item", 10_001)];
+        assert!(matches!(
+            invoice_link.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let mut shipping = AnswerShippingQueryRequest::new("", true);
         shipping.shipping_options = Some(vec![ShippingOption::new(

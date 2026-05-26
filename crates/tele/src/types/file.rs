@@ -1,17 +1,22 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{Error, Result};
 
 /// Telegram file object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct File {
     pub file_id: String,
     pub file_unique_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_path: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// `getFile` request.
@@ -57,5 +62,27 @@ mod tests {
                 Err(Error::InvalidRequest { .. })
             ));
         }
+    }
+
+    #[test]
+    fn file_preserves_future_fields() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let file: File = serde_json::from_value(serde_json::json!({
+            "file_id": "file-id",
+            "file_unique_id": "unique-id",
+            "file_size": 42,
+            "file_path": "documents/file.txt",
+            "future_field": {"kept": true}
+        }))?;
+
+        assert_eq!(file.file_id, "file-id");
+        assert_eq!(file.file_unique_id, "unique-id");
+        assert_eq!(file.file_size, Some(42));
+        assert_eq!(file.file_path.as_deref(), Some("documents/file.txt"));
+        assert_eq!(
+            file.extra["future_field"],
+            serde_json::json!({"kept": true})
+        );
+
+        Ok(())
     }
 }

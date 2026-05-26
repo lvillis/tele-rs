@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use serde::Serialize;
 use serde::ser::SerializeMap;
 use serde_json::Value;
 
@@ -27,22 +26,6 @@ where
         if !is_reserved_key(key, reserved) {
             object.serialize_entry(key, value)?;
         }
-    }
-
-    Ok(())
-}
-
-pub(crate) fn serialize_optional_field<M, T>(
-    object: &mut M,
-    key: &'static str,
-    value: &Option<T>,
-) -> std::result::Result<(), M::Error>
-where
-    M: SerializeMap,
-    T: Serialize,
-{
-    if let Some(value) = value.as_ref() {
-        object.serialize_entry(key, value)?;
     }
 
     Ok(())

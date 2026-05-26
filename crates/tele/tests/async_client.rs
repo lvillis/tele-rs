@@ -6,17 +6,22 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{
     AdvancedAnswerPreCheckoutQueryRequest, AdvancedAnswerShippingQueryRequest,
-    AdvancedAnswerWebAppQueryRequest, AdvancedCreateForumTopicRequest,
-    AdvancedCreateInvoiceLinkRequest, AdvancedEditMessageMediaRequest,
+    AdvancedAnswerWebAppQueryRequest, AdvancedApproveSuggestedPostRequest,
+    AdvancedCreateForumTopicRequest, AdvancedCreateInvoiceLinkRequest,
+    AdvancedDeclineSuggestedPostRequest, AdvancedEditMessageMediaRequest,
     AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest,
-    AdvancedGetBusinessAccountStarBalanceRequest, AdvancedGetCustomEmojiStickersRequest,
+    AdvancedGetBusinessAccountGiftsRequest, AdvancedGetBusinessAccountStarBalanceRequest,
+    AdvancedGetChatGiftsRequest, AdvancedGetCustomEmojiStickersRequest,
     AdvancedGetGameHighScoresRequest, AdvancedGetStarTransactionsRequest,
     AdvancedGetStickerSetRequest, AdvancedGetUserChatBoostsRequest, AdvancedGetUserGiftsRequest,
-    AdvancedGetUserProfileAudiosRequest, AdvancedPostStoryRequest,
-    AdvancedSavePreparedInlineMessageRequest, AdvancedSavePreparedKeyboardButtonRequest,
-    AdvancedSendGameRequest, AdvancedSendGiftRequest, AdvancedSendInvoiceRequest,
-    AdvancedSendStickerRequest, AdvancedSetStickerEmojiListRequest,
+    AdvancedGetUserProfileAudiosRequest, AdvancedGiftPremiumSubscriptionRequest,
+    AdvancedPostStoryRequest, AdvancedSavePreparedInlineMessageRequest,
+    AdvancedSavePreparedKeyboardButtonRequest, AdvancedSendGameRequest, AdvancedSendGiftRequest,
+    AdvancedSendInvoiceRequest, AdvancedSendStickerRequest, AdvancedSetBusinessAccountBioRequest,
+    AdvancedSetBusinessAccountNameRequest, AdvancedSetBusinessAccountUsernameRequest,
+    AdvancedSetChatMemberTagRequest, AdvancedSetStickerEmojiListRequest,
     AdvancedSetStickerKeywordsRequest, AdvancedSetStickerSetTitleRequest,
+    AdvancedSetUserEmojiStatusRequest, AdvancedVerifyUserRequest,
 };
 use tele::types::{
     AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
@@ -38,6 +43,12 @@ use tele::types::BotCommandScope;
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 type TestServer = FakeTelegramServer;
+
+fn valid_suggested_post_send_date() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(600, |duration| duration.as_secs() as i64 + 600)
+}
 
 fn spawn_server(
     expected_path: &'static str,
@@ -231,6 +242,32 @@ async fn typed_layer_validates_advanced_request_before_transport() -> Result<(),
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let mut request = AdvancedSendGiftRequest::new("gift-id");
+    request.user_id = Some(tele::types::UserId(1));
+    request.text = Some("a".repeat(129));
+    let error = match client
+        .advanced()
+        .send_gift::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated sendGift text must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedGiftPremiumSubscriptionRequest::new(tele::types::UserId(1), 3, 1500);
+    let error = match client
+        .advanced()
+        .gift_premium_subscription::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => {
+            return Err("generated premium gift subscriptions must enforce star pricing".into());
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     Ok(())
 }
 
@@ -275,6 +312,127 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let mut request = AdvancedSetUserEmojiStatusRequest::new(tele::types::UserId(1));
+    request.emoji_status_custom_emoji_id = Some("bad\nstatus".to_owned());
+    let error = match client
+        .advanced()
+        .set_user_emoji_status::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated emoji status ids must reject control characters".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetChatMemberTagRequest::new(1_i64, tele::types::UserId(1));
+    request.tag = Some("a".repeat(17));
+    let error = match client
+        .advanced()
+        .set_chat_member_tag::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated member tags must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetChatMemberTagRequest::new(1_i64, tele::types::UserId(1));
+    request.tag = Some("ops🚀".to_owned());
+    let error = match client
+        .advanced()
+        .set_chat_member_tag::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated member tags must reject emoji".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let request = AdvancedSetBusinessAccountNameRequest::new("business-connection", "");
+    let error = match client
+        .advanced()
+        .set_business_account_name::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated business first names must not be empty".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetBusinessAccountNameRequest::new("business-connection", "first");
+    request.last_name = Some("a".repeat(65));
+    let error = match client
+        .advanced()
+        .set_business_account_name::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated business last names must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetBusinessAccountUsernameRequest::new("business-connection");
+    request.username = Some("bad name".to_owned());
+    let error = match client
+        .advanced()
+        .set_business_account_username::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated business usernames must enforce username syntax".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSetBusinessAccountBioRequest::new("business-connection");
+    request.bio = Some("a".repeat(141));
+    let error = match client
+        .advanced()
+        .set_business_account_bio::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated business bios must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedVerifyUserRequest::new(tele::types::UserId(1));
+    request.custom_description = Some("a".repeat(71));
+    let error = match client
+        .advanced()
+        .verify_user::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated verification descriptions must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedDeclineSuggestedPostRequest::new(1_i64, MessageId(1));
+    request.comment = Some("a".repeat(129));
+    let error = match client
+        .advanced()
+        .decline_suggested_post::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated suggested post comments must enforce API length".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedApproveSuggestedPostRequest::new(1_i64, MessageId(1));
+    request.send_date = Some(1);
+    let error = match client
+        .advanced()
+        .approve_suggested_post::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => {
+            return Err("generated suggested post approval dates must be in the future".into());
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     let mut request = AdvancedSendStickerRequest::new(1_i64, "sticker-file-id");
     request.emoji = Some("bad\nemoji".to_owned());
     let error = match client
@@ -305,6 +463,27 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("invalid generated sticker set titles must be rejected".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedSendInvoiceRequest::new(
+        1_i64,
+        "title",
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    request.reply_markup = Some(InlineKeyboardMarkup::single_row(vec![
+        InlineKeyboardButton::callback("Open", "invoice")?,
+    ]));
+    let error = match client
+        .advanced()
+        .send_invoice::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice markup must start with a Pay button".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -361,6 +540,26 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
 
+    let request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "XTR",
+        vec![
+            LabeledPrice::new("item", 100),
+            LabeledPrice::new("shipping", 10),
+        ],
+    );
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated Stars invoice prices must contain one item".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
     let mut request = AdvancedCreateInvoiceLinkRequest::new(
         "title",
         "description",
@@ -384,6 +583,46 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         "description",
         "payload",
         "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    request.business_connection_id = Some("business-1".to_owned());
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => {
+            return Err(
+                "generated invoice business_connection_id must require Stars currency".into(),
+            );
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "USD",
+        vec![LabeledPrice::new("item", 100)],
+    );
+    request.subscription_period = Some(2_592_000);
+    let error = match client
+        .advanced()
+        .create_invoice_link::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated invoice subscriptions must require Stars currency".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedCreateInvoiceLinkRequest::new(
+        "title",
+        "description",
+        "payload",
+        "XTR",
         vec![LabeledPrice::new("item", 100)],
     );
     request.subscription_period = Some(1);
@@ -494,6 +733,68 @@ async fn advanced_service_validates_generated_request_before_transport() -> Resu
         .await
     {
         Ok(_) => return Err("generated string offsets must reject control characters".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetUserProfileAudiosRequest::new(tele::types::UserId(1));
+    request.limit = Some(101);
+    let error = match client
+        .advanced()
+        .get_user_profile_audios::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => {
+            return Err("generated user profile audio limits must enforce API bounds".into());
+        }
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetUserGiftsRequest::new(tele::types::UserId(1));
+    request.limit = Some(101);
+    let error = match client
+        .advanced()
+        .get_user_gifts::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated user gift limits must enforce API bounds".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetChatGiftsRequest::new(1_i64);
+    request.limit = Some(101);
+    let error = match client
+        .advanced()
+        .get_chat_gifts::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated chat gift limits must enforce API bounds".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetBusinessAccountGiftsRequest::new("business-connection");
+    request.limit = Some(101);
+    let error = match client
+        .advanced()
+        .get_business_account_gifts::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated business gift limits must enforce API bounds".into()),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::InvalidRequest { .. }));
+
+    let mut request = AdvancedGetStarTransactionsRequest::new();
+    request.limit = Some(101);
+    let error = match client
+        .advanced()
+        .get_star_transactions::<serde_json::Value>(&request)
+        .await
+    {
+        Ok(_) => return Err("generated star transaction limits must enforce API bounds".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::InvalidRequest { .. }));
@@ -861,7 +1162,7 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
         .allow_paid_broadcast(true)
         .message_effect_id("effect-1")
         .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-            "send_date": 1
+            "send_date": valid_suggested_post_send_date()
         }))?)
         .disable_link_preview()
         .reply_markup(markup)
@@ -988,7 +1289,7 @@ async fn app_media_builders_support_common_send_options() -> Result<(), DynError
         .allow_paid_broadcast(true)
         .message_effect_id("photo-effect")
         .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-            "send_date": 1
+            "send_date": valid_suggested_post_send_date()
         }))?)
         .reply_markup(photo_markup)
         .send()
@@ -1762,12 +2063,12 @@ async fn bootstrap_skips_unchanged_commands_and_menu_button() -> Result<(), DynE
         (
             "/bot123:abc/getMyCommands",
             200,
-            r#"{"ok":true,"result":[{"command":"start","description":"start the bot"}]}"#,
+            r#"{"ok":true,"result":[{"command":"start","description":"start the bot","future_command_field":"kept"}]}"#,
         ),
         (
             "/bot123:abc/getChatMenuButton",
             200,
-            r#"{"ok":true,"result":{"type":"commands"}}"#,
+            r#"{"ok":true,"result":{"type":"commands","future_menu_button_field":"kept"}}"#,
         ),
     ];
     let (base_url, handle) = spawn_server_script(script)?;
@@ -1971,7 +2272,7 @@ async fn setup_bootstrap_reports_unchanged_steps() -> Result<(), DynError> {
         (
             "/bot123:abc/getChatMenuButton",
             200,
-            r#"{"ok":true,"result":{"type":"commands"}}"#,
+            r#"{"ok":true,"result":{"type":"commands","future_menu_button_field":"kept"}}"#,
         ),
     ];
     let (base_url, handle) = spawn_server_script(script)?;
@@ -2730,6 +3031,75 @@ async fn advanced_get_user_profile_audios_typed_returns_audios() -> Result<(), D
     assert_eq!(profile_audios.audios[0].file_id, "audio");
     assert_eq!(profile_audios.audios[0].title.as_deref(), Some("Intro"));
     assert_eq!(profile_audios.extra["page"], "first");
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_set_user_emoji_status_allows_empty_status_id() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/setUserEmojiStatus",
+        200,
+        r#"{"ok":true,"result":true}"#,
+        &["\"user_id\":42", "\"emoji_status_custom_emoji_id\":\"\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedSetUserEmojiStatusRequest::new(tele::types::UserId(42));
+    request.emoji_status_custom_emoji_id = Some(String::new());
+    let result = client
+        .advanced()
+        .set_user_emoji_status::<bool>(&request)
+        .await?;
+    assert!(result);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_set_chat_member_tag_allows_empty_tag() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/setChatMemberTag",
+        200,
+        r#"{"ok":true,"result":true}"#,
+        &["\"chat_id\":1", "\"user_id\":42", "\"tag\":\"\""],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedSetChatMemberTagRequest::new(1_i64, tele::types::UserId(42));
+    request.tag = Some(String::new());
+    let result = client
+        .advanced()
+        .set_chat_member_tag::<bool>(&request)
+        .await?;
+    assert!(result);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_set_business_account_username_allows_empty_username() -> Result<(), DynError> {
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/setBusinessAccountUsername",
+        200,
+        r#"{"ok":true,"result":true}"#,
+        &[
+            "\"business_connection_id\":\"business-connection\"",
+            "\"username\":\"\"",
+        ],
+    )?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let mut request = AdvancedSetBusinessAccountUsernameRequest::new("business-connection");
+    request.username = Some(String::new());
+    let result = client
+        .advanced()
+        .set_business_account_username::<bool>(&request)
+        .await?;
+    assert!(result);
 
     join_server(handle)?;
     Ok(())

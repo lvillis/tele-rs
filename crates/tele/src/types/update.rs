@@ -13,7 +13,9 @@ use crate::types::message::{
 use crate::types::telegram::{
     InlineQueryResult, InlineQueryResultsButton, ReactionType, WebAppData,
 };
-use crate::types::validation::control_free_string as validate_control_free_string;
+use crate::types::validation::{
+    control_free_string as validate_control_free_string, http_url as validate_http_url,
+};
 use crate::{Error, Result};
 
 const MAX_GET_UPDATES_LIMIT: u8 = 100;
@@ -1089,17 +1091,6 @@ fn validate_optional_text_limit(field: &str, value: &str, max_chars: usize) -> R
         )));
     }
     validate_control_free_string(field, value)
-}
-
-fn validate_http_url(field: &str, value: &str) -> Result<()> {
-    let parsed = url::Url::parse(value)
-        .map_err(|source| invalid_request(format!("invalid {field}: {source}")))?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(()),
-        scheme => Err(invalid_request(format!(
-            "{field} must use http or https scheme, got `{scheme}`"
-        ))),
-    }
 }
 
 fn validate_allowed_update_name(update: &str) -> Result<()> {

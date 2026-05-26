@@ -4,8 +4,10 @@ use serde::Serialize;
 use crate::{Error, Result};
 
 use crate::types::validation::{
-    control_free_string as validate_control_free_string, positive_i64 as validate_positive_i64,
-    required_string as validate_required_string, string_id as validate_string_id,
+    control_free_string as validate_control_free_string, i64_range as validate_i64_range,
+    positive_i64 as validate_positive_i64, string_id as validate_string_id,
+    text_length_range as validate_text_length_range,
+    username_or_empty as validate_username_or_empty,
 };
 
 use super::AdvancedRequest;
@@ -157,7 +159,10 @@ impl AdvancedRequest for AdvancedSetBusinessAccountNameRequest {
 
     fn validate(&self) -> Result<()> {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
-        validate_required_string("first_name", &self.first_name)?;
+        validate_text_length_range("first_name", &self.first_name, 1, 64)?;
+        if let Some(value) = self.last_name.as_deref() {
+            validate_text_length_range("last_name", value, 0, 64)?;
+        }
         Ok(())
     }
 }
@@ -185,6 +190,9 @@ impl AdvancedRequest for AdvancedSetBusinessAccountUsernameRequest {
 
     fn validate(&self) -> Result<()> {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
+        if let Some(value) = self.username.as_deref() {
+            validate_username_or_empty("username", value)?;
+        }
         Ok(())
     }
 }
@@ -212,6 +220,9 @@ impl AdvancedRequest for AdvancedSetBusinessAccountBioRequest {
 
     fn validate(&self) -> Result<()> {
         validate_string_id("business_connection_id", &self.business_connection_id)?;
+        if let Some(value) = self.bio.as_deref() {
+            validate_text_length_range("bio", value, 0, 140)?;
+        }
         Ok(())
     }
 }
@@ -414,7 +425,7 @@ impl AdvancedRequest for AdvancedGetBusinessAccountGiftsRequest {
             validate_control_free_string("offset", value)?;
         }
         if let Some(value) = self.limit {
-            validate_positive_i64("limit", value)?;
+            validate_i64_range("limit", value, 1, 100)?;
         }
         Ok(())
     }

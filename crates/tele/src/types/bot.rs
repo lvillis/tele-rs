@@ -1,13 +1,9 @@
 use std::collections::BTreeMap;
 
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::common::UserId;
-use crate::types::extra::{
-    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
-};
 use crate::types::message::{Audio, PhotoSize};
 use crate::{Error, Result};
 
@@ -20,57 +16,24 @@ pub struct User {
     pub id: UserId,
     pub is_bot: bool,
     pub first_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub language_code: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-impl Serialize for User {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = [
-            "id",
-            "is_bot",
-            "first_name",
-            "last_name",
-            "username",
-            "language_code",
-        ];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.last_name.is_some())
-            + usize::from(self.username.is_some())
-            + usize::from(self.language_code.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 3))?;
-        object.serialize_entry("id", &self.id)?;
-        object.serialize_entry("is_bot", &self.is_bot)?;
-        object.serialize_entry("first_name", &self.first_name)?;
-        if let Some(last_name) = self.last_name.as_ref() {
-            object.serialize_entry("last_name", last_name)?;
-        }
-        if let Some(username) = self.username.as_ref() {
-            object.serialize_entry("username", username)?;
-        }
-        if let Some(language_code) = self.language_code.as_ref() {
-            object.serialize_entry("language_code", language_code)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
-}
-
 /// Telegram user profile photos object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UserProfilePhotos {
     pub total_count: u64,
     pub photos: Vec<Vec<PhotoSize>>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram user profile audios object.
@@ -143,35 +106,47 @@ mod tests {
     }
 
     #[test]
-    fn user_extra_cannot_override_reserved_fields()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut user = User {
-            id: UserId(42),
-            is_bot: true,
-            first_name: "Tele".to_owned(),
-            last_name: Some("Bot".to_owned()),
-            username: Some("telebot".to_owned()),
-            language_code: Some("en".to_owned()),
-            extra: BTreeMap::new(),
-        };
-        user.extra.insert("id".to_owned(), serde_json::json!(1));
-        user.extra
-            .insert("is_bot".to_owned(), serde_json::json!(false));
-        user.extra
-            .insert("first_name".to_owned(), serde_json::json!("Overridden"));
-        user.extra
-            .insert("language_code".to_owned(), serde_json::json!("zh"));
-        user.extra
-            .insert("future_field".to_owned(), serde_json::json!("kept"));
+    fn user_preserves_future_fields() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let user: User = serde_json::from_value(serde_json::json!({
+            "id": 42,
+            "is_bot": true,
+            "first_name": "Tele",
+            "last_name": "Bot",
+            "username": "telebot",
+            "language_code": "en",
+            "future_field": "kept"
+        }))?;
 
-        let value = serde_json::to_value(&user)?;
-        assert_eq!(value["id"], 42);
-        assert_eq!(value["is_bot"], true);
-        assert_eq!(value["first_name"], "Tele");
-        assert_eq!(value["last_name"], "Bot");
-        assert_eq!(value["username"], "telebot");
-        assert_eq!(value["language_code"], "en");
-        assert_eq!(value["future_field"], "kept");
+        assert_eq!(user.id, UserId(42));
+        assert!(user.is_bot);
+        assert_eq!(user.first_name, "Tele");
+        assert_eq!(user.last_name.as_deref(), Some("Bot"));
+        assert_eq!(user.username.as_deref(), Some("telebot"));
+        assert_eq!(user.language_code.as_deref(), Some("en"));
+        assert_eq!(user.extra["future_field"], "kept");
+
+        Ok(())
+    }
+
+    #[test]
+    fn user_profile_photos_preserve_future_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let photos: UserProfilePhotos = serde_json::from_value(serde_json::json!({
+            "total_count": 1,
+            "photos": [[{
+                "file_id": "photo-id",
+                "file_unique_id": "unique-id",
+                "width": 320,
+                "height": 240,
+                "future_photo_field": "kept"
+            }]],
+            "future_album_field": true
+        }))?;
+
+        assert_eq!(photos.total_count, 1);
+        assert_eq!(photos.photos[0][0].file_id, "photo-id");
+        assert_eq!(photos.photos[0][0].extra["future_photo_field"], "kept");
+        assert_eq!(photos.extra["future_album_field"], true);
 
         Ok(())
     }

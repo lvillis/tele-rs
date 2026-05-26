@@ -23,6 +23,8 @@ enum DemoCommand {
     Remind { minutes: i64, text: String },
     #[command(description = "optional argument")]
     Maybe(Option<i64>),
+    #[command(rename = "2fa", description = "g", alias = "_otp")]
+    TwoFactor,
 }
 
 fn parse_update(input: serde_json::Value) -> Option<Update> {
@@ -74,16 +76,20 @@ fn derive_parses_commands_and_builds_descriptions() -> Result<(), DynError> {
         DemoCommand::parse("maybe", "9"),
         Some(DemoCommand::Maybe(Some(9)))
     );
+    assert_eq!(DemoCommand::parse("2fa", ""), Some(DemoCommand::TwoFactor));
+    assert_eq!(DemoCommand::parse("_otp", ""), Some(DemoCommand::TwoFactor));
 
     let descriptions = DemoCommand::descriptions();
-    assert_eq!(descriptions.len(), 6);
+    assert_eq!(descriptions.len(), 7);
     assert_eq!(descriptions[0].command, "start");
     assert_eq!(descriptions[0].description, "start bot");
 
     let bot_commands = command_definitions::<DemoCommand>();
-    assert_eq!(bot_commands.len(), 6);
+    assert_eq!(bot_commands.len(), 7);
     assert_eq!(bot_commands[1].command, "echo");
     assert_eq!(bot_commands[1].description, "echo text");
+    assert_eq!(bot_commands[6].command, "2fa");
+    assert_eq!(bot_commands[6].description, "g");
     Ok(())
 }
 

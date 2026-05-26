@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{Error, Result};
 
@@ -148,15 +151,17 @@ pub enum ParseMode {
 }
 
 /// Telegram API error parameters.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 #[non_exhaustive]
 pub struct ResponseParameters {
     /// Group migration target chat id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub migrate_to_chat_id: Option<i64>,
     /// Retry after N seconds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub retry_after: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[cfg(test)]
@@ -210,5 +215,21 @@ mod tests {
             NumericChatId::from(0_i64).validate(),
             Err(Error::InvalidRequest { .. })
         ));
+    }
+
+    #[test]
+    fn response_parameters_preserve_future_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let parameters: ResponseParameters = serde_json::from_value(serde_json::json!({
+            "migrate_to_chat_id": -100,
+            "retry_after": 5,
+            "future_parameter": "kept"
+        }))?;
+
+        assert_eq!(parameters.migrate_to_chat_id, Some(-100));
+        assert_eq!(parameters.retry_after, Some(5));
+        assert_eq!(parameters.extra["future_parameter"], "kept");
+
+        Ok(())
     }
 }

@@ -5,10 +5,13 @@ use crate::{Error, Result};
 
 use crate::types::validation::{
     control_free_string as validate_control_free_string,
+    emoji_free_text as validate_emoji_free_text, i64_range as validate_i64_range,
     non_negative_i64 as validate_non_negative_i64,
     optional_text_formatting as validate_optional_text_formatting,
     positive_i64 as validate_positive_i64, required_string as validate_required_string,
-    string_id as validate_string_id, text_formatting as validate_text_formatting,
+    string_id as validate_string_id,
+    suggested_post_approval_send_date as validate_suggested_post_approval_send_date,
+    text_formatting as validate_text_formatting, text_length_range as validate_text_length_range,
 };
 
 use super::AdvancedRequest;
@@ -581,7 +584,7 @@ impl AdvancedRequest for AdvancedGetUserProfileAudiosRequest {
             validate_non_negative_i64("offset", value)?;
         }
         if let Some(value) = self.limit {
-            validate_positive_i64("limit", value)?;
+            validate_i64_range("limit", value, 1, 100)?;
         }
         Ok(())
     }
@@ -616,6 +619,9 @@ impl AdvancedRequest for AdvancedSetChatMemberTagRequest {
     fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
         self.user_id.validate()?;
+        if let Some(value) = self.tag.as_deref() {
+            validate_emoji_free_text("tag", value, 16)?;
+        }
         Ok(())
     }
 }
@@ -977,6 +983,9 @@ impl AdvancedRequest for AdvancedVerifyUserRequest {
 
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
+        if let Some(value) = self.custom_description.as_deref() {
+            validate_text_length_range("custom_description", value, 0, 70)?;
+        }
         Ok(())
     }
 }
@@ -1004,6 +1013,9 @@ impl AdvancedRequest for AdvancedVerifyChatRequest {
 
     fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
+        if let Some(value) = self.custom_description.as_deref() {
+            validate_text_length_range("custom_description", value, 0, 70)?;
+        }
         Ok(())
     }
 }
@@ -1287,7 +1299,7 @@ impl AdvancedRequest for AdvancedApproveSuggestedPostRequest {
         self.chat_id.validate()?;
         self.message_id.validate()?;
         if let Some(value) = self.send_date {
-            validate_positive_i64("send_date", value)?;
+            validate_suggested_post_approval_send_date("send_date", value)?;
         }
         Ok(())
     }
@@ -1322,6 +1334,9 @@ impl AdvancedRequest for AdvancedDeclineSuggestedPostRequest {
     fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
         self.message_id.validate()?;
+        if let Some(value) = self.comment.as_deref() {
+            validate_text_length_range("comment", value, 0, 128)?;
+        }
         Ok(())
     }
 }

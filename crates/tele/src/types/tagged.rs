@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_json::Value;
 
 pub(crate) fn tagged_kind(value: &Value) -> Option<&str> {
@@ -21,36 +20,4 @@ pub(crate) fn strip_tag(mut value: Value, field: &str) -> Value {
         object.remove(field);
     }
     value
-}
-
-pub(crate) fn serialize_tagged<S, T>(
-    serializer: S,
-    kind: &str,
-    value: &T,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    T: Serialize,
-{
-    serialize_tagged_field(serializer, "type", kind, value)
-}
-
-pub(crate) fn serialize_tagged_field<S, T>(
-    serializer: S,
-    field: &str,
-    kind: &str,
-    value: &T,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    T: Serialize,
-{
-    let mut value = serde_json::to_value(value).map_err(serde::ser::Error::custom)?;
-    let Value::Object(object) = &mut value else {
-        return Err(serde::ser::Error::custom(
-            "tagged Telegram object must serialize as an object",
-        ));
-    };
-    object.insert(field.to_owned(), Value::String(kind.to_owned()));
-    value.serialize(serializer)
 }

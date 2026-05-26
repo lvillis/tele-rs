@@ -556,6 +556,24 @@ fn non_negative_i64_field(field_name: &str) -> bool {
     matches!(field_name, "offset" | "position" | "score")
 }
 
+fn i64_field_range(method: &MethodSpec, param: &ParamSpec) -> Option<(i64, i64)> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        (
+            "getUserProfileAudios"
+            | "getUserGifts"
+            | "getChatGifts"
+            | "getBusinessAccountGifts"
+            | "getStarTransactions",
+            "limit",
+        ) => Some((1, 100)),
+        _ => None,
+    }
+}
+
+fn suggested_post_approval_send_date_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    method.method == "approveSuggestedPost" && param.field_name == "send_date"
+}
+
 fn string_id_field(field_name: &str) -> bool {
     matches!(
         field_name,
@@ -575,8 +593,12 @@ fn ordered_message_ids_field(method: &MethodSpec, param: &ParamSpec) -> bool {
     )
 }
 
-fn string_cursor_field(field_name: &str) -> bool {
-    matches!(field_name, "offset")
+fn control_free_string_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(param.field_name.as_str(), "offset")
+        || matches!(
+            (method.method.as_str(), param.field_name.as_str()),
+            ("setUserEmojiStatus", "emoji_status_custom_emoji_id")
+        )
 }
 
 fn non_empty_control_free_string_field(method: &MethodSpec, param: &ParamSpec) -> bool {
@@ -607,6 +629,34 @@ fn non_empty_control_free_string_field(method: &MethodSpec, param: &ParamSpec) -
                 "sticker"
             )
             | ("replaceStickerInSet", "old_sticker")
+    )
+}
+
+fn emoji_free_string_limit(method: &MethodSpec, param: &ParamSpec) -> Option<&'static str> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("setChatMemberTag", "tag") | ("setChatAdministratorCustomTitle", "custom_title") => {
+            Some("16")
+        }
+        _ => None,
+    }
+}
+
+fn text_length_range(method: &MethodSpec, param: &ParamSpec) -> Option<(usize, usize)> {
+    match (method.method.as_str(), param.field_name.as_str()) {
+        ("setBusinessAccountName", "first_name") => Some((1, 64)),
+        ("setBusinessAccountName", "last_name") => Some((0, 64)),
+        ("verifyUser" | "verifyChat", "custom_description") => Some((0, 70)),
+        ("setBusinessAccountBio", "bio") => Some((0, 140)),
+        ("declineSuggestedPost", "comment") => Some((0, 128)),
+        ("sendGift" | "giftPremiumSubscription", "text") => Some((0, 128)),
+        _ => None,
+    }
+}
+
+fn username_or_empty_field(method: &MethodSpec, param: &ParamSpec) -> bool {
+    matches!(
+        (method.method.as_str(), param.field_name.as_str()),
+        ("setBusinessAccountUsername", "username")
     )
 }
 
@@ -710,6 +760,34 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
     }
 
     if field_ty == "i64" {
+        if suggested_post_approval_send_date_field(method, param) {
+            if param.required {
+                return Some(format!(
+                    "        validate_suggested_post_approval_send_date(\"{}\", self.{})?;",
+                    param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(value) = self.{} {{\n            validate_suggested_post_approval_send_date(\"{}\", value)?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+
+        if let Some((min, max)) = i64_field_range(method, param) {
+            if param.required {
+                return Some(format!(
+                    "        validate_i64_range(\"{}\", self.{}, {min}, {max})?;",
+                    param.name, param.field_name
+                ));
+            }
+
+            return Some(format!(
+                "        if let Some(value) = self.{} {{\n            validate_i64_range(\"{}\", value, {min}, {max})?;\n        }}",
+                param.field_name, param.name
+            ));
+        }
+
         if positive_i64_field(&param.field_name) {
             if param.required {
                 return Some(format!(
@@ -737,6 +815,20 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
                 param.field_name, param.name
             ));
         }
+    }
+
+    if field_ty == "String" && control_free_string_field(method, param) {
+        if param.required {
+            return Some(format!(
+                "        validate_control_free_string(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_control_free_string(\"{}\", value)?;\n        }}",
+            param.field_name, param.name
+        ));
     }
 
     if field_ty == "String" && string_id_field(&param.field_name) {
@@ -769,16 +861,48 @@ fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
         ));
     }
 
-    if field_ty == "String" && string_cursor_field(&param.field_name) {
+    if field_ty == "String"
+        && let Some(max_chars) = emoji_free_string_limit(method, param)
+    {
         if param.required {
             return Some(format!(
-                "        validate_control_free_string(\"{}\", &self.{})?;",
+                "        validate_emoji_free_text(\"{}\", &self.{}, {max_chars})?;",
                 param.name, param.field_name
             ));
         }
 
         return Some(format!(
-            "        if let Some(value) = self.{}.as_deref() {{\n            validate_control_free_string(\"{}\", value)?;\n        }}",
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_emoji_free_text(\"{}\", value, {max_chars})?;\n        }}",
+            param.field_name, param.name
+        ));
+    }
+
+    if field_ty == "String"
+        && let Some((min_chars, max_chars)) = text_length_range(method, param)
+    {
+        if param.required {
+            return Some(format!(
+                "        validate_text_length_range(\"{}\", &self.{}, {min_chars}, {max_chars})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_text_length_range(\"{}\", value, {min_chars}, {max_chars})?;\n        }}",
+            param.field_name, param.name
+        ));
+    }
+
+    if field_ty == "String" && username_or_empty_field(method, param) {
+        if param.required {
+            return Some(format!(
+                "        validate_username_or_empty(\"{}\", &self.{})?;",
+                param.name, param.field_name
+            ));
+        }
+
+        return Some(format!(
+            "        if let Some(value) = self.{}.as_deref() {{\n            validate_username_or_empty(\"{}\", value)?;\n        }}",
             param.field_name, param.name
         ));
     }
@@ -823,30 +947,53 @@ fn method_specific_validation_owns_param(method: &MethodSpec, param: &ParamSpec)
         ("answerShippingQuery", "shipping_options")
             | (
                 "sendInvoice" | "createInvoiceLink",
-                "max_tip_amount" | "suggested_tip_amounts"
+                "prices" | "max_tip_amount" | "suggested_tip_amounts"
             )
-            | ("createInvoiceLink", "subscription_period")
+            | ("sendInvoice", "reply_markup")
+            | (
+                "createInvoiceLink",
+                "business_connection_id" | "subscription_period"
+            )
     )
 }
 
 fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
     match method.method.as_str() {
         "sendInvoice" => vec![
+            r#"        validate_invoice_prices("sendInvoice", &self.currency, &self.prices)?;"#
+                .to_owned(),
             r#"        validate_invoice_tip_configuration(
             "sendInvoice",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;"#
+                .to_owned(),
+            r#"        validate_invoice_reply_markup("sendInvoice", self.reply_markup.as_ref())?;"#
                 .to_owned(),
         ],
         "createInvoiceLink" => vec![
+            r#"        validate_invoice_business_connection_id(
+            "createInvoiceLink",
+            &self.currency,
+            self.business_connection_id.as_deref(),
+        )?;"#
+                .to_owned(),
+            r#"        validate_invoice_prices("createInvoiceLink", &self.currency, &self.prices)?;"#
+                .to_owned(),
             r#"        validate_invoice_tip_configuration(
             "createInvoiceLink",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;"#
                 .to_owned(),
-            r#"        validate_invoice_subscription_period("createInvoiceLink", self.subscription_period)?;"#
+            r#"        validate_invoice_subscription_period(
+            "createInvoiceLink",
+            &self.currency,
+            self.subscription_period,
+            &self.prices,
+        )?;"#
                 .to_owned(),
         ],
         "answerShippingQuery" => vec![
@@ -920,6 +1067,18 @@ fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
             (true, true) => {
                 return Err(Error::InvalidRequest {
                     reason: "sendGift accepts either `user_id` or `chat_id`, not both".to_owned(),
+                });
+            }
+        }"#
+            .to_owned(),
+        ],
+        "giftPremiumSubscription" => vec![
+            r#"        match (self.month_count, self.star_count) {
+            (3, 1000) | (6, 1500) | (12, 2500) => {}
+            _ => {
+                return Err(Error::InvalidRequest {
+                    reason: "giftPremiumSubscription requires 1000 stars for 3 months, 1500 for 6 months, or 2500 for 12 months"
+                        .to_owned(),
                 });
             }
         }"#
@@ -1287,12 +1446,22 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         body.contains("validate_message_ids(") || uses_required_message_ids_validator;
     let uses_required_items_validator = body.contains("validate_required_items::<");
     let uses_items_validator = body.contains("validate_items(");
+    let uses_i64_range_validator = body.contains("validate_i64_range(");
+    let uses_emoji_free_text_validator = body.contains("validate_emoji_free_text(");
+    let uses_text_length_range_validator = body.contains("validate_text_length_range(");
+    let uses_username_or_empty_validator = body.contains("validate_username_or_empty(");
+    let uses_suggested_post_approval_send_date_validator =
+        body.contains("validate_suggested_post_approval_send_date(");
     let uses_positive_i64_validator = body.contains("validate_positive_i64(");
     let uses_non_negative_i64_validator = body.contains("validate_non_negative_i64(");
     let uses_control_free_string_validator = body.contains("validate_control_free_string(");
     let uses_invoice_currency_validator = body.contains("validate_invoice_currency(");
     let uses_invoice_description_validator = body.contains("validate_invoice_description(");
     let uses_invoice_payload_validator = body.contains("validate_invoice_payload(");
+    let uses_invoice_prices_validator = body.contains("validate_invoice_prices(");
+    let uses_invoice_reply_markup_validator = body.contains("validate_invoice_reply_markup(");
+    let uses_invoice_business_connection_id_validator =
+        body.contains("validate_invoice_business_connection_id(");
     let uses_invoice_subscription_period_validator =
         body.contains("validate_invoice_subscription_period(");
     let uses_invoice_tip_configuration_validator =
@@ -1301,6 +1470,9 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let uses_payment_validation = uses_invoice_currency_validator
         || uses_invoice_description_validator
         || uses_invoice_payload_validator
+        || uses_invoice_prices_validator
+        || uses_invoice_reply_markup_validator
+        || uses_invoice_business_connection_id_validator
         || uses_invoice_subscription_period_validator
         || uses_invoice_tip_configuration_validator
         || uses_invoice_title_validator;
@@ -1311,6 +1483,11 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     let uses_shared_validation = uses_required_string_validator
         || uses_string_id_validator
         || uses_required_vec_validator
+        || uses_i64_range_validator
+        || uses_emoji_free_text_validator
+        || uses_text_length_range_validator
+        || uses_username_or_empty_validator
+        || uses_suggested_post_approval_send_date_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator
         || uses_control_free_string_validator
@@ -1328,6 +1505,11 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         || uses_message_ids_validator
         || uses_required_items_validator
         || uses_items_validator
+        || uses_i64_range_validator
+        || uses_emoji_free_text_validator
+        || uses_text_length_range_validator
+        || uses_username_or_empty_validator
+        || uses_suggested_post_approval_send_date_validator
         || uses_positive_i64_validator
         || uses_non_negative_i64_validator
         || uses_control_free_string_validator
@@ -1356,6 +1538,30 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
     }
     if uses_shared_validation {
         let _ = writeln!(&mut out, "use crate::types::validation::{{");
+        if uses_i64_range_validator {
+            let _ = writeln!(&mut out, "    i64_range as validate_i64_range,");
+        }
+        if uses_emoji_free_text_validator {
+            let _ = writeln!(&mut out, "    emoji_free_text as validate_emoji_free_text,");
+        }
+        if uses_text_length_range_validator {
+            let _ = writeln!(
+                &mut out,
+                "    text_length_range as validate_text_length_range,"
+            );
+        }
+        if uses_username_or_empty_validator {
+            let _ = writeln!(
+                &mut out,
+                "    username_or_empty as validate_username_or_empty,"
+            );
+        }
+        if uses_suggested_post_approval_send_date_validator {
+            let _ = writeln!(
+                &mut out,
+                "    suggested_post_approval_send_date as validate_suggested_post_approval_send_date,"
+            );
+        }
         if uses_non_negative_i64_validator {
             let _ = writeln!(
                 &mut out,
@@ -1402,6 +1608,15 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         }
         if uses_invoice_payload_validator {
             let _ = writeln!(&mut out, "    validate_invoice_payload,");
+        }
+        if uses_invoice_prices_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_prices,");
+        }
+        if uses_invoice_reply_markup_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_reply_markup,");
+        }
+        if uses_invoice_business_connection_id_validator {
+            let _ = writeln!(&mut out, "    validate_invoice_business_connection_id,");
         }
         if uses_invoice_subscription_period_validator {
             let _ = writeln!(&mut out, "    validate_invoice_subscription_period,");
@@ -2152,6 +2367,13 @@ mod tests {
                     type_raw: "String".to_owned(),
                     type_rust: "String".to_owned(),
                 },
+                ParamSpec {
+                    name: "text".to_owned(),
+                    field_name: "text".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
             ],
         };
 
@@ -2159,6 +2381,48 @@ mod tests {
         assert!(generated.contains("match (self.user_id.is_some(), self.chat_id.is_some())"));
         assert!(generated.contains("sendGift requires either `user_id` or `chat_id`"));
         assert!(generated.contains("sendGift accepts either `user_id` or `chat_id`, not both"));
+        assert!(generated.contains(
+            "if let Some(value) = self.text.as_deref() {\n            validate_text_length_range(\"text\", value, 0, 128)?;\n        }"
+        ));
+    }
+
+    #[test]
+    fn generated_premium_gift_subscription_uses_api_price_matrix() {
+        let method = MethodSpec {
+            fn_name: "gift_premium_subscription".to_owned(),
+            method: "giftPremiumSubscription".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "month_count".to_owned(),
+                    field_name: "month_count".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "star_count".to_owned(),
+                    field_name: "star_count".to_owned(),
+                    required: true,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+                ParamSpec {
+                    name: "text".to_owned(),
+                    field_name: "text".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("match (self.month_count, self.star_count)"));
+        assert!(generated.contains("(3, 1000) | (6, 1500) | (12, 2500)"));
+        assert!(generated.contains(
+            "if let Some(value) = self.text.as_deref() {\n            validate_text_length_range(\"text\", value, 0, 128)?;\n        }"
+        ));
     }
 
     #[test]
@@ -2408,6 +2672,13 @@ mod tests {
                     type_rust: "String".to_owned(),
                 },
                 ParamSpec {
+                    name: "prices".to_owned(),
+                    field_name: "prices".to_owned(),
+                    required: true,
+                    type_raw: "Array of LabeledPrice".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
                     name: "max_tip_amount".to_owned(),
                     field_name: "max_tip_amount".to_owned(),
                     required: false,
@@ -2421,19 +2692,49 @@ mod tests {
                     type_raw: "Array of Integer".to_owned(),
                     type_rust: "Vec<i64>".to_owned(),
                 },
+                ParamSpec {
+                    name: "reply_markup".to_owned(),
+                    field_name: "reply_markup".to_owned(),
+                    required: false,
+                    type_raw: "InlineKeyboardMarkup".to_owned(),
+                    type_rust: "Value".to_owned(),
+                },
             ],
         };
         let create_invoice_link = MethodSpec {
             fn_name: "create_invoice_link".to_owned(),
             method: "createInvoiceLink".to_owned(),
             return_desc: "Returns String on success".to_owned(),
-            params: vec![ParamSpec {
-                name: "subscription_period".to_owned(),
-                field_name: "subscription_period".to_owned(),
-                required: false,
-                type_raw: "Integer".to_owned(),
-                type_rust: "i64".to_owned(),
-            }],
+            params: vec![
+                ParamSpec {
+                    name: "business_connection_id".to_owned(),
+                    field_name: "business_connection_id".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "currency".to_owned(),
+                    field_name: "currency".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "prices".to_owned(),
+                    field_name: "prices".to_owned(),
+                    required: true,
+                    type_raw: "Array of LabeledPrice".to_owned(),
+                    type_rust: "Vec<Value>".to_owned(),
+                },
+                ParamSpec {
+                    name: "subscription_period".to_owned(),
+                    field_name: "subscription_period".to_owned(),
+                    required: false,
+                    type_raw: "Integer".to_owned(),
+                    type_rust: "i64".to_owned(),
+                },
+            ],
         };
 
         let generated = generate_domain_module(&[&send_invoice, &create_invoice_link]);
@@ -2444,11 +2745,28 @@ mod tests {
         );
         assert!(generated.contains("validate_invoice_payload(\"sendInvoice\", &self.payload)?;"));
         assert!(generated.contains("validate_invoice_currency(\"sendInvoice\", &self.currency)?;"));
+        assert!(
+            generated.contains(
+                "validate_invoice_prices(\"sendInvoice\", &self.currency, &self.prices)?;"
+            )
+        );
+        assert!(generated.contains("validate_invoice_business_connection_id("));
         assert!(generated.contains("validate_invoice_tip_configuration("));
         assert!(generated.contains(
-            "validate_invoice_subscription_period(\"createInvoiceLink\", self.subscription_period)?;"
+            "validate_invoice_reply_markup(\"sendInvoice\", self.reply_markup.as_ref())?;"
+        ));
+        assert!(generated.contains(
+            "validate_invoice_subscription_period(\n            \"createInvoiceLink\",\n            &self.currency,\n            self.subscription_period,\n            &self.prices,\n        )?;"
         ));
         assert!(!generated.contains("validate_positive_i64(\"max_tip_amount\""));
+        assert!(
+            !generated.contains(
+                "validate_required_items::<crate::types::payment::LabeledPrice>(\"prices\""
+            )
+        );
+        assert!(!generated.contains(
+            "if let Some(value) = self.reply_markup.as_ref() {\n            value.validate()?;\n        }"
+        ));
         assert!(!generated.contains("validate_positive_i64(\"subscription_period\""));
     }
 
@@ -2543,6 +2861,53 @@ mod tests {
     }
 
     #[test]
+    fn generated_approve_suggested_post_uses_domain_send_date_validation() {
+        let method = MethodSpec {
+            fn_name: "approve_suggested_post".to_owned(),
+            method: "approveSuggestedPost".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "send_date".to_owned(),
+                field_name: "send_date".to_owned(),
+                required: false,
+                type_raw: "Integer".to_owned(),
+                type_rust: "i64".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains(
+            "suggested_post_approval_send_date as validate_suggested_post_approval_send_date"
+        ));
+        assert!(
+            generated
+                .contains("validate_suggested_post_approval_send_date(\"send_date\", value)?;")
+        );
+        assert!(!generated.contains("validate_positive_i64(\"send_date\", value)?;"));
+    }
+
+    #[test]
+    fn generated_paginated_limits_use_api_bounds() {
+        let method = MethodSpec {
+            fn_name: "get_user_profile_audios".to_owned(),
+            method: "getUserProfileAudios".to_owned(),
+            return_desc: String::new(),
+            params: vec![ParamSpec {
+                name: "limit".to_owned(),
+                field_name: "limit".to_owned(),
+                required: false,
+                type_raw: "Integer".to_owned(),
+                type_rust: "i64".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("i64_range as validate_i64_range"));
+        assert!(generated.contains("validate_i64_range(\"limit\", value, 1, 100)?;"));
+        assert!(!generated.contains("validate_positive_i64(\"limit\", value)?;"));
+    }
+
+    #[test]
     fn generated_string_offsets_reject_control_characters() {
         let method = MethodSpec {
             fn_name: "get_user_gifts".to_owned(),
@@ -2562,6 +2927,153 @@ mod tests {
         assert!(!generated.contains("fn validate_control_free_string("));
         assert!(generated.contains(
             "if let Some(value) = self.offset.as_deref() {\n            validate_control_free_string(\"offset\", value)?;\n        }"
+        ));
+    }
+
+    #[test]
+    fn generated_empty_string_status_reset_uses_control_free_validation() {
+        let method = MethodSpec {
+            fn_name: "set_user_emoji_status".to_owned(),
+            method: "setUserEmojiStatus".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "emoji_status_custom_emoji_id".to_owned(),
+                field_name: "emoji_status_custom_emoji_id".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("control_free_string as validate_control_free_string"));
+        assert!(generated.contains(
+            "if let Some(value) = self.emoji_status_custom_emoji_id.as_deref() {\n            validate_control_free_string(\"emoji_status_custom_emoji_id\", value)?;\n        }"
+        ));
+        assert!(!generated.contains("validate_string_id(\"emoji_status_custom_emoji_id\""));
+    }
+
+    #[test]
+    fn generated_member_tag_uses_api_text_bounds() {
+        let method = MethodSpec {
+            fn_name: "set_chat_member_tag".to_owned(),
+            method: "setChatMemberTag".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "tag".to_owned(),
+                field_name: "tag".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[&method]);
+        assert!(generated.contains("emoji_free_text as validate_emoji_free_text"));
+        assert!(generated.contains(
+            "if let Some(value) = self.tag.as_deref() {\n            validate_emoji_free_text(\"tag\", value, 16)?;\n        }"
+        ));
+    }
+
+    #[test]
+    fn generated_short_profile_text_uses_api_bounds() {
+        let business_name = MethodSpec {
+            fn_name: "set_business_account_name".to_owned(),
+            method: "setBusinessAccountName".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![
+                ParamSpec {
+                    name: "first_name".to_owned(),
+                    field_name: "first_name".to_owned(),
+                    required: true,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+                ParamSpec {
+                    name: "last_name".to_owned(),
+                    field_name: "last_name".to_owned(),
+                    required: false,
+                    type_raw: "String".to_owned(),
+                    type_rust: "String".to_owned(),
+                },
+            ],
+        };
+        let username = MethodSpec {
+            fn_name: "set_business_account_username".to_owned(),
+            method: "setBusinessAccountUsername".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "username".to_owned(),
+                field_name: "username".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+        let bio = MethodSpec {
+            fn_name: "set_business_account_bio".to_owned(),
+            method: "setBusinessAccountBio".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "bio".to_owned(),
+                field_name: "bio".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+        let verify_user = MethodSpec {
+            fn_name: "verify_user".to_owned(),
+            method: "verifyUser".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "custom_description".to_owned(),
+                field_name: "custom_description".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+        let decline_suggested_post = MethodSpec {
+            fn_name: "decline_suggested_post".to_owned(),
+            method: "declineSuggestedPost".to_owned(),
+            return_desc: "Returns True on success".to_owned(),
+            params: vec![ParamSpec {
+                name: "comment".to_owned(),
+                field_name: "comment".to_owned(),
+                required: false,
+                type_raw: "String".to_owned(),
+                type_rust: "String".to_owned(),
+            }],
+        };
+
+        let generated = generate_domain_module(&[
+            &business_name,
+            &username,
+            &bio,
+            &verify_user,
+            &decline_suggested_post,
+        ]);
+        assert!(generated.contains("text_length_range as validate_text_length_range"));
+        assert!(generated.contains("username_or_empty as validate_username_or_empty"));
+        assert!(
+            generated
+                .contains("validate_text_length_range(\"first_name\", &self.first_name, 1, 64)?;")
+        );
+        assert!(generated.contains(
+            "if let Some(value) = self.last_name.as_deref() {\n            validate_text_length_range(\"last_name\", value, 0, 64)?;\n        }"
+        ));
+        assert!(generated.contains(
+            "if let Some(value) = self.username.as_deref() {\n            validate_username_or_empty(\"username\", value)?;\n        }"
+        ));
+        assert!(generated.contains(
+            "if let Some(value) = self.bio.as_deref() {\n            validate_text_length_range(\"bio\", value, 0, 140)?;\n        }"
+        ));
+        assert!(generated.contains(
+            "if let Some(value) = self.custom_description.as_deref() {\n            validate_text_length_range(\"custom_description\", value, 0, 70)?;\n        }"
+        ));
+        assert!(generated.contains(
+            "if let Some(value) = self.comment.as_deref() {\n            validate_text_length_range(\"comment\", value, 0, 128)?;\n        }"
         ));
     }
 

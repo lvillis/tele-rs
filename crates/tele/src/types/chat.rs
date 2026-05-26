@@ -1,15 +1,12 @@
 use std::collections::BTreeMap;
 
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::common::{ChatId, MessageId, UserId};
-use crate::types::extra::{
-    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
-};
-use crate::types::tagged::{serialize_tagged_field, strip_tag, tagged_field};
+use crate::types::tagged::{strip_tag, tagged_field};
+use crate::types::validation::emoji_free_text as validate_emoji_free_text;
 use crate::{Error, Result};
 
 const MAX_CHAT_TITLE_CHARS: usize = 128;
@@ -194,146 +191,6 @@ impl ChatAdministratorRights {
     }
 }
 
-fn chat_administrator_member_rights_len(rights: &ChatAdministratorRights) -> usize {
-    usize::from(rights.can_manage_chat.is_some())
-        + usize::from(rights.can_delete_messages.is_some())
-        + usize::from(rights.can_manage_video_chats.is_some())
-        + usize::from(rights.can_restrict_members.is_some())
-        + usize::from(rights.can_promote_members.is_some())
-        + usize::from(rights.can_change_info.is_some())
-        + usize::from(rights.can_invite_users.is_some())
-        + usize::from(rights.can_post_stories.is_some())
-        + usize::from(rights.can_edit_stories.is_some())
-        + usize::from(rights.can_delete_stories.is_some())
-        + usize::from(rights.can_post_messages.is_some())
-        + usize::from(rights.can_edit_messages.is_some())
-        + usize::from(rights.can_pin_messages.is_some())
-        + usize::from(rights.can_manage_topics.is_some())
-}
-
-fn serialize_chat_administrator_member_rights<M>(
-    object: &mut M,
-    rights: &ChatAdministratorRights,
-) -> std::result::Result<(), M::Error>
-where
-    M: SerializeMap,
-{
-    if let Some(value) = rights.can_manage_chat {
-        object.serialize_entry("can_manage_chat", &value)?;
-    }
-    if let Some(value) = rights.can_delete_messages {
-        object.serialize_entry("can_delete_messages", &value)?;
-    }
-    if let Some(value) = rights.can_manage_video_chats {
-        object.serialize_entry("can_manage_video_chats", &value)?;
-    }
-    if let Some(value) = rights.can_restrict_members {
-        object.serialize_entry("can_restrict_members", &value)?;
-    }
-    if let Some(value) = rights.can_promote_members {
-        object.serialize_entry("can_promote_members", &value)?;
-    }
-    if let Some(value) = rights.can_change_info {
-        object.serialize_entry("can_change_info", &value)?;
-    }
-    if let Some(value) = rights.can_invite_users {
-        object.serialize_entry("can_invite_users", &value)?;
-    }
-    if let Some(value) = rights.can_post_stories {
-        object.serialize_entry("can_post_stories", &value)?;
-    }
-    if let Some(value) = rights.can_edit_stories {
-        object.serialize_entry("can_edit_stories", &value)?;
-    }
-    if let Some(value) = rights.can_delete_stories {
-        object.serialize_entry("can_delete_stories", &value)?;
-    }
-    if let Some(value) = rights.can_post_messages {
-        object.serialize_entry("can_post_messages", &value)?;
-    }
-    if let Some(value) = rights.can_edit_messages {
-        object.serialize_entry("can_edit_messages", &value)?;
-    }
-    if let Some(value) = rights.can_pin_messages {
-        object.serialize_entry("can_pin_messages", &value)?;
-    }
-    if let Some(value) = rights.can_manage_topics {
-        object.serialize_entry("can_manage_topics", &value)?;
-    }
-
-    Ok(())
-}
-
-fn chat_permissions_len(permissions: &ChatPermissions) -> usize {
-    usize::from(permissions.can_send_messages.is_some())
-        + usize::from(permissions.can_send_audios.is_some())
-        + usize::from(permissions.can_send_documents.is_some())
-        + usize::from(permissions.can_send_photos.is_some())
-        + usize::from(permissions.can_send_videos.is_some())
-        + usize::from(permissions.can_send_video_notes.is_some())
-        + usize::from(permissions.can_send_voice_notes.is_some())
-        + usize::from(permissions.can_send_polls.is_some())
-        + usize::from(permissions.can_send_other_messages.is_some())
-        + usize::from(permissions.can_add_web_page_previews.is_some())
-        + usize::from(permissions.can_change_info.is_some())
-        + usize::from(permissions.can_invite_users.is_some())
-        + usize::from(permissions.can_pin_messages.is_some())
-        + usize::from(permissions.can_manage_topics.is_some())
-}
-
-fn serialize_chat_permissions<M>(
-    object: &mut M,
-    permissions: &ChatPermissions,
-) -> std::result::Result<(), M::Error>
-where
-    M: SerializeMap,
-{
-    if let Some(value) = permissions.can_send_messages {
-        object.serialize_entry("can_send_messages", &value)?;
-    }
-    if let Some(value) = permissions.can_send_audios {
-        object.serialize_entry("can_send_audios", &value)?;
-    }
-    if let Some(value) = permissions.can_send_documents {
-        object.serialize_entry("can_send_documents", &value)?;
-    }
-    if let Some(value) = permissions.can_send_photos {
-        object.serialize_entry("can_send_photos", &value)?;
-    }
-    if let Some(value) = permissions.can_send_videos {
-        object.serialize_entry("can_send_videos", &value)?;
-    }
-    if let Some(value) = permissions.can_send_video_notes {
-        object.serialize_entry("can_send_video_notes", &value)?;
-    }
-    if let Some(value) = permissions.can_send_voice_notes {
-        object.serialize_entry("can_send_voice_notes", &value)?;
-    }
-    if let Some(value) = permissions.can_send_polls {
-        object.serialize_entry("can_send_polls", &value)?;
-    }
-    if let Some(value) = permissions.can_send_other_messages {
-        object.serialize_entry("can_send_other_messages", &value)?;
-    }
-    if let Some(value) = permissions.can_add_web_page_previews {
-        object.serialize_entry("can_add_web_page_previews", &value)?;
-    }
-    if let Some(value) = permissions.can_change_info {
-        object.serialize_entry("can_change_info", &value)?;
-    }
-    if let Some(value) = permissions.can_invite_users {
-        object.serialize_entry("can_invite_users", &value)?;
-    }
-    if let Some(value) = permissions.can_pin_messages {
-        object.serialize_entry("can_pin_messages", &value)?;
-    }
-    if let Some(value) = permissions.can_manage_topics {
-        object.serialize_entry("can_manage_topics", &value)?;
-    }
-
-    Ok(())
-}
-
 /// Strongly typed chat member status.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
@@ -385,48 +242,17 @@ impl<'de> Deserialize<'de> for ChatMemberStatus {
     }
 }
 
-impl Serialize for ChatMemberStatus {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
 /// Telegram chat owner payload.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatMemberOwner {
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub is_anonymous: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub custom_title: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for ChatMemberOwner {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["user", "is_anonymous", "custom_title"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len =
-            usize::from(self.is_anonymous.is_some()) + usize::from(self.custom_title.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        if let Some(is_anonymous) = self.is_anonymous {
-            object.serialize_entry("is_anonymous", &is_anonymous)?;
-        }
-        if let Some(custom_title) = self.custom_title.as_ref() {
-            object.serialize_entry("custom_title", custom_title)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram chat administrator payload.
@@ -434,64 +260,16 @@ impl Serialize for ChatMemberOwner {
 #[non_exhaustive]
 pub struct ChatMemberAdministrator {
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub can_be_edited: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub is_anonymous: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub custom_title: Option<String>,
     #[serde(flatten)]
     pub rights: ChatAdministratorRights,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for ChatMemberAdministrator {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = [
-            "user",
-            "can_be_edited",
-            "is_anonymous",
-            "custom_title",
-            "can_manage_chat",
-            "can_delete_messages",
-            "can_manage_video_chats",
-            "can_restrict_members",
-            "can_promote_members",
-            "can_change_info",
-            "can_invite_users",
-            "can_post_stories",
-            "can_edit_stories",
-            "can_delete_stories",
-            "can_post_messages",
-            "can_edit_messages",
-            "can_pin_messages",
-            "can_manage_topics",
-        ];
-        let is_anonymous = self.is_anonymous.or(self.rights.is_anonymous);
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.can_be_edited.is_some())
-            + usize::from(is_anonymous.is_some())
-            + usize::from(self.custom_title.is_some())
-            + chat_administrator_member_rights_len(&self.rights);
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        if let Some(can_be_edited) = self.can_be_edited {
-            object.serialize_entry("can_be_edited", &can_be_edited)?;
-        }
-        if let Some(is_anonymous) = is_anonymous {
-            object.serialize_entry("is_anonymous", &is_anonymous)?;
-        }
-        if let Some(custom_title) = self.custom_title.as_ref() {
-            object.serialize_entry("custom_title", custom_title)?;
-        }
-        serialize_chat_administrator_member_rights(&mut object, &self.rights)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram regular member payload.
@@ -503,75 +281,19 @@ pub struct ChatMemberRegular {
     pub extra: BTreeMap<String, Value>,
 }
 
-impl Serialize for ChatMemberRegular {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["user"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
-}
-
 /// Telegram restricted member payload.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatMemberRestricted {
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub is_member: Option<bool>,
     #[serde(flatten)]
     pub permissions: ChatPermissions,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub until_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for ChatMemberRestricted {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = [
-            "user",
-            "is_member",
-            "until_date",
-            "can_send_messages",
-            "can_send_audios",
-            "can_send_documents",
-            "can_send_photos",
-            "can_send_videos",
-            "can_send_video_notes",
-            "can_send_voice_notes",
-            "can_send_polls",
-            "can_send_other_messages",
-            "can_add_web_page_previews",
-            "can_change_info",
-            "can_invite_users",
-            "can_pin_messages",
-            "can_manage_topics",
-        ];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.is_member.is_some())
-            + usize::from(self.until_date.is_some())
-            + chat_permissions_len(&self.permissions);
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        if let Some(is_member) = self.is_member {
-            object.serialize_entry("is_member", &is_member)?;
-        }
-        serialize_chat_permissions(&mut object, &self.permissions)?;
-        if let Some(until_date) = self.until_date {
-            object.serialize_entry("until_date", &until_date)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram left member payload.
@@ -583,47 +305,15 @@ pub struct ChatMemberLeft {
     pub extra: BTreeMap<String, Value>,
 }
 
-impl Serialize for ChatMemberLeft {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["user"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
-}
-
 /// Telegram banned member payload.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatMemberBanned {
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub until_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for ChatMemberBanned {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["user", "until_date"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.until_date.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
-        object.serialize_entry("user", &self.user)?;
-        if let Some(until_date) = self.until_date {
-            object.serialize_entry("until_date", &until_date)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram chat member object.
@@ -665,27 +355,6 @@ impl<'de> Deserialize<'de> for ChatMember {
                 .map(Self::Banned)
                 .map_err(serde::de::Error::custom),
             Some(_) | None => Ok(Self::Unknown(value)),
-        }
-    }
-}
-
-impl Serialize for ChatMember {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Owner(value) => serialize_tagged_field(serializer, "status", "creator", value),
-            Self::Administrator(value) => {
-                serialize_tagged_field(serializer, "status", "administrator", value)
-            }
-            Self::Member(value) => serialize_tagged_field(serializer, "status", "member", value),
-            Self::Restricted(value) => {
-                serialize_tagged_field(serializer, "status", "restricted", value)
-            }
-            Self::Left(value) => serialize_tagged_field(serializer, "status", "left", value),
-            Self::Banned(value) => serialize_tagged_field(serializer, "status", "kicked", value),
-            Self::Unknown(value) => value.serialize(serializer),
         }
     }
 }
@@ -994,7 +663,7 @@ impl ChatMember {
 }
 
 /// Telegram chat invite link object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatInviteLink {
     pub invite_link: String,
@@ -1002,14 +671,16 @@ pub struct ChatInviteLink {
     pub creates_join_request: bool,
     pub is_primary: bool,
     pub is_revoked: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub expire_date: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub member_limit: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pending_join_request_count: Option<u32>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1210,13 +881,7 @@ impl SetChatAdministratorCustomTitleRequest {
     pub fn validate(&self) -> Result<()> {
         self.chat_id.validate()?;
         self.user_id.validate()?;
-        validate_text_limit(
-            "custom_title",
-            &self.custom_title,
-            TextPresence::AllowEmpty,
-            TextLayout::SingleLine,
-            MAX_CUSTOM_TITLE_CHARS,
-        )
+        validate_emoji_free_text("custom_title", &self.custom_title, MAX_CUSTOM_TITLE_CHARS)
     }
 }
 
@@ -1705,6 +1370,21 @@ mod tests {
             custom_title.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+        let emoji_custom_title = SetChatAdministratorCustomTitleRequest {
+            chat_id: ChatId::from(1),
+            user_id: UserId::from(2),
+            custom_title: "ops🚀".to_owned(),
+        };
+        assert!(matches!(
+            emoji_custom_title.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        let empty_custom_title = SetChatAdministratorCustomTitleRequest {
+            chat_id: ChatId::from(1),
+            user_id: UserId::from(2),
+            custom_title: String::new(),
+        };
+        assert!(empty_custom_title.validate().is_ok());
 
         let sticker_set = SetChatStickerSetRequest {
             chat_id: ChatId::from(1),
@@ -1845,6 +1525,30 @@ mod tests {
     }
 
     #[test]
+    fn chat_invite_link_preserves_future_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let invite_link: ChatInviteLink = serde_json::from_value(json!({
+            "invite_link": "https://t.me/+abc",
+            "creator": {"id": 1, "is_bot": false, "first_name": "owner"},
+            "creates_join_request": false,
+            "is_primary": true,
+            "is_revoked": false,
+            "name": "mods",
+            "future_invite_field": {"kept": true}
+        }))?;
+
+        assert_eq!(invite_link.invite_link, "https://t.me/+abc");
+        assert_eq!(invite_link.creator.id, UserId(1));
+        assert_eq!(invite_link.name.as_deref(), Some("mods"));
+        assert_eq!(
+            invite_link.extra["future_invite_field"],
+            json!({"kept": true})
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn chat_member_capabilities_are_fully_typed()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let member: ChatMember = serde_json::from_value(json!({
@@ -1896,91 +1600,44 @@ mod tests {
     }
 
     #[test]
-    fn chat_member_extra_cannot_override_reserved_fields()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut administrator = ChatMemberAdministrator {
-            user: User {
-                id: UserId(1),
-                is_bot: false,
-                first_name: "mod".to_owned(),
-                last_name: None,
-                username: None,
-                language_code: None,
-                extra: BTreeMap::new(),
-            },
-            can_be_edited: Some(true),
-            is_anonymous: Some(true),
-            custom_title: Some("Owner".to_owned()),
-            rights: ChatAdministratorRights {
-                can_manage_chat: Some(true),
-                is_anonymous: Some(false),
-                ..ChatAdministratorRights::default()
-            },
-            extra: BTreeMap::new(),
+    fn chat_member_preserves_future_fields() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        let administrator: ChatMember = serde_json::from_value(json!({
+            "status": "administrator",
+            "user": {"id": 1, "is_bot": false, "first_name": "mod"},
+            "can_be_edited": true,
+            "is_anonymous": true,
+            "custom_title": "Owner",
+            "can_manage_chat": true,
+            "future_field": "kept"
+        }))?;
+        let ChatMember::Administrator(administrator) = &administrator else {
+            return Err(std::io::Error::other("expected administrator member").into());
         };
-        administrator
-            .extra
-            .insert("status".to_owned(), json!("member"));
-        administrator.extra.insert(
-            "user".to_owned(),
-            json!({"id": 9, "is_bot": true, "first_name": "spoofed"}),
-        );
-        administrator
-            .extra
-            .insert("is_anonymous".to_owned(), json!(false));
-        administrator
-            .extra
-            .insert("can_manage_chat".to_owned(), json!(false));
-        administrator
-            .extra
-            .insert("future_field".to_owned(), json!("kept"));
+        assert_eq!(administrator.user.id, UserId(1));
+        assert_eq!(administrator.user.first_name, "mod");
+        assert_eq!(administrator.can_be_edited, Some(true));
+        assert_eq!(administrator.is_anonymous, Some(true));
+        assert_eq!(administrator.custom_title.as_deref(), Some("Owner"));
+        assert_eq!(administrator.rights.can_manage_chat, Some(true));
+        assert_eq!(administrator.extra["future_field"], "kept");
 
-        let admin_value = serde_json::to_value(ChatMember::Administrator(administrator))?;
-        assert_eq!(admin_value["status"], "administrator");
-        assert_eq!(admin_value["user"]["id"], 1);
-        assert_eq!(admin_value["user"]["first_name"], "mod");
-        assert_eq!(admin_value["is_anonymous"], true);
-        assert_eq!(admin_value["can_be_edited"], true);
-        assert_eq!(admin_value["can_manage_chat"], true);
-        assert_eq!(admin_value["future_field"], "kept");
-
-        let mut restricted = ChatMemberRestricted {
-            user: User {
-                id: UserId(2),
-                is_bot: false,
-                first_name: "member".to_owned(),
-                last_name: None,
-                username: None,
-                language_code: None,
-                extra: BTreeMap::new(),
-            },
-            is_member: Some(true),
-            permissions: ChatPermissions::new().with_send_messages(true),
-            until_date: Some(1_700_000_000),
-            extra: BTreeMap::new(),
+        let restricted: ChatMember = serde_json::from_value(json!({
+            "status": "restricted",
+            "user": {"id": 2, "is_bot": false, "first_name": "member"},
+            "is_member": true,
+            "can_send_messages": true,
+            "until_date": 1_700_000_000,
+            "future_field": "kept"
+        }))?;
+        let ChatMember::Restricted(restricted) = &restricted else {
+            return Err(std::io::Error::other("expected restricted member").into());
         };
-        restricted
-            .extra
-            .insert("status".to_owned(), json!("administrator"));
-        restricted.extra.insert(
-            "user".to_owned(),
-            json!({"id": 9, "is_bot": true, "first_name": "spoofed"}),
-        );
-        restricted
-            .extra
-            .insert("can_send_messages".to_owned(), json!(false));
-        restricted.extra.insert("until_date".to_owned(), json!(1));
-        restricted
-            .extra
-            .insert("future_field".to_owned(), json!("kept"));
-
-        let restricted_value = serde_json::to_value(ChatMember::Restricted(restricted))?;
-        assert_eq!(restricted_value["status"], "restricted");
-        assert_eq!(restricted_value["user"]["id"], 2);
-        assert_eq!(restricted_value["user"]["first_name"], "member");
-        assert_eq!(restricted_value["can_send_messages"], true);
-        assert_eq!(restricted_value["until_date"], 1_700_000_000);
-        assert_eq!(restricted_value["future_field"], "kept");
+        assert_eq!(restricted.user.id, UserId(2));
+        assert_eq!(restricted.user.first_name, "member");
+        assert_eq!(restricted.permissions.can_send_messages, Some(true));
+        assert_eq!(restricted.until_date, Some(1_700_000_000));
+        assert_eq!(restricted.extra["future_field"], "kept");
 
         Ok(())
     }
@@ -2005,7 +1662,6 @@ mod tests {
         assert!(!member.has_capability(ChatAdministratorCapability::ManageChat));
         assert_eq!(member.as_unknown_value(), Some(&input));
         assert_eq!(member.clone().into_unknown_value(), Some(input.clone()));
-        assert_eq!(serde_json::to_value(member)?, input);
 
         Ok(())
     }

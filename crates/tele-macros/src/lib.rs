@@ -370,21 +370,6 @@ fn validate_command_name(name: &str, span: &impl ToTokens) -> syn::Result<()> {
         ));
     }
 
-    let mut chars = name.chars();
-    let Some(first_char) = chars.next() else {
-        return Err(syn::Error::new_spanned(
-            span,
-            "command name cannot be empty",
-        ));
-    };
-
-    if !first_char.is_ascii_lowercase() {
-        return Err(syn::Error::new_spanned(
-            span,
-            format!("command name `{name}` must start with a lowercase ASCII letter"),
-        ));
-    }
-
     if !name
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
@@ -402,10 +387,10 @@ fn validate_command_name(name: &str, span: &impl ToTokens) -> syn::Result<()> {
 
 fn validate_command_description(description: &str, span: &impl ToTokens) -> syn::Result<()> {
     let length = description.chars().count();
-    if !(3..=256).contains(&length) {
+    if !(1..=256).contains(&length) {
         return Err(syn::Error::new_spanned(
             span,
-            format!("command description must be 3-256 characters: `{description}`"),
+            format!("command description must be 1-256 characters: `{description}`"),
         ));
     }
 

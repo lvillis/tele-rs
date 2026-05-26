@@ -1,11 +1,12 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::Error;
 use crate::types::common::{ChatId, MessageId, ParseMode};
 use crate::types::telegram::{
-    LinkPreviewOptions, ReplyMarkup, ReplyParameters, SuggestedPostParameters,
+    InlineKeyboardMarkup, LinkPreviewOptions, ReplyMarkup, ReplyParameters, SuggestedPostParameters,
 };
 use crate::types::upload::{UploadPart, validate_upload_part_name};
 use crate::types::validation::{
@@ -328,15 +329,20 @@ impl CopyMessagesRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct MessageIdObject {
     pub message_id: MessageId,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct SentWebAppMessage {
     pub inline_message_id: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2166,7 +2172,7 @@ pub struct StopPollRequest {
     pub chat_id: ChatId,
     pub message_id: MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
 }
 
 impl StopPollRequest {
@@ -2181,7 +2187,7 @@ impl StopPollRequest {
     pub fn validate(&self) -> Result<(), Error> {
         self.chat_id.validate()?;
         self.message_id.validate()?;
-        validate_reply_markup(self.reply_markup.as_ref())
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())
     }
 }
 
@@ -2299,7 +2305,7 @@ pub struct EditMessageTextRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_preview_options: Option<LinkPreviewOptions>,
 }
@@ -2357,7 +2363,7 @@ impl EditMessageTextRequest {
             &self.inline_message_id,
         )?;
 
-        validate_reply_markup(self.reply_markup.as_ref())?;
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())?;
         validate_link_preview_options(self.link_preview_options.as_ref())?;
         validate_message_text("editMessageText", &self.text)?;
         validate_text_formatting(
@@ -2384,7 +2390,7 @@ pub struct EditMessageCaptionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_caption_above_media: Option<bool>,
 }
@@ -2396,7 +2402,7 @@ impl EditMessageCaptionRequest {
             self.message_id,
             &self.inline_message_id,
         )?;
-        validate_reply_markup(self.reply_markup.as_ref())?;
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())?;
         validate_caption_fields(
             "editMessageCaption caption",
             self.caption.as_deref(),
@@ -2415,7 +2421,7 @@ pub struct EditMessageReplyMarkupRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
 }
 
 impl EditMessageReplyMarkupRequest {
@@ -2425,7 +2431,7 @@ impl EditMessageReplyMarkupRequest {
             self.message_id,
             &self.inline_message_id,
         )?;
-        validate_reply_markup(self.reply_markup.as_ref())
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())
     }
 }
 
@@ -2448,7 +2454,7 @@ pub struct EditMessageLiveLocationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proximity_alert_radius: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
 }
 
 impl EditMessageLiveLocationRequest {
@@ -2458,7 +2464,7 @@ impl EditMessageLiveLocationRequest {
             self.message_id,
             &self.inline_message_id,
         )?;
-        validate_reply_markup(self.reply_markup.as_ref())?;
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())?;
         validate_coordinates(self.latitude, self.longitude)?;
         validate_location_options(
             self.horizontal_accuracy,
@@ -2478,7 +2484,7 @@ pub struct StopMessageLiveLocationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_markup: Option<ReplyMarkup>,
+    pub reply_markup: Option<InlineKeyboardMarkup>,
 }
 
 impl StopMessageLiveLocationRequest {
@@ -2488,7 +2494,7 @@ impl StopMessageLiveLocationRequest {
             self.message_id,
             &self.inline_message_id,
         )?;
-        validate_reply_markup(self.reply_markup.as_ref())
+        validate_inline_keyboard_markup(self.reply_markup.as_ref())
     }
 }
 
@@ -2623,6 +2629,11 @@ fn validate_message_text(method: &str, text: &str) -> Result<(), Error> {
     if length > MAX_MESSAGE_TEXT_CHARS {
         return Err(Error::InvalidRequest {
             reason: format!("{method} text exceeds {MAX_MESSAGE_TEXT_CHARS} characters"),
+        });
+    }
+    if text.chars().any(is_disallowed_display_control) {
+        return Err(Error::InvalidRequest {
+            reason: format!("{method} text must not contain non-whitespace control characters"),
         });
     }
 
@@ -3332,11 +3343,34 @@ fn validate_link_preview_fields(
     validate_link_preview_options(link_preview_options)
 }
 
+fn validate_inline_keyboard_markup(
+    reply_markup: Option<&InlineKeyboardMarkup>,
+) -> Result<(), Error> {
+    if let Some(reply_markup) = reply_markup {
+        reply_markup.validate()?;
+    }
+
+    Ok(())
+}
+
 macro_rules! impl_reply_markup_setter {
     ($($ty:ty),* $(,)?) => {
         $(
             impl $ty {
                 pub fn reply_markup(mut self, reply_markup: impl Into<ReplyMarkup>) -> Self {
+                    self.reply_markup = Some(reply_markup.into());
+                    self
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_inline_keyboard_markup_setter {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $ty {
+                pub fn reply_markup(mut self, reply_markup: impl Into<InlineKeyboardMarkup>) -> Self {
                     self.reply_markup = Some(reply_markup.into());
                     self
                 }
@@ -3521,7 +3555,10 @@ impl_reply_markup_setter!(
     SendVenueRequest,
     SendContactRequest,
     SendPollRequest,
-    SendDiceRequest,
+    SendDiceRequest
+);
+
+impl_inline_keyboard_markup_setter!(
     StopPollRequest,
     EditMessageTextRequest,
     EditMessageCaptionRequest,
@@ -3679,6 +3716,12 @@ mod tests {
 
     use super::*;
 
+    fn valid_suggested_post_send_date() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(600, |duration| duration.as_secs() as i64 + 600)
+    }
+
     fn bold_entity(length: u32) -> MessageEntity {
         entity(crate::types::message::MessageEntityKind::Bold, 0, length)
     }
@@ -3703,10 +3746,31 @@ mod tests {
     }
 
     #[test]
+    fn response_objects_preserve_future_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let copied: MessageIdObject = serde_json::from_value(serde_json::json!({
+            "message_id": 42,
+            "future_copy_field": "kept"
+        }))?;
+        let sent: SentWebAppMessage = serde_json::from_value(serde_json::json!({
+            "inline_message_id": "inline-id",
+            "future_web_app_field": true
+        }))?;
+
+        assert_eq!(copied.message_id, MessageId(42));
+        assert_eq!(copied.extra["future_copy_field"], "kept");
+        assert_eq!(sent.inline_message_id, "inline-id");
+        assert_eq!(sent.extra["future_web_app_field"], true);
+
+        Ok(())
+    }
+
+    #[test]
     fn validates_send_message_text_bounds() {
         assert!(SendMessageRequest::new(1_i64, "hello").is_ok());
+        assert!(SendMessageRequest::new(1_i64, "hello\nworld\tagain").is_ok());
 
-        for text in ["", "   "] {
+        for text in ["", "   ", "hello\u{0000}", "hello\u{0007}"] {
             assert!(matches!(
                 SendMessageRequest::new(1_i64, text),
                 Err(Error::InvalidRequest { .. })
@@ -3761,6 +3825,78 @@ mod tests {
             )]);
         assert!(matches!(
             unknown_entity_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_mention =
+            entity(crate::types::message::MessageEntityKind::TextMention, 0, 5);
+        invalid_mention.user = Some(crate::types::bot::User {
+            id: crate::types::common::UserId(0),
+            is_bot: false,
+            first_name: "Alice".to_owned(),
+            last_name: None,
+            username: None,
+            language_code: None,
+            extra: BTreeMap::new(),
+        });
+        let invalid_mention_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![invalid_mention]);
+        assert!(matches!(
+            invalid_mention_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut invalid_text_link =
+            entity(crate::types::message::MessageEntityKind::TextLink, 0, 5);
+        invalid_text_link.url = Some("https://exa\nmple.com".to_owned());
+        let invalid_text_link_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![invalid_text_link]);
+        assert!(matches!(
+            invalid_text_link_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut valid_pre = entity(crate::types::message::MessageEntityKind::Pre, 0, 5);
+        valid_pre.language = Some("rust".to_owned());
+        let valid_pre_message = SendMessageRequest::new(1_i64, "hello")?.entities(vec![valid_pre]);
+        assert!(valid_pre_message.validate().is_ok());
+
+        let mut bold_with_url = bold_entity(5);
+        bold_with_url.url = Some("https://example.com".to_owned());
+        let bold_with_url_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![bold_with_url]);
+        assert!(matches!(
+            bold_with_url_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut text_link_with_user =
+            entity(crate::types::message::MessageEntityKind::TextLink, 0, 5);
+        text_link_with_user.url = Some("https://example.com".to_owned());
+        text_link_with_user.user = Some(crate::types::bot::User {
+            id: crate::types::common::UserId(1),
+            is_bot: false,
+            first_name: "Alice".to_owned(),
+            last_name: None,
+            username: None,
+            language_code: None,
+            extra: BTreeMap::new(),
+        });
+        let text_link_with_user_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![text_link_with_user]);
+        assert!(matches!(
+            text_link_with_user_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut custom_emoji_with_language =
+            entity(crate::types::message::MessageEntityKind::CustomEmoji, 0, 5);
+        custom_emoji_with_language.custom_emoji_id = Some("emoji-id".to_owned());
+        custom_emoji_with_language.language = Some("rust".to_owned());
+        let custom_emoji_with_language_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![custom_emoji_with_language]);
+        assert!(matches!(
+            custom_emoji_with_language_message.validate(),
             Err(Error::InvalidRequest { .. })
         ));
 
@@ -3870,8 +4006,9 @@ mod tests {
 
     #[test]
     fn serializes_common_send_options() -> Result<(), Error> {
+        let send_date = valid_suggested_post_send_date();
         let suggested_post_parameters = SuggestedPostParameters::new(serde_json::json!({
-            "send_date": 1
+            "send_date": send_date
         }))?;
         let message = SendMessageRequest::new(1_i64, "hello")?
             .direct_messages_topic_id(7)
@@ -3890,7 +4027,7 @@ mod tests {
             .direct_messages_topic_id(6)
             .message_effect_id("forward-effect")
             .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-                "send_date": 2
+                "send_date": send_date + 1
             }))?);
         forward.validate()?;
         let forward_json =
@@ -3904,7 +4041,7 @@ mod tests {
             .allow_paid_broadcast(true)
             .message_effect_id("copy-effect")
             .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-                "send_date": 3
+                "send_date": send_date + 2
             }))?);
         copy.validate()?;
         let copy_json =
@@ -3999,11 +4136,16 @@ mod tests {
             chat_id: Some(1_i64.into()),
             message_id: Some(MessageId(1)),
             inline_message_id: None,
-            reply_markup: Some(
-                crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()).into(),
-            ),
+            reply_markup: Some(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new())),
         };
         assert!(matches!(edit.validate(), Err(Error::InvalidRequest { .. })));
+
+        let stop_poll = StopPollRequest::new(1_i64, MessageId(1))
+            .reply_markup(InlineKeyboardMarkup::new(Vec::new()));
+        assert!(matches!(
+            stop_poll.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let mut invalid_link_preview = LinkPreviewOptions::disabled();
         invalid_link_preview.url = Some("https://example.com/article".to_owned());
@@ -4200,7 +4342,7 @@ mod tests {
             .allow_paid_broadcast(true)
             .message_effect_id("effect-1")
             .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-                "send_date": 1
+                "send_date": valid_suggested_post_send_date()
             }))?);
         video_note.validate()?;
         let video_note_json = serde_json::to_value(&video_note)

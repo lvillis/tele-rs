@@ -525,6 +525,22 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
             args: "hi".to_owned()
         })
     );
+    assert_eq!(
+        parse_command_text("/2fa verify"),
+        Some(CommandData {
+            name: "2fa".to_owned(),
+            mention: None,
+            args: "verify".to_owned()
+        })
+    );
+    assert_eq!(
+        parse_command_text("/_debug"),
+        Some(CommandData {
+            name: "_debug".to_owned(),
+            mention: None,
+            args: String::new()
+        })
+    );
     assert_eq!(parse_command_text("/Echo hello world"), None);
 
     assert!(extract_message(&update).is_some());
@@ -3449,6 +3465,11 @@ async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynErr
 
 #[test]
 fn command_route_rejects_invalid_registration_names() {
+    for command in ["2fa", "_debug"] {
+        let mut router = Router::new();
+        assert!(router.command_route(command).is_ok());
+    }
+
     for command in ["", "/start", "Start", "start@ThisBot", "bad-command"] {
         let mut router = Router::new();
         assert!(matches!(

@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::types::common::{ChatId, UserId};
 use crate::{Error, Result};
@@ -11,12 +12,22 @@ const MAX_BOT_SHORT_DESCRIPTION_CHARS: usize = 120;
 const MAX_LANGUAGE_CODE_BYTES: usize = 35;
 
 /// Telegram bot command object.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct BotCommand {
     pub command: String,
     pub description: String,
+    #[serde(flatten, skip_serializing)]
+    pub extra: BTreeMap<String, Value>,
 }
+
+impl PartialEq for BotCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.command == other.command && self.description == other.description
+    }
+}
+
+impl Eq for BotCommand {}
 
 impl BotCommand {
     pub fn new(command: impl Into<String>, description: impl Into<String>) -> Result<Self> {
@@ -29,6 +40,7 @@ impl BotCommand {
         Ok(Self {
             command,
             description,
+            extra: BTreeMap::new(),
         })
     }
 }
@@ -38,13 +50,6 @@ fn validate_bot_command_name(command: &str) -> Result<()> {
     if length == 0 || length > 32 {
         return Err(Error::InvalidRequest {
             reason: "command must be 1-32 characters".to_owned(),
-        });
-    }
-
-    let first = command.as_bytes()[0];
-    if !first.is_ascii_lowercase() {
-        return Err(Error::InvalidRequest {
-            reason: "command must start with a lowercase ASCII letter".to_owned(),
         });
     }
 
@@ -62,9 +67,9 @@ fn validate_bot_command_name(command: &str) -> Result<()> {
 
 fn validate_bot_command_description(description: &str) -> Result<()> {
     let length = description.chars().count();
-    if !(3..=256).contains(&length) {
+    if !(1..=256).contains(&length) {
         return Err(Error::InvalidRequest {
-            reason: "command description must be 3-256 characters".to_owned(),
+            reason: "command description must be 1-256 characters".to_owned(),
         });
     }
 
@@ -104,10 +109,14 @@ fn validate_bot_commands(commands: &[BotCommand]) -> Result<()> {
 }
 
 pub(crate) fn validate_language_code_value(language_code: &str) -> Result<()> {
-    if language_code.is_empty() || language_code.len() > MAX_LANGUAGE_CODE_BYTES {
+    if language_code.len() > MAX_LANGUAGE_CODE_BYTES {
         return Err(Error::InvalidRequest {
-            reason: format!("language_code must be 1-{MAX_LANGUAGE_CODE_BYTES} bytes").to_owned(),
+            reason: format!("language_code must be at most {MAX_LANGUAGE_CODE_BYTES} bytes")
+                .to_owned(),
         });
+    }
+    if language_code.is_empty() {
+        return Ok(());
     }
 
     if !language_code
@@ -358,19 +367,28 @@ impl GetMyShortDescriptionRequest {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct BotName {
     pub name: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct BotDescription {
     pub description: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
 pub struct BotShortDescription {
     pub short_description: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[cfg(test)]
@@ -380,11 +398,13 @@ mod tests {
     #[test]
     fn validates_bot_command_contract() -> Result<()> {
         assert!(BotCommand::new("start_1", "start the bot").is_ok());
+        assert!(BotCommand::new("2fa", "manage two factor auth").is_ok());
+        assert!(BotCommand::new("_debug", "debug current state").is_ok());
+        assert!(BotCommand::new("x", "g").is_ok());
+        assert!(BotCommand::new("ok", "go").is_ok());
 
         for command in [
             "",
-            "1start",
-            "_start",
             "Start",
             "/start",
             "start-bot",
@@ -396,12 +416,36 @@ mod tests {
             ));
         }
 
-        for description in ["", "go", "bad\ntext"] {
+        for description in ["", "bad\ntext"] {
             assert!(matches!(
                 BotCommand::new("start", description),
                 Err(Error::InvalidRequest { .. })
             ));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn bot_command_preserves_future_response_fields_without_resending_them()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut command: BotCommand = serde_json::from_value(serde_json::json!({
+            "command": "start",
+            "description": "start the bot",
+            "future_command_field": "response-only"
+        }))?;
+
+        assert_eq!(command.extra["future_command_field"], "response-only");
+        assert_eq!(command, BotCommand::new("start", "start the bot")?);
+
+        command
+            .extra
+            .insert("another_future_field".to_owned(), serde_json::json!(true));
+        let value = serde_json::to_value(command)?;
+        assert_eq!(value["command"], "start");
+        assert_eq!(value["description"], "start the bot");
+        assert!(value.get("future_command_field").is_none());
+        assert!(value.get("another_future_field").is_none());
 
         Ok(())
     }
@@ -438,8 +482,17 @@ mod tests {
         SetMyCommandsRequest::new(vec![BotCommand::new("start", "start the bot")?])?
             .language_code("zh-hans")?
             .validate()?;
+        SetMyCommandsRequest::new(vec![BotCommand::new("start", "start the bot")?])?
+            .language_code("")?
+            .validate()?;
 
-        for language_code in ["", "-", "en-", "en--us", "en us", "en_us"] {
+        GetMyCommandsRequest {
+            language_code: Some(String::new()),
+            ..GetMyCommandsRequest::default()
+        }
+        .validate()?;
+
+        for language_code in ["-", "en-", "en--us", "en us", "en_us"] {
             let request = GetMyCommandsRequest {
                 language_code: Some(language_code.to_owned()),
                 ..GetMyCommandsRequest::default()
@@ -457,7 +510,7 @@ mod tests {
     fn validates_bot_profile_text_limits() {
         let valid = SetMyNameRequest {
             name: Some(String::new()),
-            ..SetMyNameRequest::default()
+            language_code: Some(String::new()),
         };
         assert!(valid.validate().is_ok());
 
@@ -502,5 +555,31 @@ mod tests {
             invalid_short_description.validate(),
             Err(Error::InvalidRequest { .. })
         ));
+    }
+
+    #[test]
+    fn bot_profile_responses_preserve_future_fields()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let name: BotName = serde_json::from_value(serde_json::json!({
+            "name": "Tele",
+            "future_name_field": true
+        }))?;
+        let description: BotDescription = serde_json::from_value(serde_json::json!({
+            "description": "Long description",
+            "future_description_field": "kept"
+        }))?;
+        let short_description: BotShortDescription = serde_json::from_value(serde_json::json!({
+            "short_description": "Short",
+            "future_short_description_field": 7
+        }))?;
+
+        assert_eq!(name.name, "Tele");
+        assert_eq!(name.extra["future_name_field"], true);
+        assert_eq!(description.description, "Long description");
+        assert_eq!(description.extra["future_description_field"], "kept");
+        assert_eq!(short_description.short_description, "Short");
+        assert_eq!(short_description.extra["future_short_description_field"], 7);
+
+        Ok(())
     }
 }

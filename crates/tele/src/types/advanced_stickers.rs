@@ -94,7 +94,7 @@ impl AdvancedRequest for AdvancedSetUserEmojiStatusRequest {
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
         if let Some(value) = self.emoji_status_custom_emoji_id.as_deref() {
-            validate_string_id("emoji_status_custom_emoji_id", value)?;
+            validate_control_free_string("emoji_status_custom_emoji_id", value)?;
         }
         if let Some(value) = self.emoji_status_expiration_date {
             validate_positive_i64("emoji_status_expiration_date", value)?;

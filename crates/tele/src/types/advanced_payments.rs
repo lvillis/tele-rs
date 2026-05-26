@@ -8,9 +8,10 @@ use crate::types::validation::{
 };
 
 use crate::types::payment::{
-    validate_invoice_currency, validate_invoice_description, validate_invoice_payload,
-    validate_invoice_subscription_period, validate_invoice_tip_configuration,
-    validate_invoice_title,
+    validate_invoice_business_connection_id, validate_invoice_currency,
+    validate_invoice_description, validate_invoice_payload, validate_invoice_prices,
+    validate_invoice_reply_markup, validate_invoice_subscription_period,
+    validate_invoice_tip_configuration, validate_invoice_title,
 };
 
 use super::AdvancedRequest;
@@ -177,7 +178,6 @@ impl AdvancedRequest for AdvancedSendInvoiceRequest {
         validate_invoice_description("sendInvoice", &self.description)?;
         validate_invoice_payload("sendInvoice", &self.payload)?;
         validate_invoice_currency("sendInvoice", &self.currency)?;
-        validate_required_items::<crate::types::payment::LabeledPrice>("prices", &self.prices)?;
         if let Some(value) = self.photo_size {
             validate_positive_i64("photo_size", value)?;
         }
@@ -196,14 +196,14 @@ impl AdvancedRequest for AdvancedSendInvoiceRequest {
         if let Some(value) = self.reply_parameters.as_ref() {
             value.validate()?;
         }
-        if let Some(value) = self.reply_markup.as_ref() {
-            value.validate()?;
-        }
+        validate_invoice_prices("sendInvoice", &self.currency, &self.prices)?;
         validate_invoice_tip_configuration(
             "sendInvoice",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
+        validate_invoice_reply_markup("sendInvoice", self.reply_markup.as_ref())?;
         Ok(())
     }
 }
@@ -292,14 +292,10 @@ impl AdvancedRequest for AdvancedCreateInvoiceLinkRequest {
     const METHOD: &'static str = "createInvoiceLink";
 
     fn validate(&self) -> Result<()> {
-        if let Some(value) = self.business_connection_id.as_deref() {
-            validate_string_id("business_connection_id", value)?;
-        }
         validate_invoice_title("createInvoiceLink", &self.title)?;
         validate_invoice_description("createInvoiceLink", &self.description)?;
         validate_invoice_payload("createInvoiceLink", &self.payload)?;
         validate_invoice_currency("createInvoiceLink", &self.currency)?;
-        validate_required_items::<crate::types::payment::LabeledPrice>("prices", &self.prices)?;
         if let Some(value) = self.photo_size {
             validate_positive_i64("photo_size", value)?;
         }
@@ -309,12 +305,24 @@ impl AdvancedRequest for AdvancedCreateInvoiceLinkRequest {
         if let Some(value) = self.photo_height {
             validate_positive_i64("photo_height", value)?;
         }
+        validate_invoice_business_connection_id(
+            "createInvoiceLink",
+            &self.currency,
+            self.business_connection_id.as_deref(),
+        )?;
+        validate_invoice_prices("createInvoiceLink", &self.currency, &self.prices)?;
         validate_invoice_tip_configuration(
             "createInvoiceLink",
+            &self.currency,
             self.max_tip_amount,
             self.suggested_tip_amounts.as_deref(),
         )?;
-        validate_invoice_subscription_period("createInvoiceLink", self.subscription_period)?;
+        validate_invoice_subscription_period(
+            "createInvoiceLink",
+            &self.currency,
+            self.subscription_period,
+            &self.prices,
+        )?;
         Ok(())
     }
 }

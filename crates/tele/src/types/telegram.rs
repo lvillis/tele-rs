@@ -6,7 +6,6 @@ use serde::de::DeserializeOwned;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::Url;
 
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode};
 use crate::types::extra::{
@@ -14,7 +13,11 @@ use crate::types::extra::{
 };
 use crate::types::message::MessageEntity;
 use crate::types::tagged::{strip_type, tagged_kind};
-use crate::types::validation::optional_text_formatting as validate_optional_text_formatting;
+use crate::types::validation::{
+    https_url as validate_https_url, optional_text_formatting as validate_optional_text_formatting,
+    suggested_post_parameters_send_date as validate_suggested_post_parameters_send_date,
+    url as validate_url,
+};
 use crate::{Error, Result};
 
 pub const MAX_CALLBACK_DATA_BYTES: usize = 64;
@@ -138,37 +141,6 @@ fn validate_required_i64_field(
     Ok(())
 }
 
-fn validate_url(field: &str, value: &str) -> Result<()> {
-    let parsed = Url::parse(value)
-        .map_err(|source| invalid_request(format!("{field} must be a valid URL: {source}")))?;
-    match parsed.scheme() {
-        "http" | "https" | "tg" => {}
-        scheme => {
-            return Err(invalid_request(format!(
-                "{field} must use http, https, or tg scheme, got `{scheme}`"
-            )));
-        }
-    }
-    if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_none() {
-        return Err(invalid_request(format!("{field} must include a host")));
-    }
-
-    Ok(())
-}
-
-fn validate_https_url(field: &str, value: &str) -> Result<()> {
-    let parsed = Url::parse(value)
-        .map_err(|source| invalid_request(format!("{field} must be a valid URL: {source}")))?;
-    if parsed.scheme() != "https" {
-        return Err(invalid_request(format!("{field} must use HTTPS")));
-    }
-    if parsed.host_str().is_none() {
-        return Err(invalid_request(format!("{field} must include a host")));
-    }
-
-    Ok(())
-}
-
 fn validate_login_url_payload(value: &Value) -> Result<()> {
     let object = value_as_object("login_url", value)?;
     let url = object
@@ -286,6 +258,52 @@ fn validate_object_payload(field: &str, value: &Value) -> Result<()> {
     Ok(())
 }
 
+fn validate_suggested_post_parameters_payload(field: &str, value: &Value) -> Result<()> {
+    let object = value_as_object(field, value)?;
+    if object.is_empty() {
+        return Err(invalid_request(format!("{field} cannot be empty")));
+    }
+
+    if let Some(price) = object.get("price") {
+        validate_suggested_post_price(&format!("{field}.price"), price)?;
+    }
+    if let Some(send_date) = object.get("send_date") {
+        let send_date = send_date
+            .as_i64()
+            .ok_or_else(|| invalid_request(format!("{field}.send_date must be an integer")))?;
+        validate_suggested_post_parameters_send_date(&format!("{field}.send_date"), send_date)?;
+    }
+
+    Ok(())
+}
+
+fn validate_suggested_post_price(field: &str, value: &Value) -> Result<()> {
+    let object = value_as_object(field, value)?;
+    let currency = object
+        .get("currency")
+        .map(|value| value_as_str(&format!("{field}.currency"), value))
+        .transpose()?
+        .ok_or_else(|| invalid_request(format!("{field}.currency is required")))?;
+    let amount = object
+        .get("amount")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid_request(format!("{field}.amount must be an integer")))?;
+
+    match currency {
+        "XTR" if (5..=100_000).contains(&amount) => Ok(()),
+        "TON" if (10_000_000..=10_000_000_000_000).contains(&amount) => Ok(()),
+        "XTR" => Err(invalid_request(format!(
+            "{field}.amount must be 5-100000 for XTR"
+        ))),
+        "TON" => Err(invalid_request(format!(
+            "{field}.amount must be 10000000-10000000000000 for TON"
+        ))),
+        _ => Err(invalid_request(format!(
+            "{field}.currency must be `XTR` or `TON`"
+        ))),
+    }
+}
+
 fn validate_source_object_payload(field: &str, value: &Value) -> Result<()> {
     let Some(object) = value.as_object() else {
         return Err(invalid_request(format!("{field} must be a JSON object")));
@@ -310,6 +328,7 @@ fn validate_accepted_gift_types_payload(field: &str, value: &Value) -> Result<()
         "limited_gifts",
         "unique_gifts",
         "premium_subscription",
+        "gifts_from_channels",
     ] {
         if object.get(key).is_some_and(|value| !value.is_boolean()) {
             return Err(invalid_request(format!("{field}.{key} must be a boolean")));
@@ -1009,7 +1028,7 @@ json_payload_wrapper!(
     /// Generic suggested-post payload.
     SuggestedPostParameters,
     "suggested_post_parameters",
-    validate_object_payload
+    validate_suggested_post_parameters_payload
 );
 
 json_payload_wrapper!(
@@ -1027,7 +1046,7 @@ json_payload_wrapper!(
 );
 
 /// Prepared inline message that can be sent by a Mini App user.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PreparedInlineMessage {
     pub id: String,
@@ -1037,7 +1056,7 @@ pub struct PreparedInlineMessage {
 }
 
 /// Prepared keyboard button that can be used by a Mini App user.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PreparedKeyboardButton {
     pub id: String,
@@ -1547,21 +1566,6 @@ impl WebAppData {
     }
 }
 
-impl Serialize for WebAppData {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["data", "button_text"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
-        object.serialize_entry("data", &self.data)?;
-        object.serialize_entry("button_text", &self.button_text)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
-}
-
 impl crate::types::advanced::AdvancedSetChatMenuButtonRequest {
     pub fn chat_id(mut self, chat_id: impl Into<NumericChatId>) -> Self {
         self.chat_id = Some(chat_id.into());
@@ -1631,6 +1635,10 @@ impl InlineKeyboardButton {
         Self::new(text).with_callback_data(data)
     }
 
+    pub fn pay(text: impl Into<String>) -> Self {
+        Self::new(text).with_pay()
+    }
+
     pub fn typed_callback<T>(text: impl Into<String>, payload: &T) -> Result<Self>
     where
         T: CallbackPayload,
@@ -1665,6 +1673,11 @@ impl InlineKeyboardButton {
         Ok(self)
     }
 
+    pub fn with_pay(mut self) -> Self {
+        self.extra.insert("pay".to_owned(), Value::Bool(true));
+        self
+    }
+
     pub fn with_typed_callback<T>(self, payload: &T) -> Result<Self>
     where
         T: CallbackPayload,
@@ -1688,6 +1701,10 @@ impl InlineKeyboardButton {
 
     pub fn callback_data(&self) -> Option<&str> {
         self.extra.get("callback_data").and_then(Value::as_str)
+    }
+
+    pub fn is_pay_button(&self) -> bool {
+        matches!(self.extra.get("pay"), Some(Value::Bool(true)))
     }
 
     pub fn decode_callback<T>(&self) -> Result<Option<T>>
@@ -2645,25 +2662,13 @@ mod tests {
     }
 
     #[test]
-    fn web_app_data_extra_cannot_override_reserved_fields()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut web_app_data = WebAppData::new(r#"{"query_id":"q-1","item":"coffee"}"#, "Open");
-        web_app_data
-            .extra
-            .insert("data".to_owned(), serde_json::json!("overridden"));
-        web_app_data
-            .extra
-            .insert("button_text".to_owned(), serde_json::json!("overridden"));
-        web_app_data
-            .extra
-            .insert("future_field".to_owned(), serde_json::json!("kept"));
-
-        let value = serde_json::to_value(&web_app_data)?;
-        assert_eq!(value["data"], r#"{"query_id":"q-1","item":"coffee"}"#);
-        assert_eq!(value["button_text"], "Open");
-        assert_eq!(value["future_field"], "kept");
-
-        let parsed = serde_json::from_value::<WebAppData>(value)?;
+    fn web_app_data_preserves_future_fields() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        let parsed = serde_json::from_value::<WebAppData>(serde_json::json!({
+            "data": r#"{"query_id":"q-1","item":"coffee"}"#,
+            "button_text": "Open",
+            "future_field": "kept"
+        }))?;
         assert_eq!(parsed.data, r#"{"query_id":"q-1","item":"coffee"}"#);
         assert_eq!(parsed.button_text, "Open");
         assert_eq!(
@@ -2756,6 +2761,10 @@ mod tests {
             "Open", "open:1",
         )?]);
         assert!(valid_inline.validate().is_ok());
+
+        let pay_button = InlineKeyboardButton::pay("Pay");
+        assert!(pay_button.is_pay_button());
+        assert!(pay_button.validate().is_ok());
 
         assert!(matches!(
             InlineKeyboardMarkup::new(Vec::new()).validate(),
@@ -2956,6 +2965,10 @@ mod tests {
     #[test]
     fn validates_generic_json_payload_wrappers()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+
         let checklist = InputChecklist::new(serde_json::json!({
             "title": "Deploy",
             "tasks": []
@@ -2992,13 +3005,27 @@ mod tests {
 
         assert!(
             AcceptedGiftTypes::new(serde_json::json!({
-                "unique_gifts": true
+                "unique_gifts": true,
+                "gifts_from_channels": false
             }))
             .is_ok()
         );
         assert!(
             SuggestedPostParameters::new(serde_json::json!({
-                "send_date": 1
+                "send_date": now + 600,
+                "price": {
+                    "currency": "XTR",
+                    "amount": 5
+                }
+            }))
+            .is_ok()
+        );
+        assert!(
+            SuggestedPostParameters::new(serde_json::json!({
+                "price": {
+                    "currency": "TON",
+                    "amount": 10_000_000
+                }
             }))
             .is_ok()
         );
@@ -3032,6 +3059,40 @@ mod tests {
         ));
         assert!(matches!(
             AcceptedGiftTypes::new(serde_json::json!({"unique_gifts": "yes"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AcceptedGiftTypes::new(serde_json::json!({"gifts_from_channels": "yes"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            SuggestedPostParameters::new(serde_json::json!({"send_date": "soon"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            SuggestedPostParameters::new(serde_json::json!({"send_date": now + 299})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            SuggestedPostParameters::new(serde_json::json!({"send_date": now + 2_679_000})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            SuggestedPostParameters::new(serde_json::json!({
+                "price": {
+                    "currency": "USD",
+                    "amount": 5
+                }
+            })),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            SuggestedPostParameters::new(serde_json::json!({
+                "price": {
+                    "currency": "XTR",
+                    "amount": 4
+                }
+            })),
             Err(Error::InvalidRequest { .. })
         ));
 

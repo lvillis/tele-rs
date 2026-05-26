@@ -109,6 +109,8 @@ enum DemoCommand {
     Count(i64),
     #[command(description = "optional integer")]
     Maybe(Option<i64>),
+    #[command(rename = "2fa", description = "g", alias = "_otp")]
+    TwoFactor,
 }
 
 fn main() {
@@ -126,5 +128,7 @@ fn main() {
         DemoCommand::parse("maybe", ""),
         Some(DemoCommand::Maybe(None))
     );
+    assert_eq!(DemoCommand::parse("2fa", ""), Some(DemoCommand::TwoFactor));
+    assert_eq!(DemoCommand::parse("_otp", ""), Some(DemoCommand::TwoFactor));
     let _ = DemoCommand::descriptions();
 }

@@ -1,14 +1,10 @@
 use std::collections::BTreeMap;
 
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Error;
 use crate::types::common::{ChatId, UserId};
-use crate::types::extra::{
-    field_len as extra_field_len, serialize_fields as serialize_extra_fields,
-};
 use crate::types::message::PhotoSize;
 use crate::types::telegram::{ReplyMarkup, ReplyParameters, SuggestedPostParameters};
 use crate::types::validation::{
@@ -193,15 +189,6 @@ impl<'de> Deserialize<'de> for StickerKind {
     }
 }
 
-impl Serialize for StickerKind {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
 /// Face point used by a sticker mask.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -224,78 +211,20 @@ pub struct Sticker {
     pub height: u32,
     pub is_animated: bool,
     pub is_video: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub emoji: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub set_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub custom_emoji_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub needs_repainting: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for Sticker {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = [
-            "file_id",
-            "file_unique_id",
-            "type",
-            "width",
-            "height",
-            "is_animated",
-            "is_video",
-            "thumbnail",
-            "emoji",
-            "set_name",
-            "custom_emoji_id",
-            "needs_repainting",
-            "file_size",
-        ];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.thumbnail.is_some())
-            + usize::from(self.emoji.is_some())
-            + usize::from(self.set_name.is_some())
-            + usize::from(self.custom_emoji_id.is_some())
-            + usize::from(self.needs_repainting.is_some())
-            + usize::from(self.file_size.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 7))?;
-        object.serialize_entry("file_id", &self.file_id)?;
-        object.serialize_entry("file_unique_id", &self.file_unique_id)?;
-        object.serialize_entry("type", &self.kind)?;
-        object.serialize_entry("width", &self.width)?;
-        object.serialize_entry("height", &self.height)?;
-        object.serialize_entry("is_animated", &self.is_animated)?;
-        object.serialize_entry("is_video", &self.is_video)?;
-        if let Some(thumbnail) = self.thumbnail.as_ref() {
-            object.serialize_entry("thumbnail", thumbnail)?;
-        }
-        if let Some(emoji) = self.emoji.as_ref() {
-            object.serialize_entry("emoji", emoji)?;
-        }
-        if let Some(set_name) = self.set_name.as_ref() {
-            object.serialize_entry("set_name", set_name)?;
-        }
-        if let Some(custom_emoji_id) = self.custom_emoji_id.as_ref() {
-            object.serialize_entry("custom_emoji_id", custom_emoji_id)?;
-        }
-        if let Some(needs_repainting) = self.needs_repainting {
-            object.serialize_entry("needs_repainting", &needs_repainting)?;
-        }
-        if let Some(file_size) = self.file_size {
-            object.serialize_entry("file_size", &file_size)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram sticker set object.
@@ -307,31 +236,10 @@ pub struct StickerSet {
     #[serde(rename = "type")]
     pub kind: StickerKind,
     pub stickers: Vec<Sticker>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for StickerSet {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["name", "title", "type", "stickers", "thumbnail"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.thumbnail.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 4))?;
-        object.serialize_entry("name", &self.name)?;
-        object.serialize_entry("title", &self.title)?;
-        object.serialize_entry("type", &self.kind)?;
-        object.serialize_entry("stickers", &self.stickers)?;
-        if let Some(thumbnail) = self.thumbnail.as_ref() {
-            object.serialize_entry("thumbnail", thumbnail)?;
-        }
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram input sticker descriptor.
@@ -1104,56 +1012,34 @@ mod tests {
     #[test]
     fn sticker_response_types_are_typed_and_forward_compatible()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut known: Sticker = serde_json::from_value(serde_json::json!({
+        let known: Sticker = serde_json::from_value(serde_json::json!({
             "file_id": "file",
             "file_unique_id": "unique",
             "type": "custom_emoji",
             "width": 512,
             "height": 512,
             "is_animated": false,
-            "is_video": false
+            "is_video": false,
+            "future_field": "kept"
         }))?;
         assert_eq!(known.kind, StickerKind::CustomEmoji);
+        assert_eq!(known.file_id, "file");
+        assert_eq!(known.kind.as_str(), "custom_emoji");
+        assert_eq!(known.width, 512);
+        assert!(known.thumbnail.is_none());
+        assert_eq!(known.extra["future_field"], "kept");
 
-        known
-            .extra
-            .insert("file_id".to_owned(), serde_json::json!("overridden"));
-        known
-            .extra
-            .insert("type".to_owned(), serde_json::json!("regular"));
-        known.extra.insert("width".to_owned(), serde_json::json!(1));
-        known
-            .extra
-            .insert("future_field".to_owned(), serde_json::json!("kept"));
-
-        let mut unknown: StickerSet = serde_json::from_value(serde_json::json!({
+        let unknown: StickerSet = serde_json::from_value(serde_json::json!({
             "name": "set",
             "title": "Set",
             "type": "future_kind",
-            "stickers": []
+            "stickers": [],
+            "future_field": "kept"
         }))?;
         assert_eq!(unknown.kind, StickerKind::Unknown("future_kind".to_owned()));
-
-        let value = serde_json::to_value(&known)?;
-        assert_eq!(value["file_id"], "file");
-        assert_eq!(value["type"], "custom_emoji");
-        assert_eq!(value["width"], 512);
-        assert_eq!(value["future_field"], "kept");
-
-        unknown
-            .extra
-            .insert("type".to_owned(), serde_json::json!("regular"));
-        unknown
-            .extra
-            .insert("stickers".to_owned(), serde_json::json!(["overridden"]));
-        unknown
-            .extra
-            .insert("future_field".to_owned(), serde_json::json!("kept"));
-
-        let set_value = serde_json::to_value(&unknown)?;
-        assert_eq!(set_value["type"], "future_kind");
-        assert_eq!(set_value["stickers"], serde_json::json!([]));
-        assert_eq!(set_value["future_field"], "kept");
+        assert_eq!(unknown.kind.as_str(), "future_kind");
+        assert!(unknown.stickers.is_empty());
+        assert_eq!(unknown.extra["future_field"], "kept");
 
         Ok(())
     }

@@ -4,10 +4,11 @@ use serde::Serialize;
 use crate::{Error, Result};
 
 use crate::types::validation::{
-    control_free_string as validate_control_free_string,
+    control_free_string as validate_control_free_string, i64_range as validate_i64_range,
     non_negative_i64 as validate_non_negative_i64,
     optional_text_formatting as validate_optional_text_formatting,
     positive_i64 as validate_positive_i64, string_id as validate_string_id,
+    text_length_range as validate_text_length_range,
 };
 
 use super::AdvancedRequest;
@@ -71,6 +72,9 @@ impl AdvancedRequest for AdvancedSendGiftRequest {
             value.validate()?;
         }
         validate_string_id("gift_id", &self.gift_id)?;
+        if let Some(value) = self.text.as_deref() {
+            validate_text_length_range("text", value, 0, 128)?;
+        }
         validate_optional_text_formatting(
             "text",
             self.text.as_deref(),
@@ -129,12 +133,24 @@ impl AdvancedRequest for AdvancedGiftPremiumSubscriptionRequest {
         self.user_id.validate()?;
         validate_positive_i64("month_count", self.month_count)?;
         validate_positive_i64("star_count", self.star_count)?;
+        if let Some(value) = self.text.as_deref() {
+            validate_text_length_range("text", value, 0, 128)?;
+        }
         validate_optional_text_formatting(
             "text",
             self.text.as_deref(),
             self.text_parse_mode,
             self.text_entities.as_deref(),
         )?;
+        match (self.month_count, self.star_count) {
+            (3, 1000) | (6, 1500) | (12, 2500) => {}
+            _ => {
+                return Err(Error::InvalidRequest {
+                    reason: "giftPremiumSubscription requires 1000 stars for 3 months, 1500 for 6 months, or 2500 for 12 months"
+                        .to_owned(),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -187,7 +203,7 @@ impl AdvancedRequest for AdvancedGetUserGiftsRequest {
             validate_control_free_string("offset", value)?;
         }
         if let Some(value) = self.limit {
-            validate_positive_i64("limit", value)?;
+            validate_i64_range("limit", value, 1, 100)?;
         }
         Ok(())
     }
@@ -247,7 +263,7 @@ impl AdvancedRequest for AdvancedGetChatGiftsRequest {
             validate_control_free_string("offset", value)?;
         }
         if let Some(value) = self.limit {
-            validate_positive_i64("limit", value)?;
+            validate_i64_range("limit", value, 1, 100)?;
         }
         Ok(())
     }
@@ -401,7 +417,7 @@ impl AdvancedRequest for AdvancedGetStarTransactionsRequest {
             validate_non_negative_i64("offset", value)?;
         }
         if let Some(value) = self.limit {
-            validate_positive_i64("limit", value)?;
+            validate_i64_range("limit", value, 1, 100)?;
         }
         Ok(())
     }

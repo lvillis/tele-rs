@@ -17,6 +17,12 @@ use tele::{
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 type TestServer = FakeTelegramServer;
 
+fn valid_suggested_post_send_date() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(600, |duration| duration.as_secs() as i64 + 600)
+}
+
 fn spawn_server(
     expected_path: &'static str,
     response_status: u16,
@@ -514,7 +520,7 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
         .allow_paid_broadcast(true)
         .message_effect_id("effect-1")
         .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
-            "send_date": 1
+            "send_date": valid_suggested_post_send_date()
         }))?)
         .disable_link_preview()
         .reply_markup(markup)
