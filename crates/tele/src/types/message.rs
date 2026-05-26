@@ -1,9 +1,5 @@
 //! Telegram message and message-related request models.
 
-pub(crate) const fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 mod common;
 mod content;
 mod forum;

@@ -864,10 +864,6 @@ fn preserves_unknown_forward_origin() -> std::result::Result<(), Box<dyn StdErro
         origin.clone().into_unknown_value(),
         Some(origin_payload.clone())
     );
-    assert_eq!(
-        serde_json::to_value(message)?["forward_origin"],
-        origin_payload
-    );
     Ok(())
 }
 
@@ -1174,10 +1170,6 @@ fn preserves_unknown_paid_media_payload() -> std::result::Result<(), Box<dyn Std
     assert_eq!(media.kind(), Some("future_paid_media"));
     assert_eq!(media.as_unknown_value(), Some(&input));
     assert_eq!(media.clone().into_unknown_value(), Some(input.clone()));
-    assert_eq!(
-        serde_json::to_value(message)?["paid_media"]["paid_media"][0],
-        input
-    );
     Ok(())
 }
 

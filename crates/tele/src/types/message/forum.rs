@@ -68,7 +68,7 @@ pub struct ForumTopicCreated {
     pub icon_color: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_custom_emoji_id: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_name_implicit: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,

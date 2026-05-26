@@ -448,9 +448,9 @@ pub struct Checklist {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_entities: Option<Vec<MessageEntity>>,
     pub tasks: Vec<ChecklistTask>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub others_can_add_tasks: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub others_can_mark_tasks_as_done: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -505,35 +505,6 @@ pub struct Game {
     pub animation: Option<Animation>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-impl Serialize for Game {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = [
-            "title",
-            "description",
-            "photo",
-            "text",
-            "text_entities",
-            "animation",
-        ];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.text.is_some())
-            + usize::from(self.text_entities.is_some())
-            + usize::from(self.animation.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 3))?;
-        object.serialize_entry("title", &self.title)?;
-        object.serialize_entry("description", &self.description)?;
-        object.serialize_entry("photo", &self.photo)?;
-        serialize_optional_field(&mut object, "text", &self.text)?;
-        serialize_optional_field(&mut object, "text_entities", &self.text_entities)?;
-        serialize_optional_field(&mut object, "animation", &self.animation)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
 }
 
 /// Telegram game high score entry.
@@ -717,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn checklist_and_game_extra_cannot_override_reserved_fields()
+    fn checklist_and_game_score_extra_cannot_override_reserved_fields()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut task: ChecklistTask = serde_json::from_value(json!({
             "id": 1,
@@ -766,33 +737,6 @@ mod tests {
         );
         assert_eq!(checklist_value["future"], json!({"kept": true}));
         assert_eq!(checklist_value["another_future"], "kept");
-
-        let mut game: Game = serde_json::from_value(json!({
-            "title": "Game",
-            "description": "Description",
-            "photo": [{
-                "file_id": "file",
-                "file_unique_id": "unique",
-                "width": 1,
-                "height": 1
-            }],
-            "future": {"kept": true}
-        }))?;
-        game.extra.insert("title".to_owned(), json!("spoofed"));
-        game.extra
-            .insert("description".to_owned(), json!("spoofed"));
-        game.extra.insert("photo".to_owned(), json!([]));
-        game.extra.insert("text".to_owned(), json!("spoofed"));
-        game.extra
-            .insert("another_future".to_owned(), json!("kept"));
-
-        let game_value = serde_json::to_value(game)?;
-        assert_eq!(game_value["title"], "Game");
-        assert_eq!(game_value["description"], "Description");
-        assert_eq!(game_value["photo"].as_array().map(Vec::len), Some(1));
-        assert!(game_value.get("text").is_none());
-        assert_eq!(game_value["future"], json!({"kept": true}));
-        assert_eq!(game_value["another_future"], "kept");
 
         let mut score: GameHighScore = serde_json::from_value(json!({
             "position": 1,

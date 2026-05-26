@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::de::{DeserializeOwned, Error as DeError};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::types::bot::User;
@@ -16,7 +15,6 @@ use super::forum::{
     ForumTopicClosed, ForumTopicCreated, ForumTopicEdited, ForumTopicReopened,
     GeneralForumTopicHidden, GeneralForumTopicUnhidden,
 };
-use super::is_false;
 use super::media::{Animation, Audio, Document, PaidMediaInfo, Story, Video, VideoNote, Voice};
 use super::metadata::{
     KNOWN_MESSAGE_KINDS, MessageKind, SuggestedPostApprovalFailed, SuggestedPostApproved,
@@ -32,401 +30,218 @@ use super::service::{
     VideoChatScheduled, VideoChatStarted, WriteAccessAllowed,
 };
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Message {
     pub message_id: MessageId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub from: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sender_chat: Option<Chat>,
     pub chat: Chat,
     pub date: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub guest_query_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub business_connection_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub author_signature: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sender_business_bot: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sender_tag: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub message_thread_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_topic_message: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub forward_origin: Option<MessageOrigin>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_automatic_forward: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reply_to_message: Option<Box<MaybeInaccessibleMessage>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub external_reply: Option<Box<ExternalReplyInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub quote: Option<TextQuote>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reply_to_story: Option<Story>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reply_to_checklist_task_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub via_bot: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub guest_bot_caller_user: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub guest_bot_caller_chat: Option<Chat>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub edit_date: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub has_protected_content: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_from_offline: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_paid_post: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub media_group_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub paid_star_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub caption: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub entities: Option<Vec<MessageEntity>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub caption_entities: Option<Vec<MessageEntity>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub link_preview_options: Option<LinkPreviewOptions>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_info: Option<Box<SuggestedPostInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub effect_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub animation: Option<Animation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub audio: Option<Audio>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub contact: Option<Contact>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub dice: Option<Dice>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub document: Option<Document>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub paid_media: Option<Box<PaidMediaInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub location: Option<Location>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub photo: Option<Vec<PhotoSize>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sticker: Option<Sticker>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub story: Option<Story>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub venue: Option<Venue>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video: Option<Video>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video_note: Option<VideoNote>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub voice: Option<Voice>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub poll: Option<Box<Poll>>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub show_caption_above_media: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub has_media_spoiler: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub checklist: Option<Box<Checklist>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub game: Option<Box<Game>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub web_app_data: Option<WebAppData>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub write_access_allowed: Option<WriteAccessAllowed>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub new_chat_members: Option<Vec<User>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub left_chat_member: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub chat_owner_left: Option<ChatOwnerLeft>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub chat_owner_changed: Option<ChatOwnerChanged>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub new_chat_title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub new_chat_photo: Option<Vec<PhotoSize>>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub delete_chat_photo: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub group_chat_created: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub supergroup_chat_created: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub channel_chat_created: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pinned_message: Option<Box<MaybeInaccessibleMessage>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub message_auto_delete_timer_changed: Option<MessageAutoDeleteTimerChanged>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub migrate_to_chat_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub migrate_from_chat_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub invoice: Option<Box<Invoice>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub successful_payment: Option<Box<SuccessfulPayment>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub refunded_payment: Option<Box<RefundedPayment>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gift: Option<Box<GiftInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unique_gift: Option<Box<UniqueGiftInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gift_upgrade_sent: Option<Box<GiftInfo>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub users_shared: Option<UsersShared>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub chat_shared: Option<ChatShared>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub connected_website: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub proximity_alert_triggered: Option<Box<ProximityAlertTriggered>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub boost_added: Option<Box<ChatBoostAdded>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub checklist_tasks_done: Option<Box<ChecklistTasksDone>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub checklist_tasks_added: Option<Box<ChecklistTasksAdded>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub direct_message_price_changed: Option<Box<DirectMessagePriceChanged>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub forum_topic_created: Option<ForumTopicCreated>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub forum_topic_edited: Option<ForumTopicEdited>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub forum_topic_closed: Option<ForumTopicClosed>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub forum_topic_reopened: Option<ForumTopicReopened>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub general_forum_topic_hidden: Option<GeneralForumTopicHidden>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub general_forum_topic_unhidden: Option<GeneralForumTopicUnhidden>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub giveaway_created: Option<Box<GiveawayCreated>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub giveaway: Option<Box<Giveaway>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub giveaway_winners: Option<Box<GiveawayWinners>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub giveaway_completed: Option<Box<GiveawayCompleted>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub paid_message_price_changed: Option<Box<PaidMessagePriceChanged>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_approved: Option<Box<SuggestedPostApproved>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_approval_failed: Option<Box<SuggestedPostApprovalFailed>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_declined: Option<Box<SuggestedPostDeclined>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_paid: Option<Box<SuggestedPostPaid>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_post_refunded: Option<Box<SuggestedPostRefunded>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video_chat_scheduled: Option<VideoChatScheduled>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video_chat_started: Option<VideoChatStarted>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video_chat_ended: Option<VideoChatEnded>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub video_chat_participants_invited: Option<VideoChatParticipantsInvited>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reply_markup: Option<Box<ReplyMarkup>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
-}
-
-fn take_required_field<T, E>(
-    object: &mut serde_json::Map<String, Value>,
-    field: &'static str,
-) -> std::result::Result<T, E>
-where
-    T: DeserializeOwned,
-    E: DeError,
-{
-    let value = object
-        .remove(field)
-        .ok_or_else(|| E::missing_field(field))?;
-    serde_json::from_value(value).map_err(E::custom)
-}
-
-fn take_optional_field<T, E>(
-    object: &mut serde_json::Map<String, Value>,
-    field: &'static str,
-) -> std::result::Result<Option<T>, E>
-where
-    T: DeserializeOwned,
-    E: DeError,
-{
-    object
-        .remove(field)
-        .map(|value| serde_json::from_value(value).map_err(E::custom))
-        .transpose()
-}
-
-fn take_bool_field<E>(
-    object: &mut serde_json::Map<String, Value>,
-    field: &'static str,
-) -> std::result::Result<bool, E>
-where
-    E: DeError,
-{
-    Ok(take_optional_field::<bool, E>(object, field)?.unwrap_or(false))
-}
-
-impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let mut object = serde_json::Map::<String, Value>::deserialize(deserializer)?;
-
-        Ok(Self {
-            message_id: take_required_field(&mut object, "message_id")?,
-            from: take_optional_field(&mut object, "from")?,
-            sender_chat: take_optional_field(&mut object, "sender_chat")?,
-            chat: take_required_field(&mut object, "chat")?,
-            date: take_required_field(&mut object, "date")?,
-            guest_query_id: take_optional_field(&mut object, "guest_query_id")?,
-            business_connection_id: take_optional_field(&mut object, "business_connection_id")?,
-            author_signature: take_optional_field(&mut object, "author_signature")?,
-            sender_business_bot: take_optional_field(&mut object, "sender_business_bot")?,
-            sender_tag: take_optional_field(&mut object, "sender_tag")?,
-            message_thread_id: take_optional_field(&mut object, "message_thread_id")?,
-            is_topic_message: take_bool_field(&mut object, "is_topic_message")?,
-            forward_origin: take_optional_field(&mut object, "forward_origin")?,
-            is_automatic_forward: take_bool_field(&mut object, "is_automatic_forward")?,
-            reply_to_message: take_optional_field(&mut object, "reply_to_message")?,
-            external_reply: take_optional_field(&mut object, "external_reply")?,
-            quote: take_optional_field(&mut object, "quote")?,
-            reply_to_story: take_optional_field(&mut object, "reply_to_story")?,
-            reply_to_checklist_task_id: take_optional_field(
-                &mut object,
-                "reply_to_checklist_task_id",
-            )?,
-            via_bot: take_optional_field(&mut object, "via_bot")?,
-            guest_bot_caller_user: take_optional_field(&mut object, "guest_bot_caller_user")?,
-            guest_bot_caller_chat: take_optional_field(&mut object, "guest_bot_caller_chat")?,
-            edit_date: take_optional_field(&mut object, "edit_date")?,
-            has_protected_content: take_bool_field(&mut object, "has_protected_content")?,
-            is_from_offline: take_bool_field(&mut object, "is_from_offline")?,
-            is_paid_post: take_bool_field(&mut object, "is_paid_post")?,
-            media_group_id: take_optional_field(&mut object, "media_group_id")?,
-            paid_star_count: take_optional_field(&mut object, "paid_star_count")?,
-            text: take_optional_field(&mut object, "text")?,
-            caption: take_optional_field(&mut object, "caption")?,
-            entities: take_optional_field(&mut object, "entities")?,
-            caption_entities: take_optional_field(&mut object, "caption_entities")?,
-            link_preview_options: take_optional_field(&mut object, "link_preview_options")?,
-            suggested_post_info: take_optional_field(&mut object, "suggested_post_info")?,
-            effect_id: take_optional_field(&mut object, "effect_id")?,
-            animation: take_optional_field(&mut object, "animation")?,
-            audio: take_optional_field(&mut object, "audio")?,
-            contact: take_optional_field(&mut object, "contact")?,
-            dice: take_optional_field(&mut object, "dice")?,
-            document: take_optional_field(&mut object, "document")?,
-            paid_media: take_optional_field(&mut object, "paid_media")?,
-            location: take_optional_field(&mut object, "location")?,
-            photo: take_optional_field(&mut object, "photo")?,
-            sticker: take_optional_field(&mut object, "sticker")?,
-            story: take_optional_field(&mut object, "story")?,
-            venue: take_optional_field(&mut object, "venue")?,
-            video: take_optional_field(&mut object, "video")?,
-            video_note: take_optional_field(&mut object, "video_note")?,
-            voice: take_optional_field(&mut object, "voice")?,
-            poll: take_optional_field(&mut object, "poll")?,
-            show_caption_above_media: take_bool_field(&mut object, "show_caption_above_media")?,
-            has_media_spoiler: take_bool_field(&mut object, "has_media_spoiler")?,
-            checklist: take_optional_field(&mut object, "checklist")?,
-            game: take_optional_field(&mut object, "game")?,
-            web_app_data: take_optional_field(&mut object, "web_app_data")?,
-            write_access_allowed: take_optional_field(&mut object, "write_access_allowed")?,
-            new_chat_members: take_optional_field(&mut object, "new_chat_members")?,
-            left_chat_member: take_optional_field(&mut object, "left_chat_member")?,
-            chat_owner_left: take_optional_field(&mut object, "chat_owner_left")?,
-            chat_owner_changed: take_optional_field(&mut object, "chat_owner_changed")?,
-            new_chat_title: take_optional_field(&mut object, "new_chat_title")?,
-            new_chat_photo: take_optional_field(&mut object, "new_chat_photo")?,
-            delete_chat_photo: take_bool_field(&mut object, "delete_chat_photo")?,
-            group_chat_created: take_bool_field(&mut object, "group_chat_created")?,
-            supergroup_chat_created: take_bool_field(&mut object, "supergroup_chat_created")?,
-            channel_chat_created: take_bool_field(&mut object, "channel_chat_created")?,
-            pinned_message: take_optional_field(&mut object, "pinned_message")?,
-            message_auto_delete_timer_changed: take_optional_field(
-                &mut object,
-                "message_auto_delete_timer_changed",
-            )?,
-            migrate_to_chat_id: take_optional_field(&mut object, "migrate_to_chat_id")?,
-            migrate_from_chat_id: take_optional_field(&mut object, "migrate_from_chat_id")?,
-            invoice: take_optional_field(&mut object, "invoice")?,
-            successful_payment: take_optional_field(&mut object, "successful_payment")?,
-            refunded_payment: take_optional_field(&mut object, "refunded_payment")?,
-            gift: take_optional_field(&mut object, "gift")?,
-            unique_gift: take_optional_field(&mut object, "unique_gift")?,
-            gift_upgrade_sent: take_optional_field(&mut object, "gift_upgrade_sent")?,
-            users_shared: take_optional_field(&mut object, "users_shared")?,
-            chat_shared: take_optional_field(&mut object, "chat_shared")?,
-            connected_website: take_optional_field(&mut object, "connected_website")?,
-            proximity_alert_triggered: take_optional_field(
-                &mut object,
-                "proximity_alert_triggered",
-            )?,
-            boost_added: take_optional_field(&mut object, "boost_added")?,
-            checklist_tasks_done: take_optional_field(&mut object, "checklist_tasks_done")?,
-            checklist_tasks_added: take_optional_field(&mut object, "checklist_tasks_added")?,
-            direct_message_price_changed: take_optional_field(
-                &mut object,
-                "direct_message_price_changed",
-            )?,
-            forum_topic_created: take_optional_field(&mut object, "forum_topic_created")?,
-            forum_topic_edited: take_optional_field(&mut object, "forum_topic_edited")?,
-            forum_topic_closed: take_optional_field(&mut object, "forum_topic_closed")?,
-            forum_topic_reopened: take_optional_field(&mut object, "forum_topic_reopened")?,
-            general_forum_topic_hidden: take_optional_field(
-                &mut object,
-                "general_forum_topic_hidden",
-            )?,
-            general_forum_topic_unhidden: take_optional_field(
-                &mut object,
-                "general_forum_topic_unhidden",
-            )?,
-            giveaway_created: take_optional_field(&mut object, "giveaway_created")?,
-            giveaway: take_optional_field(&mut object, "giveaway")?,
-            giveaway_winners: take_optional_field(&mut object, "giveaway_winners")?,
-            giveaway_completed: take_optional_field(&mut object, "giveaway_completed")?,
-            paid_message_price_changed: take_optional_field(
-                &mut object,
-                "paid_message_price_changed",
-            )?,
-            suggested_post_approved: take_optional_field(&mut object, "suggested_post_approved")?,
-            suggested_post_approval_failed: take_optional_field(
-                &mut object,
-                "suggested_post_approval_failed",
-            )?,
-            suggested_post_declined: take_optional_field(&mut object, "suggested_post_declined")?,
-            suggested_post_paid: take_optional_field(&mut object, "suggested_post_paid")?,
-            suggested_post_refunded: take_optional_field(&mut object, "suggested_post_refunded")?,
-            video_chat_scheduled: take_optional_field(&mut object, "video_chat_scheduled")?,
-            video_chat_started: take_optional_field(&mut object, "video_chat_started")?,
-            video_chat_ended: take_optional_field(&mut object, "video_chat_ended")?,
-            video_chat_participants_invited: take_optional_field(
-                &mut object,
-                "video_chat_participants_invited",
-            )?,
-            reply_markup: take_optional_field(&mut object, "reply_markup")?,
-            extra: object.into_iter().collect(),
-        })
-    }
 }
 
 fn is_unmodeled_message_content_key(key: &str) -> bool {

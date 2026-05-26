@@ -132,9 +132,9 @@ pub struct SuccessfulPayment {
     pub invoice_payload: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subscription_expiration_date: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_recurring: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_first_recurring: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shipping_option_id: Option<String>,

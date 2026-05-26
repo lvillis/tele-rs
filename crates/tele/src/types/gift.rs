@@ -1,17 +1,13 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::types::bot::User;
 use crate::types::message::Chat;
 use crate::types::message::{MessageEntity, PaidMedia};
 use crate::types::sticker::Sticker;
-use crate::types::tagged::{serialize_tagged, strip_type, tagged_kind};
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
+use crate::types::tagged::{strip_type, tagged_kind};
 
 /// Origin of a unique gift service message.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -55,17 +51,8 @@ impl<'de> Deserialize<'de> for UniqueGiftOrigin {
     }
 }
 
-impl Serialize for UniqueGiftOrigin {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
 /// Telegram gift background.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct GiftBackground {
     pub center_color: u32,
@@ -76,38 +63,38 @@ pub struct GiftBackground {
 }
 
 /// Telegram gift that can be sent by the bot.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Gift {
     pub id: String,
     pub sticker: Sticker,
     pub star_count: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub upgrade_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_premium: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub has_colors: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub total_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub remaining_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub personal_total_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub personal_remaining_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub background: Option<GiftBackground>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unique_gift_variant_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub publisher_chat: Option<Chat>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram list of gifts.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Gifts {
     pub gifts: Vec<Gift>,
@@ -116,20 +103,20 @@ pub struct Gifts {
 }
 
 /// Model of a unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftModel {
     pub name: String,
     pub sticker: Sticker,
     pub rarity_per_mille: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub rarity: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Symbol of a unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftSymbol {
     pub name: String,
@@ -140,7 +127,7 @@ pub struct UniqueGiftSymbol {
 }
 
 /// RGB color palette of a unique gift backdrop.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftBackdropColors {
     pub center_color: u32,
@@ -152,7 +139,7 @@ pub struct UniqueGiftBackdropColors {
 }
 
 /// Backdrop of a unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftBackdrop {
     pub name: String,
@@ -163,7 +150,7 @@ pub struct UniqueGiftBackdrop {
 }
 
 /// Chat appearance colors unlocked by a unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftColors {
     pub model_custom_emoji_id: String,
@@ -177,7 +164,7 @@ pub struct UniqueGiftColors {
 }
 
 /// Telegram unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGift {
     pub gift_id: String,
@@ -187,118 +174,118 @@ pub struct UniqueGift {
     pub model: UniqueGiftModel,
     pub symbol: UniqueGiftSymbol,
     pub backdrop: UniqueGiftBackdrop,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_premium: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_burned: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_from_blockchain: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub colors: Option<UniqueGiftColors>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub publisher_chat: Option<Chat>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Service message payload for a regular gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct GiftInfo {
     pub gift: Gift,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owned_gift_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub convert_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prepaid_upgrade_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_upgrade_separate: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_be_upgraded: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub entities: Option<Vec<MessageEntity>>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_private: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unique_gift_number: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Service message payload for a unique gift.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UniqueGiftInfo {
     pub gift: UniqueGift,
     pub origin: UniqueGiftOrigin,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_resale_currency: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_resale_amount: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owned_gift_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub transfer_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub next_transfer_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Regular gift owned by a user or a chat.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct OwnedGiftRegular {
     pub gift: Gift,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owned_gift_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sender_user: Option<User>,
     pub send_date: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub entities: Option<Vec<MessageEntity>>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_private: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_saved: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_be_upgraded: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub was_refunded: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub convert_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prepaid_upgrade_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_upgrade_separate: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unique_gift_number: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Unique gift owned by a user or a chat.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct OwnedGiftUnique {
     pub gift: UniqueGift,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub owned_gift_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sender_user: Option<User>,
     pub send_date: i64,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_saved: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_be_transferred: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub transfer_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub next_transfer_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -393,26 +380,13 @@ impl<'de> Deserialize<'de> for OwnedGift {
     }
 }
 
-impl Serialize for OwnedGift {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Regular(value) => serialize_tagged(serializer, "regular", value),
-            Self::Unique(value) => serialize_tagged(serializer, "unique", value),
-            Self::Unknown(value) => value.serialize(serializer),
-        }
-    }
-}
-
 /// Telegram list of gifts owned by a user or a chat.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct OwnedGifts {
     pub total_count: u64,
     pub gifts: Vec<OwnedGift>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub next_offset: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -460,15 +434,6 @@ impl<'de> Deserialize<'de> for TransactionKind {
     }
 }
 
-impl Serialize for TransactionKind {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
 /// State of a revenue withdrawal operation.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -479,14 +444,14 @@ pub enum RevenueWithdrawalState {
     Unknown(Value),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct RevenueWithdrawalStatePending {
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct RevenueWithdrawalStateSucceeded {
     pub date: i64,
@@ -495,7 +460,7 @@ pub struct RevenueWithdrawalStateSucceeded {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct RevenueWithdrawalStateFailed {
     #[serde(flatten)]
@@ -591,76 +556,62 @@ impl<'de> Deserialize<'de> for RevenueWithdrawalState {
     }
 }
 
-impl Serialize for RevenueWithdrawalState {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Pending(value) => serialize_tagged(serializer, "pending", value),
-            Self::Succeeded(value) => serialize_tagged(serializer, "succeeded", value),
-            Self::Failed(value) => serialize_tagged(serializer, "failed", value),
-            Self::Unknown(value) => value.serialize(serializer),
-        }
-    }
-}
-
 /// Affiliate commission details for a Star transaction.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct AffiliateInfo {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub affiliate_user: Option<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub affiliate_chat: Option<Chat>,
     pub commission_per_mille: i64,
     pub amount: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub nanostar_amount: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Star transaction partner represented by a user.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerUser {
     pub transaction_type: TransactionKind,
     pub user: User,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub affiliate: Option<AffiliateInfo>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub invoice_payload: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub subscription_period: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub paid_media: Option<Vec<PaidMedia>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub paid_media_payload: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gift: Option<Box<Gift>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub premium_subscription_duration: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Star transaction partner represented by a chat.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerChat {
     pub chat: Chat,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gift: Option<Box<Gift>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Star transaction partner represented by an affiliate program.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerAffiliateProgram {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sponsor_user: Option<User>,
     pub commission_per_mille: i64,
     #[serde(flatten)]
@@ -668,17 +619,17 @@ pub struct TransactionPartnerAffiliateProgram {
 }
 
 /// Star transaction partner represented by Fragment.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerFragment {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub withdrawal_state: Option<RevenueWithdrawalState>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Star transaction partner represented by Telegram Ads.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerTelegramAds {
     #[serde(flatten)]
@@ -686,7 +637,7 @@ pub struct TransactionPartnerTelegramAds {
 }
 
 /// Star transaction partner represented by paid Bot API broadcasting.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerTelegramApi {
     pub request_count: i64,
@@ -695,7 +646,7 @@ pub struct TransactionPartnerTelegramApi {
 }
 
 /// Star transaction partner represented by an unknown source or recipient.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct TransactionPartnerOther {
     #[serde(flatten)]
@@ -977,45 +928,25 @@ impl<'de> Deserialize<'de> for TransactionPartner {
     }
 }
 
-impl Serialize for TransactionPartner {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::User(value) => serialize_tagged(serializer, "user", value),
-            Self::Chat(value) => serialize_tagged(serializer, "chat", value),
-            Self::AffiliateProgram(value) => {
-                serialize_tagged(serializer, "affiliate_program", value)
-            }
-            Self::Fragment(value) => serialize_tagged(serializer, "fragment", value),
-            Self::TelegramAds(value) => serialize_tagged(serializer, "telegram_ads", value),
-            Self::TelegramApi(value) => serialize_tagged(serializer, "telegram_api", value),
-            Self::Other(value) => serialize_tagged(serializer, "other", value),
-            Self::Unknown(value) => value.serialize(serializer),
-        }
-    }
-}
-
 /// Telegram Star transaction.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct StarTransaction {
     pub id: String,
     pub amount: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub nanostar_amount: Option<i64>,
     pub date: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source: Option<TransactionPartner>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub receiver: Option<TransactionPartner>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram list of Star transactions.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct StarTransactions {
     pub transactions: Vec<StarTransaction>,
@@ -1052,7 +983,7 @@ mod tests {
     }
 
     #[test]
-    fn owned_gift_regular_round_trips_tag_and_extra() -> Result<(), Box<dyn std::error::Error>> {
+    fn owned_gift_regular_parses_tag_and_extra() -> Result<(), Box<dyn std::error::Error>> {
         let gift: OwnedGift = serde_json::from_value(json!({
             "type": "regular",
             "gift": gift_payload(),
@@ -1075,11 +1006,6 @@ mod tests {
                 .id,
             "gift-1"
         );
-
-        let value = serde_json::to_value(gift)?;
-        assert_eq!(value["type"], "regular");
-        assert_eq!(value["gift"]["id"], "gift-1");
-        assert_eq!(value["future"], "kept");
         Ok(())
     }
 
@@ -1095,13 +1021,11 @@ mod tests {
         assert!(matches!(gift, OwnedGift::Unknown(_)));
         assert_eq!(gift.as_unknown_value(), Some(&input));
         assert_eq!(gift.clone().into_unknown_value(), Some(input.clone()));
-        assert_eq!(serde_json::to_value(gift)?, input);
         Ok(())
     }
 
     #[test]
-    fn transaction_partner_user_round_trips_tag_and_extra() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn transaction_partner_user_parses_tag_and_extra() -> Result<(), Box<dyn std::error::Error>> {
         let partner: TransactionPartner = serde_json::from_value(json!({
             "type": "user",
             "transaction_type": "gift_purchase",
@@ -1124,11 +1048,6 @@ mod tests {
                 .first_name,
             "Ada"
         );
-
-        let value = serde_json::to_value(partner)?;
-        assert_eq!(value["type"], "user");
-        assert_eq!(value["transaction_type"], "gift_purchase");
-        assert_eq!(value["future"], 42);
         Ok(())
     }
 
@@ -1153,10 +1072,6 @@ mod tests {
                 .extra["checkpoint"],
             "queued"
         );
-
-        let value = serde_json::to_value(state)?;
-        assert_eq!(value["type"], "pending");
-        assert_eq!(value["checkpoint"], "queued");
         Ok(())
     }
 
@@ -1167,8 +1082,6 @@ mod tests {
 
         assert_eq!(origin.as_str(), "future_origin");
         assert_eq!(transaction.as_str(), "future_transaction");
-        assert_eq!(serde_json::to_value(origin)?, "future_origin");
-        assert_eq!(serde_json::to_value(transaction)?, "future_transaction");
         Ok(())
     }
 }

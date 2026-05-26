@@ -2492,7 +2492,7 @@ impl StopMessageLiveLocationRequest {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum EditMessageResult {
     Message(Box<Message>),

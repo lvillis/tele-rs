@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::types::bot::User;
@@ -8,42 +8,41 @@ use crate::types::common::{MessageId, UserId};
 
 use super::common::{Chat, PhotoSize};
 use super::content::ChecklistTask;
-use super::is_false;
 use super::model::Message;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChecklistTasksDone {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub checklist_message: Option<Box<Message>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub marked_as_done_task_ids: Option<Vec<i64>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub marked_as_not_done_task_ids: Option<Vec<i64>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChecklistTasksAdded {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub checklist_message: Option<Box<Message>>,
     pub tasks: Vec<ChecklistTask>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatOwnerLeft {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub new_owner: Option<User>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatOwnerChanged {
     pub new_owner: User,
@@ -51,7 +50,7 @@ pub struct ChatOwnerChanged {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ProximityAlertTriggered {
     pub traveler: User,
@@ -61,7 +60,7 @@ pub struct ProximityAlertTriggered {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatBoostAdded {
     pub boost_count: u32,
@@ -69,7 +68,7 @@ pub struct ChatBoostAdded {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct VideoChatScheduled {
     pub start_date: i64,
@@ -77,14 +76,14 @@ pub struct VideoChatScheduled {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[non_exhaustive]
 pub struct VideoChatStarted {
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct VideoChatEnded {
     pub duration: u32,
@@ -92,7 +91,7 @@ pub struct VideoChatEnded {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct VideoChatParticipantsInvited {
     pub users: Vec<User>,
@@ -100,7 +99,7 @@ pub struct VideoChatParticipantsInvited {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMessagePriceChanged {
     pub paid_message_star_count: u64,
@@ -108,48 +107,48 @@ pub struct PaidMessagePriceChanged {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct DirectMessagePriceChanged {
     pub are_direct_messages_enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub direct_message_star_count: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct GiveawayCreated {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prize_star_count: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Giveaway {
     pub chats: Vec<Chat>,
     pub winners_selection_date: i64,
     pub winner_count: u32,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub only_new_members: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub has_public_winners: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prize_description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub country_codes: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prize_star_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub premium_subscription_month_count: Option<u32>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct GiveawayWinners {
     pub chat: Chat,
@@ -157,52 +156,52 @@ pub struct GiveawayWinners {
     pub winners_selection_date: i64,
     pub winner_count: u32,
     pub winners: Vec<User>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub additional_chat_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prize_star_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub premium_subscription_month_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unclaimed_prize_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub only_new_members: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub was_refunded: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub prize_description: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct GiveawayCompleted {
     pub winner_count: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unclaimed_prize_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub giveaway_message: Option<Box<Message>>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_star_giveaway: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct WriteAccessAllowed {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub from_request: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub web_app_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub from_attachment_menu: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct MessageAutoDeleteTimerChanged {
     pub message_auto_delete_time: u32,
@@ -210,23 +209,23 @@ pub struct MessageAutoDeleteTimerChanged {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct SharedUser {
     pub user_id: UserId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub first_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub photo: Option<Vec<PhotoSize>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UsersShared {
     pub request_id: i64,
@@ -235,16 +234,16 @@ pub struct UsersShared {
     pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatShared {
     pub request_id: i64,
     pub chat_id: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub username: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub photo: Option<Vec<PhotoSize>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,

@@ -275,7 +275,7 @@ impl From<AllowedUpdate> for String {
 }
 
 /// Telegram callback query object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct CallbackQuery {
     pub id: String,
@@ -293,7 +293,7 @@ pub struct CallbackQuery {
 }
 
 /// Telegram inline query object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineQuery {
     pub id: String,
@@ -309,7 +309,7 @@ pub struct InlineQuery {
 }
 
 /// Telegram chosen inline result object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChosenInlineResult {
     pub result_id: String,
@@ -324,7 +324,7 @@ pub struct ChosenInlineResult {
 }
 
 /// Telegram poll answer object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PollAnswer {
     pub poll_id: String,
@@ -338,7 +338,7 @@ pub struct PollAnswer {
 }
 
 /// Telegram shipping query payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ShippingQuery {
     pub id: String,
@@ -350,7 +350,7 @@ pub struct ShippingQuery {
 }
 
 /// Telegram pre-checkout query payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PreCheckoutQuery {
     pub id: String,
@@ -367,7 +367,7 @@ pub struct PreCheckoutQuery {
 }
 
 /// Telegram paid media purchase payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMediaPurchased {
     pub from: User,
@@ -377,43 +377,43 @@ pub struct PaidMediaPurchased {
 }
 
 /// Rights granted to a bot by a business connection.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[non_exhaustive]
 pub struct BusinessBotRights {
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_reply: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_read_messages: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_delete_sent_messages: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_delete_all_messages: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_edit_name: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_edit_bio: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_edit_profile_photo: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_edit_username: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_change_gift_settings: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_view_gifts_and_stars: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_convert_gifts_to_stars: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_transfer_and_upgrade_gifts: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_transfer_stars: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub can_manage_stories: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram business connection update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct BusinessConnection {
     pub id: String,
@@ -434,7 +434,7 @@ impl BusinessConnection {
 }
 
 /// Reaction-count entry for aggregate reaction-count updates.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ReactionCount {
     #[serde(rename = "type")]
@@ -445,7 +445,7 @@ pub struct ReactionCount {
 }
 
 /// Telegram message reaction update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct MessageReactionUpdated {
     pub chat: Chat,
@@ -462,7 +462,7 @@ pub struct MessageReactionUpdated {
 }
 
 /// Telegram aggregate message reaction-count update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct MessageReactionCountUpdated {
     pub chat: Chat,
@@ -474,7 +474,7 @@ pub struct MessageReactionCountUpdated {
 }
 
 /// Forward-compatible chat boost source payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatBoostSource {
     pub source: String,
@@ -484,14 +484,14 @@ pub struct ChatBoostSource {
     pub giveaway_message_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prize_star_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub is_unclaimed: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram chat boost payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatBoost {
     pub boost_id: String,
@@ -503,7 +503,7 @@ pub struct ChatBoost {
 }
 
 /// Telegram list of boosts added to a chat by a user.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct UserChatBoosts {
     pub boosts: Vec<ChatBoost>,
@@ -512,7 +512,7 @@ pub struct UserChatBoosts {
 }
 
 /// Telegram chat boost update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatBoostUpdated {
     pub chat: Chat,
@@ -522,7 +522,7 @@ pub struct ChatBoostUpdated {
 }
 
 /// Telegram removed chat boost update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatBoostRemoved {
     pub chat: Chat,
@@ -534,7 +534,7 @@ pub struct ChatBoostRemoved {
 }
 
 /// Telegram managed bot update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ManagedBotUpdated {
     pub user: User,
@@ -544,7 +544,7 @@ pub struct ManagedBotUpdated {
 }
 
 /// Telegram chat join request object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatJoinRequest {
     pub chat: Chat,
@@ -570,7 +570,7 @@ impl ChatJoinRequest {
 }
 
 /// Telegram business-message deletion update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct BusinessMessagesDeleted {
     pub business_connection_id: String,
@@ -591,7 +591,7 @@ impl BusinessMessagesDeleted {
 }
 
 /// Telegram chat member update payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct ChatMemberUpdated {
     pub chat: Chat,
@@ -601,9 +601,9 @@ pub struct ChatMemberUpdated {
     pub new_chat_member: ChatMember,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite_link: Option<ChatInviteLink>,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub via_join_request: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub via_chat_folder_invite_link: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -640,7 +640,7 @@ impl ChatMemberUpdated {
 }
 
 /// Telegram update object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Update {
     pub update_id: i64,
@@ -872,10 +872,6 @@ impl Update {
     pub fn managed_bot(&self) -> Option<&ManagedBotUpdated> {
         self.managed_bot.as_ref()
     }
-}
-
-const fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 /// `getUpdates` request.

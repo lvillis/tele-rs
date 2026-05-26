@@ -83,21 +83,6 @@ pub struct UserProfileAudios {
     pub extra: BTreeMap<String, Value>,
 }
 
-impl Serialize for UserProfileAudios {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let reserved = ["total_count", "audios"];
-        let extra_len = extra_field_len(&self.extra, &reserved);
-        let mut object = serializer.serialize_map(Some(extra_len + 2))?;
-        object.serialize_entry("total_count", &self.total_count)?;
-        object.serialize_entry("audios", &self.audios)?;
-        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
-        object.end()
-    }
-}
-
 /// `getUserProfilePhotos` request.
 #[derive(Clone, Debug, Serialize)]
 pub struct GetUserProfilePhotosRequest {
@@ -186,32 +171,6 @@ mod tests {
         assert_eq!(value["last_name"], "Bot");
         assert_eq!(value["username"], "telebot");
         assert_eq!(value["language_code"], "en");
-        assert_eq!(value["future_field"], "kept");
-
-        Ok(())
-    }
-
-    #[test]
-    fn user_profile_audios_extra_cannot_override_reserved_fields()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut profile_audios = UserProfileAudios {
-            total_count: 7,
-            audios: Vec::new(),
-            extra: BTreeMap::new(),
-        };
-        profile_audios
-            .extra
-            .insert("total_count".to_owned(), serde_json::json!(1));
-        profile_audios
-            .extra
-            .insert("audios".to_owned(), serde_json::json!(["overridden"]));
-        profile_audios
-            .extra
-            .insert("future_field".to_owned(), serde_json::json!("kept"));
-
-        let value = serde_json::to_value(&profile_audios)?;
-        assert_eq!(value["total_count"], 7);
-        assert_eq!(value["audios"], serde_json::json!([]));
         assert_eq!(value["future_field"], "kept");
 
         Ok(())

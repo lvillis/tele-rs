@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::types::tagged::{serialize_tagged, strip_type, tagged_kind};
+use crate::types::tagged::{strip_type, tagged_kind};
 
 use super::common::{Chat, PhotoSize};
 
 /// Telegram animation file object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Animation {
     pub file_id: String,
@@ -16,61 +16,61 @@ pub struct Animation {
     pub width: u32,
     pub height: u32,
     pub duration: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram audio file object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Audio {
     pub file_id: String,
     pub file_unique_id: String,
     pub duration: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub performer: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram generic document object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Document {
     pub file_id: String,
     pub file_unique_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram story object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Story {
     pub chat: Chat,
@@ -80,7 +80,7 @@ pub struct Story {
 }
 
 /// Telegram video quality descriptor.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct VideoQuality {
     pub file_id: String,
@@ -88,14 +88,14 @@ pub struct VideoQuality {
     pub width: u32,
     pub height: u32,
     pub codec: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram video object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Video {
     pub file_id: String,
@@ -103,71 +103,71 @@ pub struct Video {
     pub width: u32,
     pub height: u32,
     pub duration: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub cover: Option<Vec<PhotoSize>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub start_timestamp: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub qualities: Option<Vec<VideoQuality>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram video note object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct VideoNote {
     pub file_id: String,
     pub file_unique_id: String,
     pub length: u32,
     pub duration: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub thumbnail: Option<PhotoSize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram voice note object.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct Voice {
     pub file_id: String,
     pub file_unique_id: String,
     pub duration: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub file_size: Option<u64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram paid media preview payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMediaPreview {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub width: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub height: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub duration: Option<u32>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 /// Telegram paid media photo payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMediaPhoto {
     pub photo: Vec<PhotoSize>,
@@ -176,7 +176,7 @@ pub struct PaidMediaPhoto {
 }
 
 /// Telegram paid media video payload.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMediaVideo {
     pub video: Box<Video>,
@@ -295,22 +295,8 @@ impl<'de> Deserialize<'de> for PaidMedia {
     }
 }
 
-impl Serialize for PaidMedia {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Preview(value) => serialize_tagged(serializer, "preview", value),
-            Self::Photo(value) => serialize_tagged(serializer, "photo", value),
-            Self::Video(value) => serialize_tagged(serializer, "video", value),
-            Self::Unknown(value) => value.serialize(serializer),
-        }
-    }
-}
-
 /// Telegram paid media info.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct PaidMediaInfo {
     pub star_count: u64,
