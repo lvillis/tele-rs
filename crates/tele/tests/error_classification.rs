@@ -79,6 +79,13 @@ fn classifies_local_auth_errors() {
         assert!(error.is_auth_error());
         assert!(!error.is_retryable());
     }
+
+    let error = Error::Authentication {
+        reason: "invalid webhook secret token".to_owned(),
+    };
+    assert_eq!(error.classification(), ErrorClass::Authentication);
+    assert!(error.is_auth_error());
+    assert!(!error.is_retryable());
 }
 
 #[test]

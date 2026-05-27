@@ -166,6 +166,19 @@ fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
+fn authentication_error(reason: impl Into<String>) -> Error {
+    Error::Authentication {
+        reason: reason.into(),
+    }
+}
+
+#[cfg(any(feature = "redis-session", feature = "postgres-session"))]
+fn configuration_error(reason: impl Into<String>) -> Error {
+    Error::Configuration {
+        reason: reason.into(),
+    }
+}
+
 fn runtime_error(reason: impl Into<String>) -> Error {
     Error::Runtime {
         reason: reason.into(),
@@ -232,7 +245,7 @@ where
 {
     tokio::task::spawn_blocking(task)
         .await
-        .map_err(|error| storage_error("blocking I/O task", error.to_string(), false))?
+        .map_err(|error| runtime_error(format!("blocking I/O task failed: {error}")))?
 }
 
 mod app;
@@ -281,23 +294,64 @@ fn storage_temp_path(path: &Path, attempt: usize) -> PathBuf {
 }
 
 fn validate_file_storage_target(path: &Path, subject: &str) -> Result<()> {
-    if path.exists() {
-        let metadata = fs::metadata(path).map_err(|source| {
-            storage_error(
+    validate_file_storage_path(path, subject)?;
+    validate_existing_file_storage_target(path, subject)?;
+    validate_storage_parent_writable(path, subject)
+}
+
+fn validate_file_storage_path(path: &Path, subject: &str) -> Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} path must not be empty"),
+            false,
+        ));
+    }
+
+    if path.file_name().is_none() {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} `{}` must name a regular file", path.display()),
+            false,
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_existing_file_storage_target(path: &Path, subject: &str) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(storage_error(
                 format!("{subject} metadata"),
                 format!("failed to inspect {subject} `{}`: {source}", path.display()),
                 true,
-            )
-        })?;
-        if !metadata.is_file() {
-            return Err(storage_error(
-                format!("{subject} path validate"),
-                format!("{subject} `{}` must be a regular file", path.display()),
-                false,
             ));
         }
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} `{}` must not be a symbolic link", path.display()),
+            false,
+        ));
+    }
+    if !file_type.is_file() {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} `{}` must be a regular file", path.display()),
+            false,
+        ));
     }
 
+    Ok(())
+}
+
+fn validate_storage_parent_writable(path: &Path, subject: &str) -> Result<()> {
     let parent = storage_parent(path);
     fs::create_dir_all(parent).map_err(|source| {
         storage_error(
@@ -372,6 +426,9 @@ async fn validate_file_storage_target_async(path: PathBuf, subject: &'static str
 }
 
 fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
+    validate_file_storage_path(path, subject)?;
+    validate_existing_file_storage_target(path, subject)?;
+
     let parent = storage_parent(path);
     fs::create_dir_all(parent).map_err(|source| {
         storage_error(
@@ -484,4 +541,72 @@ fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duratio
     let factor = 2u32.saturating_pow(exponent as u32);
     let delay = base.saturating_mul(factor);
     delay.min(max)
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    type BoxTestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn temp_storage_root(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!("tele-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn file_storage_target_rejects_empty_path() {
+        let result = validate_file_storage_target(Path::new(""), "test snapshot");
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                retryable: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn file_storage_target_rejects_path_without_file_name() {
+        let result = validate_file_storage_target(Path::new(".."), "test snapshot");
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                retryable: false,
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_rejects_symbolic_link_without_replacing_it() -> BoxTestResult {
+        let root = temp_storage_root("storage-symlink");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let target = root.join("target.json");
+        let link = root.join("link.json");
+        fs::write(&target, b"old")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        let result = write_file_atomic(&link, b"new", "test snapshot");
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                retryable: false,
+                ..
+            })
+        ));
+        assert_eq!(fs::read(&target)?, b"old");
+        assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
 }

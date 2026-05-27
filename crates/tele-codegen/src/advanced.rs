@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::spec::{BotApiSpec, MethodSpec, ParamSpec};
 
@@ -29,13 +31,21 @@ struct TempDir {
 
 impl TempDir {
     fn create(name: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut path = std::env::temp_dir();
-        path.push(format!("{name}-{}", std::process::id()));
-        if path.exists() {
-            fs::remove_dir_all(&path)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let process_id = std::process::id();
+
+        for attempt in 0..16 {
+            let path = std::env::temp_dir().join(format!("{name}-{process_id}-{nonce}-{attempt}"));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
         }
-        fs::create_dir_all(&path)?;
-        Ok(Self { path })
+
+        Err(format!("failed to allocate temporary directory for `{name}`").into())
     }
 }
 
@@ -199,12 +209,26 @@ fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn resolve_spec_path(codegen_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let mut candidates = Vec::new();
-    if let Some(value) = std::env::var_os("TELE_ADVANCED_SPEC_PATH") {
-        candidates.push(PathBuf::from(value));
-    }
-    candidates.push(codegen_dir.join("spec").join(SPEC_FILE));
+    resolve_spec_path_with_override(codegen_dir, std::env::var_os("TELE_ADVANCED_SPEC_PATH"))
+}
 
+fn resolve_spec_path_with_override(
+    codegen_dir: &Path,
+    override_path: Option<std::ffi::OsString>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(value) = override_path {
+        let path = PathBuf::from(value);
+        if path.exists() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "TELE_ADVANCED_SPEC_PATH points to a missing spec file: {}",
+            path.display()
+        )
+        .into());
+    }
+
+    let candidates = [codegen_dir.join("spec").join(SPEC_FILE)];
     for candidate in &candidates {
         if candidate.exists() {
             return Ok(candidate.clone());
@@ -1396,9 +1420,8 @@ fn render_request(method: &MethodSpec) -> String {
     let _ = writeln!(&mut out, "{derive}");
     let _ = writeln!(&mut out, "pub struct {req_name} {{");
     for param in &method.params {
-        let cleaned = param.field_name.trim_start_matches("r#");
         let field_ty = resolve_param_type(param);
-        if cleaned != param.name {
+        if param.field_name != param.name {
             let _ = writeln!(&mut out, "    #[serde(rename = \"{}\")]", param.name);
         }
         if param.required {
@@ -3649,6 +3672,47 @@ mod tests {
         let generated = generate_domain_module(&[&method]);
         assert!(generated.contains("pub parse_mode: Option<crate::types::common::ParseMode>"));
         assert!(generated.contains("pub text_parse_mode: Option<crate::types::common::ParseMode>"));
+    }
+
+    #[test]
+    fn explicit_spec_path_override_must_exist() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::create("tele-codegen-spec-path")?;
+        let missing = temp_dir.path.join("missing.json");
+
+        let error =
+            match resolve_spec_path_with_override(&temp_dir.path, Some(missing.clone().into())) {
+                Ok(path) => {
+                    return Err(
+                        format!("expected missing override to fail: {}", path.display()).into(),
+                    );
+                }
+                Err(error) => error,
+            };
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("TELE_ADVANCED_SPEC_PATH"));
+        assert!(rendered.contains(&missing.display().to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_spec_path_override_wins_over_default() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = TempDir::create("tele-codegen-spec-path")?;
+        let default_spec = temp_dir.path.join("spec").join(SPEC_FILE);
+        fs::create_dir_all(
+            default_spec
+                .parent()
+                .ok_or("default spec path has no parent")?,
+        )?;
+        fs::write(&default_spec, "{}")?;
+        let override_spec = temp_dir.path.join("custom.json");
+        fs::write(&override_spec, "{}")?;
+
+        let resolved =
+            resolve_spec_path_with_override(&temp_dir.path, Some(override_spec.clone().into()))?;
+
+        assert_eq!(resolved, override_spec);
+        Ok(())
     }
 
     #[test]

@@ -186,8 +186,8 @@ pub struct AllowedUpdate(String);
 impl AllowedUpdate {
     /// Creates a custom allowed update name.
     ///
-    /// This keeps the SDK forward-compatible with Bot API update kinds that may
-    /// not be modeled yet while still preventing empty/control-character names.
+    /// This keeps the SDK forward-compatible with Bot API update kinds that may not be
+    /// modeled yet while still requiring Telegram-style lowercase field names.
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         validate_allowed_update_name(&value)?;
@@ -1094,19 +1094,24 @@ fn validate_optional_text_limit(field: &str, value: &str, max_chars: usize) -> R
 }
 
 fn validate_allowed_update_name(update: &str) -> Result<()> {
-    if update.trim().is_empty() {
+    let mut chars = update.chars();
+    let Some(first) = chars.next() else {
         return Err(invalid_request(
             "allowed_updates must not contain empty values",
         ));
-    }
-    if update.chars().any(char::is_control) {
+    };
+    if update == UpdateKind::Unknown.as_str() {
         return Err(invalid_request(
-            "allowed_updates must not contain control characters",
+            "UpdateKind::Unknown cannot be used as allowed_updates",
         ));
     }
-    if update.chars().any(char::is_whitespace) {
+    if !first.is_ascii_lowercase()
+        || !chars.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
+    {
         return Err(invalid_request(
-            "allowed_updates must not contain whitespace",
+            "allowed_updates values must be lowercase ASCII update field names",
         ));
     }
 
@@ -1750,6 +1755,10 @@ mod tests {
             "message"
         );
         assert_eq!(
+            AllowedUpdate::new("future_update")?.as_str(),
+            "future_update"
+        );
+        assert_eq!(
             AllowedUpdate::from_kinds([UpdateKind::Message, UpdateKind::ChatBoost])?,
             vec![
                 AllowedUpdate::new("message")?,
@@ -1770,6 +1779,18 @@ mod tests {
         ));
         assert!(matches!(
             AllowedUpdate::new(" message "),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new("unknown"),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new("Message"),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            AllowedUpdate::new("bad/name"),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(serde_json::from_str::<AllowedUpdate>("\" message \"").is_err());

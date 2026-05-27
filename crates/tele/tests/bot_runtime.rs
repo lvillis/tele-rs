@@ -526,6 +526,14 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         })
     );
     assert_eq!(
+        parse_command_text_for_bot("/echo@ThisBot hi", Some(" @thisbot ")),
+        None
+    );
+    assert!(matches!(
+        Router::new().set_command_target(" ThisBot "),
+        Err(Error::InvalidRequest { .. })
+    ));
+    assert_eq!(
         parse_command_text("/2fa verify"),
         Some(CommandData {
             name: "2fa".to_owned(),
@@ -1782,6 +1790,15 @@ async fn engine_config_rejects_invalid_runtime_values() -> Result<(), DynError> 
         Err(Error::Configuration { .. })
     ));
 
+    let zero_idle_delay = EngineConfig {
+        idle_delay: Duration::ZERO,
+        ..EngineConfig::default()
+    };
+    assert!(matches!(
+        zero_idle_delay.validate(),
+        Err(Error::Configuration { .. })
+    ));
+
     let zero_error_delay = EngineConfig {
         continue_on_source_error: true,
         error_delay: Duration::ZERO,
@@ -2638,6 +2655,88 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
 }
 
 #[tokio::test]
+async fn run_until_finishes_in_flight_dispatch_after_shutdown() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let processed = Arc::new(AtomicUsize::new(0));
+    let (handler_started_tx, handler_started_rx) = tokio::sync::oneshot::channel::<()>();
+    let handler_started_tx = Arc::new(Mutex::new(Some(handler_started_tx)));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let release_rx = Arc::new(tokio::sync::Mutex::new(Some(release_rx)));
+
+    let mut router = Router::new();
+    {
+        let processed = Arc::clone(&processed);
+        let handler_started_tx = Arc::clone(&handler_started_tx);
+        let release_rx = Arc::clone(&release_rx);
+        router
+            .message_route()
+            .handle(move |_context: BotContext, _update: Update| {
+                let processed = Arc::clone(&processed);
+                let handler_started_tx = Arc::clone(&handler_started_tx);
+                let release_rx = Arc::clone(&release_rx);
+                async move {
+                    if let Some(sender) = handler_started_tx
+                        .lock()
+                        .map_err(|_| {
+                            HandlerError::internal(Error::Runtime {
+                                reason: "handler start signal mutex poisoned".to_owned(),
+                            })
+                        })?
+                        .take()
+                    {
+                        let _ = sender.send(());
+                    }
+
+                    let receiver = release_rx.lock().await.take().ok_or_else(|| {
+                        HandlerError::internal(Error::Runtime {
+                            reason: "handler release signal already consumed".to_owned(),
+                        })
+                    })?;
+                    let _ = receiver.await;
+                    processed.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+    }
+
+    let (sink, source) = channel_source(1)?;
+    let mut engine = BotEngine::new(client, source, router);
+    let mut run_handle = tokio::spawn(async move {
+        engine
+            .run_until(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+
+    sink.send(tele::bot::testing::message_update(821, 1, "work")?)
+        .await?;
+    handler_started_rx.await?;
+    if shutdown_tx.send(()).is_err() {
+        return Err("shutdown receiver dropped before signal".into());
+    }
+
+    tokio::select! {
+        result = &mut run_handle => {
+            return Err(format!("run_until stopped before in-flight dispatch finished: {result:?}").into());
+        }
+        _ = tokio::time::sleep(Duration::from_millis(30)) => {}
+    }
+
+    if release_tx.send(()).is_err() {
+        return Err("handler release receiver dropped before signal".into());
+    }
+    let result = run_handle.await?;
+
+    assert!(result.is_ok());
+    assert_eq!(processed.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_until_stops_on_non_retryable_source_error() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -2859,7 +2958,7 @@ async fn webhook_runner_validates_secret_and_dispatches_json() -> Result<(), Dyn
         .err();
     assert!(matches!(
         wrong_secret_error,
-        Some(Error::InvalidRequest { reason }) if reason.contains("secret")
+        Some(Error::Authentication { reason }) if reason.contains("secret")
     ));
 
     Ok(())
@@ -2886,6 +2985,40 @@ async fn webhook_runner_reports_continued_handler_error_as_failed() -> Result<()
     let outcome = runner.dispatch_json_outcome(&payload, None).await?;
     assert_eq!(outcome, DispatchOutcome::Failed { update_id: 903 });
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn webhook_runner_does_not_swallow_prepare_errors_as_handler_failures() -> Result<(), DynError>
+{
+    let (base_url, handle) = spawn_server(
+        "/bot123:abc/getMe",
+        200,
+        r#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"tele"}}"#,
+    )?;
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let handler_hits = Arc::new(AtomicUsize::new(0));
+    let mut router = Router::new();
+    {
+        let handler_hits = Arc::clone(&handler_hits);
+        router
+            .command_route("start")?
+            .handle(move |_context: BotContext, _update: Update| {
+                let handler_hits = Arc::clone(&handler_hits);
+                async move {
+                    handler_hits.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+    }
+
+    let runner = WebhookRunner::new(client, router).continue_on_handler_error(true);
+    let payload = serde_json::to_vec(&message_update(904, 10, "/start@ThisBot ping"))?;
+    let result = runner.dispatch_json_outcome(&payload, None).await;
+
+    join_server(handle).await?;
+    assert!(matches!(result, Err(Error::InvalidRequest { reason }) if reason.contains("username")));
+    assert_eq!(handler_hits.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
@@ -4318,6 +4451,18 @@ async fn outbox_rejects_invalid_message_before_enqueue() -> Result<(), DynError>
     ));
     assert!(matches!(
         outbox
+            .send_text_with_key(12_i64, "hello", Some(" padded ".to_owned()))
+            .await,
+        Err(Error::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        outbox
+            .send_text_with_key(12_i64, "hello", Some("bad\nkey".to_owned()))
+            .await,
+        Err(Error::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        outbox
             .send_text_with_key(12_i64, "hello", Some("x".repeat(257)))
             .await,
         Err(Error::InvalidRequest { .. })
@@ -4959,7 +5104,7 @@ async fn redis_session_store_rejects_empty_namespace() -> Result<(), DynError> {
     let error = tele::bot::RedisSessionStore::<String>::new("redis://127.0.0.1/", "   ").err();
     assert!(matches!(
         error,
-        Some(Error::InvalidRequest { reason }) if reason.contains("namespace")
+        Some(Error::Configuration { reason }) if reason.contains("namespace")
     ));
     Ok(())
 }
@@ -4975,7 +5120,7 @@ async fn postgres_session_store_rejects_invalid_table_name() -> Result<(), DynEr
     .err();
     assert!(matches!(
         error,
-        Some(Error::InvalidRequest { reason }) if reason.contains("identifier")
+        Some(Error::Configuration { reason }) if reason.contains("identifier")
     ));
     Ok(())
 }

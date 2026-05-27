@@ -257,7 +257,7 @@ where
         validate_redis_namespace(&namespace)?;
 
         let client = redis::Client::open(redis_url).map_err(|source| {
-            invalid_request(format!(
+            configuration_error(format!(
                 "failed to create redis client `{}`: {source}",
                 crate::util::redact_url_credentials(redis_url)
             ))
@@ -289,12 +289,12 @@ where
 #[cfg(feature = "redis-session")]
 fn validate_redis_namespace(namespace: &str) -> Result<()> {
     if namespace.is_empty() || namespace.chars().any(char::is_whitespace) {
-        return Err(invalid_request(
+        return Err(configuration_error(
             "redis session namespace must be non-empty and contain no whitespace",
         ));
     }
     if namespace.chars().any(char::is_control) {
-        return Err(invalid_request(
+        return Err(configuration_error(
             "redis session namespace must not contain control characters",
         ));
     }
@@ -543,17 +543,17 @@ where
 fn validate_sql_identifier(identifier: &str) -> Result<()> {
     let mut chars = identifier.chars();
     let Some(first) = chars.next() else {
-        return Err(invalid_request("sql identifier cannot be empty"));
+        return Err(configuration_error("sql identifier cannot be empty"));
     };
 
     if !(first.is_ascii_alphabetic() || first == '_') {
-        return Err(invalid_request(format!(
+        return Err(configuration_error(format!(
             "sql identifier `{identifier}` must start with [A-Za-z_]"
         )));
     }
 
     if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-        return Err(invalid_request(format!(
+        return Err(configuration_error(format!(
             "sql identifier `{identifier}` contains invalid characters"
         )));
     }
@@ -930,7 +930,7 @@ mod tests {
         for namespace in ["", " ", "tele sessions", "tele\nsessions"] {
             assert!(matches!(
                 validate_redis_namespace(namespace),
-                Err(Error::InvalidRequest { .. })
+                Err(Error::Configuration { .. })
             ));
         }
     }

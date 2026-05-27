@@ -218,6 +218,11 @@ impl RequestDefaults {
                 reason: "max_in_flight_per_host must be at least 1 when set".to_owned(),
             });
         }
+        if self.proxy_authorization.is_some() && self.http_proxy.is_none() {
+            return Err(Error::Configuration {
+                reason: "proxy_authorization requires http_proxy".to_owned(),
+            });
+        }
 
         Ok(())
     }
@@ -357,19 +362,30 @@ impl ClientBuilder {
         name: impl AsRef<str>,
         value: impl AsRef<str>,
     ) -> Result<Self, Error> {
-        let name = name.as_ref().to_owned();
+        let raw_name = name.as_ref().to_owned();
         let value = value.as_ref().to_owned();
 
-        HeaderName::from_bytes(name.as_bytes()).map_err(|source| Error::InvalidHeaderName {
-            name: name.clone(),
-            source,
+        let name = HeaderName::from_bytes(raw_name.as_bytes()).map_err(|source| {
+            Error::InvalidHeaderName {
+                name: raw_name.clone(),
+                source,
+            }
         })?;
         HeaderValue::from_str(&value).map_err(|source| Error::InvalidHeaderValue {
-            name: name.clone(),
+            name: raw_name,
             source,
         })?;
 
-        self.default_headers.push((name, value));
+        let name = name.as_str().to_owned();
+        if let Some((_, existing_value)) = self
+            .default_headers
+            .iter_mut()
+            .find(|(existing_name, _)| existing_name.eq_ignore_ascii_case(&name))
+        {
+            *existing_value = value;
+        } else {
+            self.default_headers.push((name, value));
+        }
         Ok(self)
     }
 
@@ -389,7 +405,13 @@ impl ClientBuilder {
 
     /// Sets HTTP proxy URI.
     pub fn http_proxy(mut self, proxy_uri: impl AsRef<str>) -> Result<Self, Error> {
-        let raw = proxy_uri.as_ref().trim();
+        let raw = proxy_uri.as_ref();
+        if raw.is_empty() || raw.trim().len() != raw.len() {
+            return Err(invalid_http_proxy_uri(
+                raw,
+                "proxy uri must not be empty or padded",
+            ));
+        }
         let parsed = raw.parse::<Uri>().map_err(|source| {
             invalid_http_proxy_uri(raw, format!("failed to parse proxy uri: {source}"))
         })?;
@@ -405,9 +427,10 @@ impl ClientBuilder {
         Ok(self)
     }
 
-    /// Clears configured HTTP proxy URI.
+    /// Clears configured HTTP proxy URI and proxy authorization.
     pub fn clear_http_proxy(mut self) -> Self {
         self.defaults.http_proxy = None;
+        self.defaults.proxy_authorization = None;
         self
     }
 
@@ -430,26 +453,25 @@ impl ClientBuilder {
     }
 
     /// Replaces NO_PROXY rules.
-    pub fn no_proxy<I, S>(mut self, rules: I) -> Self
+    pub fn no_proxy<I, S>(mut self, rules: I) -> Result<Self, Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.defaults.no_proxy_rules = rules
+        let rules = rules
             .into_iter()
-            .map(|rule| rule.as_ref().trim().to_owned())
-            .filter(|rule| !rule.is_empty())
-            .collect();
-        self
+            .map(|rule| validate_no_proxy_rule(rule.as_ref()).map(|()| rule.as_ref().to_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.defaults.no_proxy_rules = rules;
+        Ok(self)
     }
 
     /// Appends a NO_PROXY rule.
-    pub fn add_no_proxy(mut self, rule: impl AsRef<str>) -> Self {
-        let rule = rule.as_ref().trim();
-        if !rule.is_empty() {
-            self.defaults.no_proxy_rules.push(rule.to_owned());
-        }
-        self
+    pub fn add_no_proxy(mut self, rule: impl AsRef<str>) -> Result<Self, Error> {
+        let rule = rule.as_ref();
+        validate_no_proxy_rule(rule)?;
+        self.defaults.no_proxy_rules.push(rule.to_owned());
+        Ok(self)
     }
 
     /// Clears all NO_PROXY rules.
@@ -530,6 +552,59 @@ fn invalid_http_proxy_uri(raw: &str, detail: impl std::fmt::Display) -> Error {
     }
 }
 
+fn validate_no_proxy_rule(rule: &str) -> Result<(), Error> {
+    if rule.is_empty() || rule.trim().len() != rule.len() {
+        return Err(invalid_no_proxy_rule(
+            rule,
+            "rule must not be empty or padded",
+        ));
+    }
+    if rule.chars().any(char::is_control) {
+        return Err(invalid_no_proxy_rule(
+            rule,
+            "rule must not contain control characters",
+        ));
+    }
+
+    validate_no_proxy_rule_syntax(rule)
+}
+
+#[cfg(feature = "_async")]
+fn validate_no_proxy_rule_syntax(rule: &str) -> Result<(), Error> {
+    reqx::Client::builder("https://api.telegram.org")
+        .try_add_no_proxy(rule)
+        .map(|_| ())
+        .map_err(|source| invalid_no_proxy_rule(rule, source))
+}
+
+#[cfg(all(not(feature = "_async"), feature = "_blocking"))]
+fn validate_no_proxy_rule_syntax(rule: &str) -> Result<(), Error> {
+    reqx::blocking::Client::builder("https://api.telegram.org")
+        .try_add_no_proxy(rule)
+        .map(|_| ())
+        .map_err(|source| invalid_no_proxy_rule(rule, source))
+}
+
+#[cfg(not(any(feature = "_async", feature = "_blocking")))]
+fn validate_no_proxy_rule_syntax(_rule: &str) -> Result<(), Error> {
+    Ok(())
+}
+
+fn invalid_no_proxy_rule(raw: &str, detail: impl std::fmt::Display) -> Error {
+    Error::Configuration {
+        reason: format!(
+            "invalid no_proxy rule `{}`: {detail}",
+            redact_no_proxy_rule(raw)
+        ),
+    }
+}
+
+fn redact_no_proxy_rule(raw: &str) -> String {
+    let redacted = redact_url_credentials(raw);
+    let end = redacted.find(['?', '#']).unwrap_or(redacted.len());
+    redacted[..end].to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,8 +651,8 @@ mod tests {
         let builder = ClientBuilder::new("https://api.telegram.org")?
             .http_proxy("http://127.0.0.1:8080")?
             .proxy_authorization("Basic dXNlcjpwYXNz")?
-            .no_proxy(["localhost", ".example.com"])
-            .add_no_proxy("127.0.0.1");
+            .no_proxy(["localhost", ".example.com"])?
+            .add_no_proxy("127.0.0.1")?;
         let parts = builder.into_parts();
 
         assert!(parts.defaults.http_proxy.is_some());
@@ -585,6 +660,104 @@ mod tests {
         assert_eq!(
             parts.defaults.no_proxy_rules,
             vec!["localhost", ".example.com", "127.0.0.1"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_proxy_authorization_without_proxy() -> Result<(), Error> {
+        let builder =
+            ClientBuilder::new("https://api.telegram.org")?.proxy_authorization("Basic token")?;
+
+        assert!(matches!(
+            builder.validate(),
+            Err(Error::Configuration { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn clearing_proxy_removes_bound_authorization() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://127.0.0.1:8080")?
+            .proxy_authorization("Basic token")?
+            .clear_http_proxy();
+
+        builder.validate()?;
+        let parts = builder.into_parts();
+        assert!(parts.defaults.http_proxy.is_none());
+        assert!(parts.defaults.proxy_authorization.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_no_proxy_rules_that_would_be_silently_normalized() -> Result<(), Error> {
+        assert!(matches!(
+            ClientBuilder::new("https://api.telegram.org")?.add_no_proxy(" localhost"),
+            Err(Error::Configuration { .. })
+        ));
+        assert!(matches!(
+            ClientBuilder::new("https://api.telegram.org")?.no_proxy([""]),
+            Err(Error::Configuration { .. })
+        ));
+        assert!(matches!(
+            ClientBuilder::new("https://api.telegram.org")?.no_proxy(["local\nhost"]),
+            Err(Error::Configuration { .. })
+        ));
+        Ok(())
+    }
+
+    #[cfg(any(feature = "_async", feature = "_blocking"))]
+    #[test]
+    fn rejects_invalid_no_proxy_rule_syntax_at_builder_boundary() -> Result<(), Error> {
+        let result = ClientBuilder::new("https://api.telegram.org")?
+            .no_proxy(["example.com", "[::1]not-a-port"]);
+
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        Ok(())
+    }
+
+    #[cfg(any(feature = "_async", feature = "_blocking"))]
+    #[test]
+    fn redacts_sensitive_no_proxy_rule_parts() -> Result<(), Error> {
+        let result = ClientBuilder::new("https://api.telegram.org")?
+            .no_proxy(["https://user:secret@example.com/path?token=secret#fragment"]);
+        let error = match result {
+            Ok(_) => {
+                return Err(Error::Configuration {
+                    reason: "expected invalid no_proxy rule".to_owned(),
+                });
+            }
+            Err(error) => error,
+        };
+        let rendered = error.to_string();
+
+        assert!(!rendered.contains("user:secret"));
+        assert!(!rendered.contains("token=secret"));
+        assert!(!rendered.contains("#fragment"));
+        assert!(rendered.contains("redacted"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_padded_http_proxy_uri() -> Result<(), Error> {
+        let result =
+            ClientBuilder::new("https://api.telegram.org")?.http_proxy(" http://127.0.0.1:8080 ");
+
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn default_headers_are_canonical_and_replace_existing_values() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .default_header("User-Agent", "tele-a")?
+            .user_agent("tele-b")?;
+        let parts = builder.into_parts();
+
+        assert_eq!(
+            parts.default_headers,
+            vec![("user-agent".to_owned(), "tele-b".to_owned())]
         );
         Ok(())
     }

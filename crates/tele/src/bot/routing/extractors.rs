@@ -545,13 +545,12 @@ pub fn parse_command_text_for_bot(text: &str, bot_username: Option<&str>) -> Opt
 }
 
 pub(crate) fn normalize_bot_username(value: &str) -> Option<String> {
-    let value = value.trim();
+    if value.is_empty() || value.trim() != value {
+        return None;
+    }
+
     let normalized = value.strip_prefix('@').unwrap_or(value);
-    if normalized.is_empty()
-        || normalized.trim() != normalized
-        || normalized.starts_with('@')
-        || !is_valid_bot_username(normalized)
-    {
+    if normalized.is_empty() || normalized.starts_with('@') || !is_valid_bot_username(normalized) {
         None
     } else {
         Some(normalized.to_owned())

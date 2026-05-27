@@ -834,7 +834,7 @@ impl Router {
                 "getMe returned bot without username; command mention routing requires a username",
             )
         })?)
-        .ok_or_else(|| invalid_request("bot username cannot be empty"))?;
+        .ok_or_else(|| invalid_request("bot username must be a valid Telegram bot username"))?;
 
         let mut state = self
             .command_target
@@ -862,7 +862,7 @@ impl Router {
                 "getMe returned bot without username; command mention routing requires a username",
             )
         })?)
-        .ok_or_else(|| invalid_request("bot username cannot be empty"))?;
+        .ok_or_else(|| invalid_request("bot username must be a valid Telegram bot username"))?;
 
         let mut state = self
             .command_target
@@ -915,8 +915,9 @@ impl Router {
     /// Sets command target bot username used by command routes.
     pub fn set_command_target(&self, bot_username: impl Into<String>) -> Result<&Self> {
         let raw = bot_username.into();
-        let bot_username = normalize_bot_username(raw.as_str())
-            .ok_or_else(|| invalid_request("command target bot username cannot be empty"))?;
+        let bot_username = normalize_bot_username(raw.as_str()).ok_or_else(|| {
+            invalid_request("command target must be a valid Telegram bot username")
+        })?;
         let _ = self.set_command_target_config(Some(bot_username), false);
         Ok(self)
     }

@@ -47,26 +47,6 @@ compile_error!(
     "tele requires at least one transport feature: enable an `async-tls-*` or `blocking-tls-*` feature."
 );
 
-#[cfg(all(
-    feature = "_async",
-    not(feature = "async-tls-rustls-ring"),
-    not(feature = "async-tls-rustls-aws-lc-rs"),
-    not(feature = "async-tls-native")
-))]
-compile_error!(
-    "tele async transport requires one async TLS backend: enable `async-tls-rustls-ring`, `async-tls-rustls-aws-lc-rs`, or `async-tls-native`."
-);
-
-#[cfg(all(
-    feature = "_blocking",
-    not(feature = "blocking-tls-rustls-ring"),
-    not(feature = "blocking-tls-rustls-aws-lc-rs"),
-    not(feature = "blocking-tls-native")
-))]
-compile_error!(
-    "tele blocking transport requires one blocking TLS backend: enable `blocking-tls-rustls-ring`, `blocking-tls-rustls-aws-lc-rs`, or `blocking-tls-native`."
-);
-
 mod transport;
 mod util;
 

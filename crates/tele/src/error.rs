@@ -47,6 +47,9 @@ pub enum Error {
     #[error("missing bot token authentication")]
     MissingBotToken,
 
+    #[error("authentication failed: {reason}")]
+    Authentication { reason: String },
+
     #[error("invalid request: {reason}")]
     InvalidRequest { reason: String },
 
@@ -141,7 +144,9 @@ impl Error {
             | Self::InvalidHeaderName { .. }
             | Self::InvalidHeaderValue { .. }
             | Self::Configuration { .. } => ErrorClass::Configuration,
-            Self::InvalidBotToken | Self::MissingBotToken => ErrorClass::Authentication,
+            Self::InvalidBotToken | Self::MissingBotToken | Self::Authentication { .. } => {
+                ErrorClass::Authentication
+            }
             Self::InvalidRequest { .. }
             | Self::SerializeRequest { .. }
             | Self::ReadLocalFile { .. } => ErrorClass::Validation,

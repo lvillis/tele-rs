@@ -254,6 +254,11 @@ impl EngineConfig {
                 reason: "max_handler_concurrency must be at least 1".to_owned(),
             });
         }
+        if self.idle_delay.is_zero() {
+            return Err(Error::Configuration {
+                reason: "idle_delay must be greater than zero".to_owned(),
+            });
+        }
         if self.continue_on_source_error
             && self.source_error_backoff.is_none()
             && self.error_delay.is_zero()
@@ -279,6 +284,8 @@ pub struct LongPollingSource {
     seen_update_ids: HashSet<i64>,
     seen_update_order: VecDeque<i64>,
     offset_loaded: bool,
+    offset_overridden: bool,
+    pending_persisted_offset: Option<i64>,
     validated_offset_storage_path: Option<PathBuf>,
     prepared: bool,
 }
@@ -292,6 +299,8 @@ impl LongPollingSource {
             seen_update_ids: HashSet::new(),
             seen_update_order: VecDeque::new(),
             offset_loaded: false,
+            offset_overridden: false,
+            pending_persisted_offset: None,
             validated_offset_storage_path: None,
             prepared: false,
         }
@@ -321,7 +330,7 @@ impl LongPollingSource {
         let dedupe_window_size_changed =
             self.config.dedupe_window_size != config.dedupe_window_size;
         if self.config.persist_offset_path != config.persist_offset_path {
-            self.validated_offset_storage_path = None;
+            self.invalidate_offset_storage_cache();
         }
         if self.config.disable_webhook_on_start != config.disable_webhook_on_start
             || self.config.drop_pending_updates_on_start != config.drop_pending_updates_on_start
@@ -367,6 +376,8 @@ impl LongPollingSource {
     pub fn set_next_offset(&mut self, offset: Option<i64>) -> &mut Self {
         self.next_offset = offset;
         self.offset_loaded = true;
+        self.offset_overridden = true;
+        self.pending_persisted_offset = None;
         self.seen_update_ids.clear();
         self.seen_update_order.clear();
         self
@@ -389,7 +400,7 @@ impl LongPollingSource {
         let path = path.into();
         if self.config.persist_offset_path.as_ref() != Some(&path) {
             self.config.persist_offset_path = Some(path);
-            self.validated_offset_storage_path = None;
+            self.invalidate_offset_storage_cache();
         }
         self
     }
@@ -398,9 +409,17 @@ impl LongPollingSource {
     pub fn clear_offset_persistence(&mut self) -> &mut Self {
         if self.config.persist_offset_path.is_some() {
             self.config.persist_offset_path = None;
-            self.validated_offset_storage_path = None;
+            self.pending_persisted_offset = None;
+            self.invalidate_offset_storage_cache();
         }
         self
+    }
+
+    fn invalidate_offset_storage_cache(&mut self) {
+        self.validated_offset_storage_path = None;
+        if self.next_offset.is_none() && !self.offset_overridden {
+            self.offset_loaded = false;
+        }
     }
 
     async fn ensure_prepared(&mut self) -> Result<()> {
@@ -419,18 +438,6 @@ impl LongPollingSource {
 
         self.prepared = true;
         Ok(())
-    }
-
-    fn next_offset_after_update_ids<I>(&self, update_ids: I) -> Option<i64>
-    where
-        I: IntoIterator<Item = i64>,
-    {
-        update_ids
-            .into_iter()
-            .fold(self.next_offset, |next, update_id| {
-                let candidate = update_id.saturating_add(1);
-                Some(next.map_or(candidate, |current| current.max(candidate)))
-            })
     }
 
     fn apply_committed_update(&mut self, update_id: i64) -> bool {
@@ -476,6 +483,21 @@ impl LongPollingSource {
         Ok(())
     }
 
+    async fn flush_pending_persisted_offset(&mut self) -> Result<()> {
+        let Some(next_offset) = self.pending_persisted_offset else {
+            return Ok(());
+        };
+        let Some(path) = self.config.persist_offset_path.clone() else {
+            self.pending_persisted_offset = None;
+            return Ok(());
+        };
+
+        self.ensure_offset_storage_target_validated().await?;
+        persist_polling_offset_async(path, Some(next_offset)).await?;
+        self.pending_persisted_offset = None;
+        Ok(())
+    }
+
     fn is_duplicate_update(&self, update_id: i64) -> bool {
         if self.config.dedupe_window_size == 0 {
             return false;
@@ -516,24 +538,19 @@ impl LongPollingSource {
 
     async fn commit_update_ids(&mut self, update_ids: &[i64]) -> Result<()> {
         if update_ids.is_empty() {
-            return Ok(());
+            return self.flush_pending_persisted_offset().await;
         }
 
-        let next_offset = self.next_offset_after_update_ids(update_ids.iter().copied());
-        if next_offset != self.next_offset && self.config.persist_offset_path.is_some() {
-            self.ensure_offset_storage_target_validated().await?;
-            let Some(path) = self.config.persist_offset_path.as_deref() else {
-                return Ok(());
-            };
-            persist_polling_offset_async(path.to_path_buf(), next_offset).await?;
-        }
-
+        let previous_offset = self.next_offset;
         for update_id in update_ids {
             let _ = self.apply_committed_update(*update_id);
             self.remember_update(*update_id);
         }
+        if self.next_offset != previous_offset {
+            self.pending_persisted_offset = self.next_offset;
+        }
 
-        Ok(())
+        self.flush_pending_persisted_offset().await
     }
 
     fn effective_poll_timeout_seconds(&self) -> Result<u16> {
@@ -553,6 +570,7 @@ impl UpdateSource for LongPollingSource {
         Box::pin(async move {
             self.config.validate()?;
             self.ensure_prepared().await?;
+            self.flush_pending_persisted_offset().await?;
 
             let mut request =
                 GetUpdatesRequest::with_timeout(self.effective_poll_timeout_seconds()?);
@@ -789,8 +807,14 @@ mod tests {
             "tele-offset-explicit-override-{}-{timestamp}.json",
             std::process::id()
         ));
+        let changed_offset_path = std::env::temp_dir().join(format!(
+            "tele-offset-explicit-override-changed-{}-{timestamp}.json",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&offset_path);
+        let _ = fs::remove_file(&changed_offset_path);
         persist_polling_offset(&offset_path, Some(42))?;
+        persist_polling_offset(&changed_offset_path, Some(77))?;
 
         let client = Client::builder("http://127.0.0.1:9")?
             .bot_token("123:abc")?
@@ -798,9 +822,39 @@ mod tests {
         let mut source = LongPollingSource::new(client).with_offset_persistence_path(&offset_path);
 
         source.set_next_offset(None);
+        source.set_offset_persistence_path(&changed_offset_path);
         source.ensure_offset_loaded().await?;
 
         assert_eq!(source.next_offset(), None);
+
+        let _ = fs::remove_file(&offset_path);
+        let _ = fs::remove_file(&changed_offset_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn enabling_offset_persistence_reloads_when_no_offset_is_authoritative() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let offset_path = std::env::temp_dir().join(format!(
+            "tele-offset-enable-persistence-{}-{timestamp}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&offset_path);
+        persist_polling_offset(&offset_path, Some(77))?;
+
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client);
+        source.ensure_offset_loaded().await?;
+        assert_eq!(source.next_offset(), None);
+
+        source.set_offset_persistence_path(&offset_path);
+        source.ensure_offset_loaded().await?;
+
+        assert_eq!(source.next_offset(), Some(77));
 
         let _ = fs::remove_file(&offset_path);
         Ok(())
@@ -914,6 +968,52 @@ mod tests {
         assert!(!source.is_duplicate_update(10));
         assert!(source.offset_loaded);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_offset_persistence_keeps_committed_memory_progress() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let root = std::env::temp_dir().join(format!(
+            "tele-offset-persist-failure-{}-{timestamp}",
+            std::process::id()
+        ));
+        let offset_path = root.join("offset.json");
+        fs::create_dir_all(&offset_path).map_err(|source| {
+            storage_error(
+                "test mkdir",
+                format!("failed to create blocked offset path: {source}"),
+                true,
+            )
+        })?;
+
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client).with_offset_persistence_path(&offset_path);
+
+        let result = source.commit_update_ids(&[41]).await;
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        assert_eq!(source.next_offset(), Some(42));
+        assert!(source.is_duplicate_update(41));
+        assert_eq!(source.pending_persisted_offset, Some(42));
+
+        fs::remove_dir(&offset_path).map_err(|source| {
+            storage_error(
+                "test rmdir",
+                format!("failed to unblock offset path: {source}"),
+                true,
+            )
+        })?;
+        source.flush_pending_persisted_offset().await?;
+
+        assert_eq!(source.pending_persisted_offset, None);
+        assert_eq!(load_persisted_polling_offset(&offset_path)?, Some(42));
+
+        let _ = fs::remove_dir_all(root);
         Ok(())
     }
 }

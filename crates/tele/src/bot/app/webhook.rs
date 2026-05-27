@@ -120,7 +120,10 @@ impl WebhookRunner {
     pub async fn dispatch_update_outcome(&self, update: Update) -> Result<DispatchOutcome> {
         let update_id = update.update_id;
         let context = BotContext::new(self.client.clone());
-        let result = self.router.dispatch_prepared(context, update).await;
+        self.router
+            .prepare_for_update(context.client(), &update)
+            .await?;
+        let result = self.router.dispatch(context, update).await;
 
         match result {
             Ok(true) => Ok(DispatchOutcome::Handled { update_id }),
@@ -141,15 +144,7 @@ impl WebhookRunner {
         payload: &[u8],
         incoming_secret: Option<&str>,
     ) -> Result<Update> {
-        if !self.verify_secret_token(incoming_secret) {
-            return Err(invalid_request("invalid webhook secret token"));
-        }
-
-        serde_json::from_slice(payload).map_err(|source| {
-            invalid_request(format!(
-                "failed to deserialize webhook update payload: {source}"
-            ))
-        })
+        crate::bot::webhook_http::parse_webhook_update_json(self, payload, incoming_secret)
     }
 
     /// Verifies secret token, parses JSON update and dispatches it with structured outcome.

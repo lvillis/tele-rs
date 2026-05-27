@@ -1063,9 +1063,8 @@ async fn blocking_build_configuration_error_is_not_mapped_as_transport() -> Resu
     let error = match BlockingClient::builder("https://api.telegram.org")?
         .bot_token("123:abc")?
         .no_proxy(["example.com", "[::1]not-a-port"])
-        .build_blocking()
     {
-        Ok(_) => return Err("expected build failure".into()),
+        Ok(_) => return Err("expected configuration failure".into()),
         Err(error) => error,
     };
 

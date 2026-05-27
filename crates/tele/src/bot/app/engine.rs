@@ -249,11 +249,19 @@ where
     }
 
     async fn poll_once_inner(&mut self) -> std::result::Result<Vec<DispatchOutcome>, PollFailure> {
-        self.config.validate().map_err(PollFailure::fatal)?;
+        let poll_started_at = self.begin_poll_cycle().await?;
+        let updates = self.poll_source_updates().await?;
+        self.process_polled_updates(updates, poll_started_at).await
+    }
 
+    async fn begin_poll_cycle(&mut self) -> std::result::Result<Instant, PollFailure> {
+        self.config.validate().map_err(PollFailure::fatal)?;
         let poll_started_at = Instant::now();
         self.notify_event(EngineEvent::PollStarted).await;
+        Ok(poll_started_at)
+    }
 
+    async fn poll_source_updates(&mut self) -> std::result::Result<Vec<Update>, PollFailure> {
         #[cfg(feature = "tracing")]
         let poll_future = self
             .source
@@ -262,36 +270,26 @@ where
         #[cfg(not(feature = "tracing"))]
         let poll_future = self.source.poll();
 
-        let updates = match poll_future.await {
-            Ok(updates) => updates,
+        match poll_future.await {
+            Ok(updates) => Ok(updates),
             Err(error) => {
-                self.notify_event(EngineEvent::PollFailed {
-                    classification: error.classification(),
-                    retryable: error.is_retryable(),
-                    status: error.status().map(|status| status.as_u16()),
-                    error_code: error.error_code(),
-                    request_id: error.request_id().map(ToOwned::to_owned),
-                    message: error.to_string(),
-                })
-                .await;
-                return Err(PollFailure::source(error));
+                self.notify_poll_failed(&error).await;
+                Err(PollFailure::source(error))
             }
-        };
+        }
+    }
 
+    async fn process_polled_updates(
+        &mut self,
+        updates: Vec<Update>,
+        poll_started_at: Instant,
+    ) -> std::result::Result<Vec<DispatchOutcome>, PollFailure> {
         if let Err(error) = self
             .router
             .prepare_for_updates(&self.client, &updates)
             .await
         {
-            self.notify_event(EngineEvent::PollFailed {
-                classification: error.classification(),
-                retryable: error.is_retryable(),
-                status: error.status().map(|status| status.as_u16()),
-                error_code: error.error_code(),
-                request_id: error.request_id().map(ToOwned::to_owned),
-                message: error.to_string(),
-            })
-            .await;
+            self.notify_poll_failed(&error).await;
             return Err(PollFailure::source(error));
         }
 
@@ -322,6 +320,18 @@ where
         Ok(outcomes)
     }
 
+    async fn notify_poll_failed(&mut self, error: &Error) {
+        self.notify_event(EngineEvent::PollFailed {
+            classification: error.classification(),
+            retryable: error.is_retryable(),
+            status: error.status().map(|status| status.as_u16()),
+            error_code: error.error_code(),
+            request_id: error.request_id().map(ToOwned::to_owned),
+            message: error.to_string(),
+        })
+        .await;
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         loop {
             let poll_result = self.poll_once_inner().await;
@@ -341,15 +351,39 @@ where
 
         loop {
             tokio::select! {
+                biased;
                 _ = &mut shutdown => return Ok(()),
-                poll_result = self.poll_once_inner() => {
-                    let delay = self.handle_poll_result(poll_result).await?;
-                    if !delay.is_zero() {
-                        tokio::select! {
-                            _ = &mut shutdown => return Ok(()),
-                            _ = sleep(delay) => {}
+                _ = std::future::ready(()) => {}
+            }
+
+            let poll_started_at = match self.begin_poll_cycle().await {
+                Ok(poll_started_at) => poll_started_at,
+                Err(failure) => return Err(failure.error),
+            };
+            let updates = tokio::select! {
+                _ = &mut shutdown => return Ok(()),
+                result = self.poll_source_updates() => {
+                    match result {
+                        Ok(updates) => updates,
+                        Err(failure) => {
+                            let delay = self.handle_poll_result(Err(failure)).await?;
+                            if !delay.is_zero() {
+                                tokio::select! {
+                                    _ = &mut shutdown => return Ok(()),
+                                    _ = sleep(delay) => {}
+                                }
+                            }
+                            continue;
                         }
                     }
+                },
+            };
+            let poll_result = self.process_polled_updates(updates, poll_started_at).await;
+            let delay = self.handle_poll_result(poll_result).await?;
+            if !delay.is_zero() {
+                tokio::select! {
+                    _ = &mut shutdown => return Ok(()),
+                    _ = sleep(delay) => {}
                 }
             }
         }
@@ -912,12 +946,15 @@ mod tests {
         let mut engine = test_engine()?;
 
         let result = engine.set_config(EngineConfig {
-            max_handler_concurrency: 0,
+            idle_delay: Duration::ZERO,
             ..EngineConfig::default()
         });
 
         assert!(matches!(result, Err(Error::Configuration { .. })));
-        assert_eq!(engine.config().max_handler_concurrency, 1);
+        assert_eq!(
+            engine.config().idle_delay,
+            EngineConfig::default().idle_delay
+        );
         Ok(())
     }
 }

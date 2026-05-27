@@ -228,7 +228,7 @@ impl BotOutbox {
         validate_dead_letter_path(config.dead_letter_path.as_deref())?;
         let persisted_queue = load_outbox_queue(&config)?;
         let queue_capacity = config.queue_capacity;
-        let available_permits = queue_capacity.saturating_sub(persisted_queue.len());
+        let available_permits = queue_capacity - persisted_queue.len();
         let permits = Arc::new(Semaphore::new(available_permits));
         let (sender, receiver) = mpsc::channel(queue_capacity);
         runtime.spawn(run_outbox_worker(
@@ -286,8 +286,15 @@ fn validate_idempotency_key(key: Option<&str>) -> Result<()> {
         return Ok(());
     };
 
-    if key.trim().is_empty() {
-        return Err(invalid_request("outbox idempotency key cannot be empty"));
+    if key.is_empty() || key.trim().len() != key.len() {
+        return Err(invalid_request(
+            "outbox idempotency key must not be empty or padded",
+        ));
+    }
+    if key.chars().any(char::is_control) {
+        return Err(invalid_request(
+            "outbox idempotency key must not contain control characters",
+        ));
     }
     if key.len() > MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES {
         return Err(invalid_request(format!(
@@ -355,9 +362,7 @@ async fn run_outbox_worker(
             });
         }
 
-        if let Err(_error) =
-            persist_outbox_queue_async(config.persistence_path.clone(), &queue).await
-        {
+        if let Err(_error) = persist_outbox_queue_async(&config, &queue).await {
             sleep(outbox_persistence_retry_delay(&config)).await;
             continue;
         }
@@ -478,9 +483,7 @@ async fn run_outbox_worker(
                     let delay = retry_after_or_backoff(&error, || {
                         exponential_backoff(config.base_backoff, config.max_backoff, attempt)
                     });
-                    if let Err(_error) =
-                        persist_outbox_queue_async(config.persistence_path.clone(), &queue).await
-                    {
+                    if let Err(_error) = persist_outbox_queue_async(&config, &queue).await {
                         sleep(outbox_persistence_retry_delay(&config)).await;
                         continue;
                     }
@@ -515,7 +518,7 @@ async fn mark_front_terminal(
         front.terminal_error = responder_error;
     }
 
-    persist_outbox_queue_async(config.persistence_path.clone(), queue).await
+    persist_outbox_queue_async(config, queue).await
 }
 
 async fn dead_letter_front_and_commit(
@@ -555,7 +558,7 @@ async fn commit_outbox_front(
         return Ok(None);
     };
 
-    if let Err(error) = persist_outbox_queue_async(config.persistence_path.clone(), queue).await {
+    if let Err(error) = persist_outbox_queue_async(config, queue).await {
         queue.push_front(entry);
         return Err(error);
     }
@@ -653,15 +656,20 @@ fn validate_outbox_snapshot(snapshot: &OutboxSnapshot, config: &OutboxConfig) ->
             snapshot.version
         )));
     }
-    if snapshot.queue.len() > config.queue_capacity {
+
+    validate_outbox_queue(&snapshot.queue, config)
+}
+
+fn validate_outbox_queue(queue: &[PersistedOutboxCommand], config: &OutboxConfig) -> Result<()> {
+    if queue.len() > config.queue_capacity {
         return Err(invalid_request(format!(
             "outbox snapshot queue length {} exceeds queue_capacity {}",
-            snapshot.queue.len(),
+            queue.len(),
             config.queue_capacity
         )));
     }
 
-    for (index, command) in snapshot.queue.iter().enumerate() {
+    for (index, command) in queue.iter().enumerate() {
         validate_persisted_outbox_command(command, config).map_err(|error| {
             invalid_request(format!(
                 "invalid outbox snapshot queue entry {index}: {error}"
@@ -866,8 +874,8 @@ fn load_outbox_queue(config: &OutboxConfig) -> Result<Vec<PersistedOutboxCommand
     Ok(snapshot.queue)
 }
 
-fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -> Result<()> {
-    let Some(path) = path else {
+fn persist_outbox_queue(config: &OutboxConfig, queue: &[PersistedOutboxCommand]) -> Result<()> {
+    let Some(path) = config.persistence_path.as_deref() else {
         return Ok(());
     };
 
@@ -875,6 +883,9 @@ fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -
         version: default_outbox_snapshot_version(),
         queue: queue.to_vec(),
     };
+    validate_outbox_snapshot(&snapshot, config).map_err(|source| {
+        storage_snapshot_error("outbox validate", "outbox snapshot", path, source)
+    })?;
     let encoded = serde_json::to_vec(&snapshot)
         .map_err(|source| storage_encode_error("outbox encode", "outbox snapshot", source))?;
     write_file_atomic(path, encoded.as_slice(), "outbox snapshot")?;
@@ -882,14 +893,15 @@ fn persist_outbox_queue(path: Option<&Path>, queue: &[PersistedOutboxCommand]) -
 }
 
 async fn persist_outbox_queue_async(
-    path: Option<PathBuf>,
+    config: &OutboxConfig,
     queue: &VecDeque<QueuedOutboxCommand>,
 ) -> Result<()> {
+    let config = config.clone();
     let persisted_queue = queue
         .iter()
         .map(|entry| entry.payload.clone())
         .collect::<Vec<_>>();
-    run_blocking_io(move || persist_outbox_queue(path.as_deref(), &persisted_queue)).await
+    run_blocking_io(move || persist_outbox_queue(&config, &persisted_queue)).await
 }
 
 async fn send_once(client: &Client, chat_id: &ChatId, text: &str) -> Result<Message> {
@@ -950,6 +962,45 @@ mod tests {
         let snapshot = load_dead_letter_snapshot(&dead_letter_path)?;
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.entries[0].failed_at_unix_ms, 300);
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn persist_outbox_queue_validates_before_writing_snapshot() -> BoxTestResult {
+        let root = std::env::temp_dir().join(format!(
+            "tele-outbox-persist-validation-{}-{}",
+            std::process::id(),
+            unix_timestamp_millis_now()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let queue_path = root.join("queue.json");
+        let config = OutboxConfig {
+            queue_capacity: 1,
+            persistence_path: Some(queue_path.clone()),
+            ..OutboxConfig::default()
+        };
+        let first = PersistedOutboxCommand {
+            chat_id: ChatId::from(12_i64),
+            text: "first".to_owned(),
+            idempotency_key: None,
+            enqueued_at_unix_ms: unix_timestamp_millis_now(),
+            attempt: 0,
+            last_error: None,
+            terminal_error: None,
+        };
+        let second = PersistedOutboxCommand {
+            text: "second".to_owned(),
+            ..first.clone()
+        };
+
+        let result = persist_outbox_queue(&config, &[first, second]);
+
+        assert!(matches!(result, Err(Error::Storage { .. })));
+        assert!(!queue_path.exists());
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

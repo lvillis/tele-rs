@@ -1,6 +1,6 @@
 use http::{HeaderMap, StatusCode};
 
-use crate::bot::{DispatchOutcome, WebhookRunner, invalid_request};
+use crate::bot::{DispatchOutcome, WebhookRunner, authentication_error, invalid_request};
 use crate::types::update::Update;
 use crate::{Error, Result};
 
@@ -70,16 +70,22 @@ fn parse_webhook_update(
 ) -> std::result::Result<Update, WebhookHttpError> {
     let incoming_secret = telegram_secret_token(headers).map_err(WebhookHttpError::BadRequest)?;
 
+    parse_webhook_update_json(runner, payload, incoming_secret).map_err(WebhookHttpError::from)
+}
+
+pub(crate) fn parse_webhook_update_json(
+    runner: &WebhookRunner,
+    payload: &[u8],
+    incoming_secret: Option<&str>,
+) -> Result<Update> {
     if !runner.verify_secret_token(incoming_secret) {
-        return Err(WebhookHttpError::Unauthorized(invalid_request(
-            INVALID_SECRET_REASON,
-        )));
+        return Err(authentication_error(INVALID_SECRET_REASON));
     }
 
     serde_json::from_slice(payload).map_err(|source| {
-        WebhookHttpError::BadRequest(invalid_request(format!(
+        invalid_request(format!(
             "failed to deserialize webhook update payload: {source}"
-        )))
+        ))
     })
 }
 
@@ -99,6 +105,15 @@ impl WebhookHttpError {
     fn into_error(self) -> Error {
         match self {
             Self::BadRequest(error) | Self::Unauthorized(error) => error,
+        }
+    }
+}
+
+impl From<Error> for WebhookHttpError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Authentication { .. } => Self::Unauthorized(error),
+            error => Self::BadRequest(error),
         }
     }
 }

@@ -1732,8 +1732,13 @@ where
 {
     let mut value = serde_json::to_value(payload).map_err(serde::ser::Error::custom)?;
     let object = value.as_object_mut().ok_or_else(|| {
-        serde::ser::Error::custom("story area type payload must serialize to a JSON object")
+        serde::ser::Error::custom("typed payload must serialize to a JSON object")
     })?;
+    if object.contains_key("type") {
+        return Err(serde::ser::Error::custom(
+            "typed payload must not contain reserved `type` field",
+        ));
+    }
     object.insert("type".to_owned(), Value::String(kind.to_owned()));
     value.serialize(serializer)
 }
@@ -2077,9 +2082,12 @@ impl CompactCallbackEncoder {
     }
 
     pub fn tag(&mut self, tag: impl AsRef<str>) -> Result<&mut Self> {
-        let tag = tag.as_ref().trim();
+        let tag = tag.as_ref();
         if tag.is_empty() {
             return Err(invalid_request("compact callback tag cannot be empty"));
+        }
+        if tag.trim() != tag {
+            return Err(invalid_request("compact callback tag must not be padded"));
         }
         self.segments.push(encode_compact_callback_segment(tag));
         Ok(self)
@@ -2239,9 +2247,9 @@ fn validate_inline_query_result_value(value: &Value) -> Result<()> {
             "inline query result requires a string `type` field",
         ));
     };
-    if kind.trim().is_empty() || kind.chars().any(char::is_control) {
+    if kind.is_empty() || kind.trim() != kind || kind.chars().any(char::is_control) {
         return Err(invalid_request(
-            "inline query result `type` must be a non-empty visible string",
+            "inline query result `type` must be a non-empty unpadded visible string",
         ));
     }
 
@@ -4526,6 +4534,10 @@ mod tests {
             InlineQueryResult::new(serde_json::json!({"type": "article", "id": "x".repeat(65)})),
             Err(Error::InvalidRequest { .. })
         ));
+        assert!(matches!(
+            InlineQueryResult::new(serde_json::json!({"type": " article ", "id": "result-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let decoded = serde_json::from_value::<InlineQueryResult>(serde_json::json!({
             "type": "article",
@@ -5013,6 +5025,21 @@ mod tests {
     }
 
     #[test]
+    fn compact_callback_tag_rejects_silent_padding()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut encoder = CompactCallbackEncoder::new();
+        assert!(matches!(
+            encoder.tag(" action "),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut encoder = CompactCallbackEncoder::new();
+        encoder.tag("action")?.push(" value ")?;
+        assert_eq!(encoder.finish()?, "action:%20value%20");
+        Ok(())
+    }
+
+    #[test]
     fn validates_generic_json_payload_wrappers()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let now = std::time::SystemTime::now()
@@ -5076,6 +5103,14 @@ mod tests {
             "main_frame_timestamp": 0.5
         }))?;
         assert_eq!(animated_profile_photo.kind(), Some("animated"));
+        let mut profile_photo_with_reserved_extra = InputProfilePhotoStatic::new("file-id");
+        profile_photo_with_reserved_extra
+            .extra
+            .insert("type".to_owned(), serde_json::json!("animated"));
+        assert!(matches!(
+            serde_json::to_value(InputProfilePhoto::from(profile_photo_with_reserved_extra)),
+            Err(error) if error.to_string().contains("reserved `type`")
+        ));
 
         let reaction = ReactionType::emoji("👍");
         assert_eq!(reaction.kind(), Some("emoji"));

@@ -117,7 +117,7 @@ pub fn verify_web_app_init_data(
         });
     }
     if !expected_hash.ct_equal(actual_hash.as_slice()) {
-        return Err(Error::InvalidRequest {
+        return Err(Error::Authentication {
             reason: "invalid initData signature".to_owned(),
         });
     }
@@ -417,7 +417,7 @@ mod tests {
             Ok(_) => return Err("verification should fail".into()),
             Err(error) => error,
         };
-        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(matches!(error, Error::Authentication { .. }));
         assert!(error.to_string().contains("invalid initData signature"));
         Ok(())
     }

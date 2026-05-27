@@ -8,8 +8,15 @@ const REDACTED_TOKEN: &str = "<redacted-token>";
 const REDACTED_CREDENTIAL: &str = "redacted";
 
 pub(crate) fn normalize_base_url(input: &str) -> Result<Url, Error> {
+    if input.trim().len() != input.len() || input.is_empty() {
+        return Err(invalid_base_url(
+            input,
+            "base url must not be empty or padded",
+        ));
+    }
+
     let parsed = Url::parse(input).map_err(|source| Error::InvalidBaseUrl {
-        input: input.to_owned(),
+        input: redact_url_credentials(input),
         source,
     })?;
 
@@ -19,16 +26,57 @@ pub(crate) fn normalize_base_url(input: &str) -> Result<Url, Error> {
             scheme: scheme.to_owned(),
         });
     }
+    if parsed.host_str().is_none() {
+        return Err(invalid_base_url(input, "base url must include a host"));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(invalid_base_url(
+            input,
+            "base url must not include credentials",
+        ));
+    }
+    if parsed.query().is_some() {
+        return Err(invalid_base_url(
+            input,
+            "base url must not include query parameters",
+        ));
+    }
+    if parsed.fragment().is_some() {
+        return Err(invalid_base_url(
+            input,
+            "base url must not include a fragment",
+        ));
+    }
+
+    let uri = parsed
+        .as_str()
+        .parse::<http::Uri>()
+        .map_err(|_| invalid_base_url(input, "base url is not a valid HTTP URI"))?;
+    if uri.scheme_str().is_none() || uri.host().is_none() {
+        return Err(invalid_base_url(input, "base url is not absolute"));
+    }
 
     Ok(parsed)
 }
 
+fn invalid_base_url(input: &str, reason: &str) -> Error {
+    Error::Configuration {
+        reason: format!(
+            "invalid base url `{}`: {reason}",
+            redact_url_credentials(input)
+        ),
+    }
+}
+
 pub(crate) fn validate_method_name(method: &str) -> Result<(), Error> {
-    if method.is_empty()
-        || !method
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
-    {
+    let mut chars = method.chars();
+    let Some(first) = chars.next() else {
+        return Err(Error::InvalidMethodName {
+            method: method.to_owned(),
+        });
+    };
+
+    if !first.is_ascii_lowercase() || !chars.all(|character| character.is_ascii_alphanumeric()) {
         return Err(Error::InvalidMethodName {
             method: method.to_owned(),
         });
@@ -176,7 +224,10 @@ pub(crate) fn duration_millis_u64(duration: Duration) -> u64 {
 mod tests {
     use std::time::Duration;
 
-    use super::{body_snippet, redact_token, redact_url_credentials, retry_after_or_backoff};
+    use super::{
+        body_snippet, normalize_base_url, redact_token, redact_url_credentials,
+        retry_after_or_backoff, validate_method_name,
+    };
     use crate::Error;
 
     #[test]
@@ -192,6 +243,48 @@ mod tests {
 
         let redacted = redact_url_credentials("redis://:secret@example.com/0");
         assert_eq!(redacted, "redis://redacted:redacted@example.com/0");
+    }
+
+    #[test]
+    fn validates_telegram_method_names() {
+        for method in ["getMe", "sendMessage", "logOut", "close"] {
+            assert!(validate_method_name(method).is_ok());
+        }
+
+        for method in ["", "_getMe", "123", "get_me", "GetMe", "get/me"] {
+            assert!(matches!(
+                validate_method_name(method),
+                Err(Error::InvalidMethodName { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn validates_base_url_shape_before_transport_build() -> Result<(), String> {
+        assert!(normalize_base_url("https://api.telegram.org/bot-api").is_ok());
+        assert!(normalize_base_url("http://127.0.0.1:8081").is_ok());
+
+        for input in [
+            "",
+            " https://api.telegram.org",
+            "https://api.telegram.org ",
+            "https://user:secret@api.telegram.org",
+            "https://api.telegram.org?token=secret",
+            "https://api.telegram.org#fragment",
+            "unix:///var/run/socket",
+        ] {
+            let error = match normalize_base_url(input) {
+                Ok(_) => return Err(format!("expected invalid base url `{input}`")),
+                Err(error) => error,
+            };
+            assert_eq!(error.classification(), crate::ErrorClass::Configuration);
+            assert!(
+                !error.to_string().contains("user:secret"),
+                "base url errors must redact credentials"
+            );
+        }
+
+        Ok(())
     }
 
     #[test]

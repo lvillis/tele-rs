@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use reqwest::blocking::Client;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 
 use crate::spec::{BotApiSpec, MethodSpec, ParamSpec};
 
@@ -59,6 +59,26 @@ fn build_synced_spec(
         .iter()
         .map(|method| method.method.clone())
         .collect::<Vec<_>>();
+    let parsed_methods = all_methods
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let missing_existing_methods = existing_spec
+        .all_methods
+        .iter()
+        .filter(|method| !parsed_methods.contains(method.as_str()))
+        .collect::<Vec<_>>();
+    if !missing_existing_methods.is_empty() {
+        return Err(format!(
+            "refusing to sync Bot API spec because existing methods disappeared from parsed docs: {}",
+            missing_existing_methods
+                .iter()
+                .map(|method| method.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into());
+    }
     if all_methods.len() < existing_spec.all_methods.len() {
         return Err(format!(
             "refusing to sync Bot API spec because parsed method count shrank from {} to {}",
@@ -113,9 +133,8 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
             .map_err(|error| format!("failed to parse selector `{value}`: {error:?}").into())
     }
 
-    let heading_re = Regex::new(
-        r##"<h4><a class="anchor" name="[^"]+" href="#[^"]+"><i class="anchor-icon"></i></a>([^<]+)</h4>"##,
-    )?;
+    let document = Html::parse_document(html);
+    let heading_selector = parse_selector("h4")?;
     let paragraph_selector = parse_selector("p")?;
     let table_selector = parse_selector("table")?;
     let header_selector = parse_selector("th")?;
@@ -123,33 +142,31 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
     let cell_selector = parse_selector("td")?;
 
     let mut methods = Vec::new();
-    let headings = heading_re
-        .captures_iter(html)
-        .filter_map(|captures| {
-            let whole = captures.get(0)?;
-            let heading = normalize_ws(captures.get(1)?.as_str());
-            Some((whole.start(), whole.end(), heading))
-        })
-        .collect::<Vec<_>>();
 
-    for (index, (_, section_start, heading)) in headings.iter().enumerate() {
-        if !looks_like_method_name(heading) {
+    for heading_element in document.select(&heading_selector) {
+        let heading = normalize_ws(&heading_element.text().collect::<String>());
+        if !looks_like_method_name(&heading) {
             continue;
         }
 
-        let section_end = headings
-            .get(index + 1)
-            .map(|(next_start, _, _)| *next_start)
-            .unwrap_or(html.len());
-        let section_html = &html[*section_start..section_end];
-        let fragment = Html::parse_fragment(section_html);
-        let Some(first_paragraph) = fragment.select(&paragraph_selector).next() else {
+        let section = collect_method_section(heading_element);
+        let Some(first_paragraph) = section.iter().find_map(|element| {
+            if element.value().name() == "p" {
+                Some(*element)
+            } else {
+                element.select(&paragraph_selector).next()
+            }
+        }) else {
             continue;
         };
-        let summary = text_content(first_paragraph.html().as_str());
+        let summary = normalize_ws(&first_paragraph.text().collect::<String>());
 
-        let params = fragment
-            .select(&table_selector)
+        let params = section
+            .iter()
+            .flat_map(|element| {
+                let current = (element.value().name() == "table").then_some(*element);
+                current.into_iter().chain(element.select(&table_selector))
+            })
             .find(|table| {
                 let headers = table
                     .select(&header_selector)
@@ -184,7 +201,7 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
             .unwrap_or_default();
 
         methods.push(MethodSpec {
-            fn_name: to_snake_case(heading),
+            fn_name: to_snake_case(&heading),
             method: heading.clone(),
             return_desc: extract_return_desc(&summary),
             params,
@@ -198,15 +215,28 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
     Ok(methods)
 }
 
+fn collect_method_section<'a>(heading: ElementRef<'a>) -> Vec<ElementRef<'a>> {
+    let mut section = Vec::new();
+    let mut sibling = heading.next_sibling();
+
+    while let Some(node) = sibling {
+        sibling = node.next_sibling();
+        let Some(element) = ElementRef::wrap(node) else {
+            continue;
+        };
+        if element.value().name() == "h4" {
+            break;
+        }
+        section.push(element);
+    }
+
+    section
+}
+
 fn looks_like_method_name(value: &str) -> bool {
     let mut chars = value.chars();
     matches!(chars.next(), Some(first) if first.is_ascii_lowercase())
         && value.chars().all(|ch| ch.is_ascii_alphanumeric())
-}
-
-fn text_content(html_fragment: &str) -> String {
-    let fragment = Html::parse_fragment(html_fragment);
-    normalize_ws(&fragment.root_element().text().collect::<String>())
 }
 
 fn normalize_ws(value: &str) -> String {
@@ -225,32 +255,69 @@ fn extract_return_desc(summary: &str) -> String {
 }
 
 fn rust_field_name(name: &str) -> String {
-    if matches!(
-        name,
-        "type"
-            | "match"
-            | "loop"
-            | "move"
-            | "ref"
-            | "self"
-            | "Self"
-            | "super"
-            | "crate"
-            | "where"
-            | "async"
-            | "await"
-            | "dyn"
-            | "use"
-            | "mod"
-            | "trait"
-            | "impl"
-            | "fn"
-            | "struct"
-            | "enum"
-    ) {
-        return format!("r#{name}");
+    if is_rust_keyword(name) {
+        return format!("{name}_");
     }
     name.to_owned()
+}
+
+fn is_rust_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "Self"
+            | "abstract"
+            | "as"
+            | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "final"
+            | "fn"
+            | "for"
+            | "gen"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "union"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
 }
 
 fn infer_type_rust(name: &str, type_raw: &str) -> String {
@@ -357,6 +424,49 @@ mod tests {
     }
 
     #[test]
+    fn extracts_methods_from_flexible_heading_markup() {
+        let html = r##"
+            <h4 id="getme">
+              <a href="#getme" name="getme" class="anchor">
+                <i class="anchor-icon"></i>
+              </a>
+              getMe
+            </h4>
+            <p>Use this method to get basic information about the bot. Returns a User object.</p>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Type</th>
+                  <th>Required</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>user_id</td>
+                  <td>Integer</td>
+                  <td>Yes</td>
+                  <td>User identifier</td>
+                </tr>
+              </tbody>
+            </table>
+        "##;
+
+        let methods = parse_official_methods(html);
+        assert!(methods.is_ok());
+        let methods = match methods {
+            Ok(methods) => methods,
+            Err(_) => return,
+        };
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].method, "getMe");
+        assert_eq!(methods[0].params.len(), 1);
+        assert_eq!(methods[0].params[0].type_rust, "UserId");
+    }
+
+    #[test]
     fn infers_common_parameter_types() {
         assert_eq!(infer_type_rust("chat_id", "Integer or String"), "ChatId");
         assert_eq!(infer_type_rust("user_id", "Integer"), "UserId");
@@ -366,6 +476,15 @@ mod tests {
             "Vec<MessageId>"
         );
         assert_eq!(infer_type_rust("payload", "InlineKeyboardMarkup"), "Value");
+    }
+
+    #[test]
+    fn rust_field_names_avoid_edition_keywords() {
+        assert_eq!(rust_field_name("type"), "type_");
+        assert_eq!(rust_field_name("self"), "self_");
+        assert_eq!(rust_field_name("crate"), "crate_");
+        assert_eq!(rust_field_name("gen"), "gen_");
+        assert_eq!(rust_field_name("chat_id"), "chat_id");
     }
 
     #[test]
@@ -442,5 +561,35 @@ mod tests {
         assert!(
             build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec).is_err()
         );
+    }
+
+    #[test]
+    fn sync_rejects_missing_existing_methods_even_when_count_does_not_shrink() {
+        let existing_spec = BotApiSpec {
+            version: "Bot API 9.4".to_owned(),
+            generated_from: "https://core.telegram.org/bots/api".to_owned(),
+            all_methods: vec!["getMe".to_owned(), "sendMessage".to_owned()],
+            advanced_methods: vec![MethodSpec {
+                fn_name: "send_message".to_owned(),
+                method: "sendMessage".to_owned(),
+                return_desc: "a Message object".to_owned(),
+                params: vec![],
+            }],
+        };
+        let html = r##"
+            <p>Bot API 9.5</p>
+            <h4><a class="anchor" name="getme" href="#getme"><i class="anchor-icon"></i></a>getMe</h4>
+            <p>Use this method to get basic information about the bot. Returns a User object.</p>
+            <h4><a class="anchor" name="sendpaidmedia" href="#sendpaidmedia"><i class="anchor-icon"></i></a>sendPaidMedia</h4>
+            <p>Use this method to send paid media. On success, returns a Message object.</p>
+        "##;
+
+        let result = build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec);
+        assert!(result.is_err());
+        let error = match result {
+            Ok(_) => return,
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("sendMessage"));
     }
 }
