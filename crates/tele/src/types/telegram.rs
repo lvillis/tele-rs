@@ -2853,12 +2853,223 @@ json_payload_wrapper!(
     validate_accepted_gift_types_payload
 );
 
-json_payload_wrapper!(
-    /// Generic profile photo input payload.
-    InputProfilePhoto,
-    "input_profile_photo",
-    validate_typed_object_payload
-);
+/// Static profile photo input payload.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputProfilePhotoStatic {
+    pub photo: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputProfilePhotoStatic {
+    pub fn new(photo: impl Into<String>) -> Self {
+        Self {
+            photo: photo.into(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_profile_photo.photo", &self.photo)
+    }
+}
+
+impl Serialize for InputProfilePhotoStatic {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["photo"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        object.serialize_entry("photo", &self.photo)?;
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Animated profile photo input payload.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[non_exhaustive]
+pub struct InputProfilePhotoAnimated {
+    pub animation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_frame_timestamp: Option<f64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl InputProfilePhotoAnimated {
+    pub fn new(animation: impl Into<String>) -> Self {
+        Self {
+            animation: animation.into(),
+            main_frame_timestamp: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_main_frame_timestamp(mut self, main_frame_timestamp: f64) -> Self {
+        self.main_frame_timestamp = Some(main_frame_timestamp);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_required_visible_text("input_profile_photo.animation", &self.animation)?;
+        if let Some(main_frame_timestamp) = self.main_frame_timestamp {
+            validate_float_range(
+                "input_profile_photo.main_frame_timestamp",
+                main_frame_timestamp,
+                0.0,
+                f64::MAX,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for InputProfilePhotoAnimated {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["animation", "main_frame_timestamp"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.main_frame_timestamp.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("animation", &self.animation)?;
+        if let Some(main_frame_timestamp) = self.main_frame_timestamp {
+            object.serialize_entry("main_frame_timestamp", &main_frame_timestamp)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Profile photo input payload.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum InputProfilePhoto {
+    Static(InputProfilePhotoStatic),
+    Animated(InputProfilePhotoAnimated),
+    Unknown(Value),
+}
+
+impl InputProfilePhoto {
+    pub fn static_photo(photo: impl Into<String>) -> Self {
+        Self::Static(InputProfilePhotoStatic::new(photo))
+    }
+
+    pub fn animated(animation: impl Into<String>) -> Self {
+        Self::Animated(InputProfilePhotoAnimated::new(animation))
+    }
+
+    pub fn new(value: Value) -> Result<Self> {
+        Self::try_from_value(value)
+    }
+
+    pub fn try_from_value(value: Value) -> Result<Self> {
+        let photo = serde_json::from_value::<Self>(value).map_err(|source| {
+            invalid_request(format!("invalid input_profile_photo payload: {source}"))
+        })?;
+        photo.validate()?;
+        Ok(photo)
+    }
+
+    pub fn try_from_typed<T>(value: T) -> Result<Self>
+    where
+        T: Serialize,
+    {
+        let value =
+            serde_json::to_value(value).map_err(|source| Error::SerializeRequest { source })?;
+        Self::try_from_value(value)
+    }
+
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::Static(_) => Some("static"),
+            Self::Animated(_) => Some("animated"),
+            Self::Unknown(value) => tagged_kind(value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Static(value) => value.validate(),
+            Self::Animated(value) => value.validate(),
+            Self::Unknown(value) => validate_typed_object_payload("input_profile_photo", value),
+        }
+    }
+}
+
+impl From<InputProfilePhotoStatic> for InputProfilePhoto {
+    fn from(value: InputProfilePhotoStatic) -> Self {
+        Self::Static(value)
+    }
+}
+
+impl From<InputProfilePhotoAnimated> for InputProfilePhoto {
+    fn from(value: InputProfilePhotoAnimated) -> Self {
+        Self::Animated(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for InputProfilePhoto {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<Value> for InputProfilePhoto {
+    type Error = Error;
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match tagged_kind(&value) {
+            Some("static") => deserialize_input_profile_photo_known(value, Self::Static),
+            Some("animated") => deserialize_input_profile_photo_known(value, Self::Animated),
+            Some(_) => {
+                validate_typed_object_payload("input_profile_photo", &value)?;
+                Ok(Self::Unknown(value))
+            }
+            None => Err(invalid_request(
+                "input_profile_photo requires a string `type` field",
+            )),
+        }
+    }
+}
+
+fn deserialize_input_profile_photo_known<T>(
+    value: Value,
+    constructor: impl FnOnce(T) -> InputProfilePhoto,
+) -> Result<InputProfilePhoto>
+where
+    T: DeserializeOwned,
+{
+    let payload = serde_json::from_value::<T>(strip_type(value)).map_err(|source| {
+        invalid_request(format!("invalid input_profile_photo payload: {source}"))
+    })?;
+    let photo = constructor(payload);
+    photo.validate()?;
+    Ok(photo)
+}
+
+impl Serialize for InputProfilePhoto {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Static(value) => serialize_typed_payload(serializer, "static", value),
+            Self::Animated(value) => serialize_typed_payload(serializer, "animated", value),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
 
 /// Prepared inline message that can be sent by a Mini App user.
 #[derive(Clone, Debug, Deserialize)]
@@ -4854,11 +5065,17 @@ mod tests {
         let paid_live_photo = InputPaidMedia::live_photo("video-file-id", "photo-file-id");
         paid_live_photo.validate()?;
 
-        let profile_photo = InputProfilePhoto::new(serde_json::json!({
-            "type": "static",
-            "photo": "file-id"
+        let profile_photo = InputProfilePhoto::static_photo("file-id");
+        assert_eq!(profile_photo.kind(), Some("static"));
+        let profile_photo_json = serde_json::to_value(&profile_photo)?;
+        assert_eq!(profile_photo_json["type"], "static");
+        assert_eq!(profile_photo_json["photo"], "file-id");
+        let animated_profile_photo = InputProfilePhoto::try_from_value(serde_json::json!({
+            "type": "animated",
+            "animation": "animation-file-id",
+            "main_frame_timestamp": 0.5
         }))?;
-        assert_eq!(profile_photo.as_value()["type"], "static");
+        assert_eq!(animated_profile_photo.kind(), Some("animated"));
 
         let reaction = ReactionType::emoji("👍");
         assert_eq!(reaction.kind(), Some("emoji"));
@@ -4980,6 +5197,18 @@ mod tests {
         ));
         assert!(matches!(
             InputProfilePhoto::new(serde_json::json!({"photo": "file-id"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputProfilePhoto::try_from_value(serde_json::json!({"type": "static"})),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputProfilePhoto::try_from_value(serde_json::json!({
+                "type": "animated",
+                "animation": "animation-file-id",
+                "main_frame_timestamp": -0.1
+            })),
             Err(Error::InvalidRequest { .. })
         ));
         assert!(matches!(

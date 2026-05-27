@@ -42,7 +42,7 @@ fn validate_chat_or_inline_message_target<T>(
 
     Err(Error::InvalidRequest {
         reason: format!(
-            "{method} requires either `chat_id` with `message_id` or `inline_message_id"
+            "{method} requires either `chat_id` with `message_id` or `inline_message_id`"
         ),
     })
 }

@@ -297,16 +297,9 @@ impl LongPollingSource {
         }
     }
 
-    pub fn with_config(mut self, config: PollingConfig) -> Self {
-        self.set_config(config);
-        self
-    }
-
-    /// Sets polling config and validates timeout budget immediately.
-    pub fn with_config_checked(mut self, config: PollingConfig) -> Result<Self> {
-        config.validate()?;
-        self.set_config(config);
-        let _ = self.validate_timeout_budget()?;
+    /// Applies polling config and validates timeout budget immediately.
+    pub fn with_config(mut self, config: PollingConfig) -> Result<Self> {
+        self.set_config(config)?;
         Ok(self)
     }
 
@@ -318,8 +311,13 @@ impl LongPollingSource {
         &self.config
     }
 
-    /// Replaces long-polling configuration and invalidates derived runtime state.
-    pub fn set_config(&mut self, config: PollingConfig) -> &mut Self {
+    /// Replaces long-polling configuration after validating request options and timeout budget.
+    pub fn set_config(&mut self, config: PollingConfig) -> Result<&mut Self> {
+        let _ = self.resolved_poll_timeout_seconds(&config)?;
+        Ok(self.apply_config(config))
+    }
+
+    fn apply_config(&mut self, config: PollingConfig) -> &mut Self {
         let dedupe_window_size_changed =
             self.config.dedupe_window_size != config.dedupe_window_size;
         if self.config.persist_offset_path != config.persist_offset_path {
@@ -338,9 +336,10 @@ impl LongPollingSource {
     }
 
     /// Sets the `getUpdates` long-poll timeout in seconds.
-    pub fn set_poll_timeout_seconds(&mut self, poll_timeout_seconds: u16) -> &mut Self {
-        self.config.poll_timeout_seconds = poll_timeout_seconds;
-        self
+    pub fn set_poll_timeout_seconds(&mut self, poll_timeout_seconds: u16) -> Result<&mut Self> {
+        let mut config = self.config.clone();
+        config.poll_timeout_seconds = poll_timeout_seconds;
+        self.set_config(config)
     }
 
     /// Sets the in-memory duplicate-update window and trims cached IDs immediately.
@@ -538,7 +537,11 @@ impl LongPollingSource {
     }
 
     fn effective_poll_timeout_seconds(&self) -> Result<u16> {
-        self.config.resolve_poll_timeout_seconds(
+        self.resolved_poll_timeout_seconds(&self.config)
+    }
+
+    fn resolved_poll_timeout_seconds(&self, config: &PollingConfig) -> Result<u16> {
+        config.resolve_poll_timeout_seconds(
             self.client.request_timeout(),
             self.client.total_timeout(),
         )
@@ -687,7 +690,7 @@ impl UpdateSink {
         self.sender
             .send(update)
             .await
-            .map_err(|_| invalid_request("update sink channel is closed"))?;
+            .map_err(|_| runtime_error("update sink channel is closed"))?;
         Ok(())
     }
 }
@@ -721,7 +724,7 @@ impl UpdateSource for ChannelUpdateSource {
     fn poll<'a>(&'a mut self) -> SourceFuture<'a> {
         Box::pin(async move {
             let Some(first) = self.receiver.recv().await else {
-                return Err(invalid_request("update source channel is closed"));
+                return Err(runtime_error("update source channel is closed"));
             };
 
             let mut updates = Vec::with_capacity(self.max_batch);
@@ -861,7 +864,7 @@ mod tests {
             disable_webhook_on_start: false,
             ..PollingConfig::default()
         };
-        source.set_config(config);
+        source.set_config(config)?;
 
         assert!(!source.prepared);
         Ok(())
@@ -886,7 +889,7 @@ mod tests {
         source.set_config(PollingConfig {
             dedupe_window_size: 0,
             ..PollingConfig::default()
-        });
+        })?;
 
         assert!(!source.is_duplicate_update(2));
         assert!(source.seen_update_ids.is_empty());

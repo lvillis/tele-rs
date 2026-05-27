@@ -202,7 +202,13 @@ fn retry_after_seconds_from_headers_at(headers: &HeaderMap, now: SystemTime) -> 
 
     let deadline = httpdate::parse_http_date(value).ok()?;
     let delay = deadline.duration_since(now).unwrap_or(Duration::ZERO);
-    Some(delay.as_secs() + u64::from(delay.subsec_nanos() > 0))
+    Some(ceil_duration_seconds(delay))
+}
+
+fn ceil_duration_seconds(delay: Duration) -> u64 {
+    delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() > 0))
 }
 
 pub(crate) fn local_transport_request_id(method: &str) -> String {
@@ -985,8 +991,9 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::{
-        build_multipart_payload, build_multipart_payload_many, multipart_boundary_conflicts,
-        parse_telegram_response, retry_after_seconds_from_headers_at, serialize_multipart_fields,
+        build_multipart_payload, build_multipart_payload_many, ceil_duration_seconds,
+        multipart_boundary_conflicts, parse_telegram_response, retry_after_seconds_from_headers_at,
+        serialize_multipart_fields,
     };
     use crate::Error;
     use crate::types::upload::UploadFile;
@@ -1228,6 +1235,13 @@ mod tests {
         headers.insert(RETRY_AFTER, header_value);
 
         assert_eq!(retry_after_seconds_from_headers_at(&headers, now), Some(0));
+    }
+
+    #[test]
+    fn retry_after_duration_ceiling_saturates_at_u64_max() {
+        assert_eq!(ceil_duration_seconds(Duration::from_secs(7)), 7);
+        assert_eq!(ceil_duration_seconds(Duration::new(7, 1)), 8);
+        assert_eq!(ceil_duration_seconds(Duration::new(u64::MAX, 1)), u64::MAX);
     }
 
     #[test]

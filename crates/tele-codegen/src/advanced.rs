@@ -1845,7 +1845,7 @@ fn generate_domain_module(methods: &[&MethodSpec]) -> String {
         let _ = writeln!(&mut out, "    Err(Error::InvalidRequest {{");
         let _ = writeln!(
             &mut out,
-            "        reason: format!(\"{{method}} requires either `chat_id` with `message_id` or `inline_message_id\"),"
+            "        reason: format!(\"{{method}} requires either `chat_id` with `message_id` or `inline_message_id`\"),"
         );
         let _ = writeln!(&mut out, "    }})");
         let _ = writeln!(&mut out, "}}");

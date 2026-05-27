@@ -38,12 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         poll_timeout_seconds: 20,
         ..PollingConfig::default()
-    });
+    })?;
 
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         max_handler_concurrency: 4,
         ..EngineConfig::default()
-    });
+    })?;
 
     engine.run().await?;
     Ok(())

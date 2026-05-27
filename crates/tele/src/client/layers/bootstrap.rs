@@ -381,7 +381,7 @@ where
                         policy.base_backoff,
                         policy.max_backoff,
                         attempt,
-                        policy.jitter_ratio,
+                        f64::from(policy.jitter_ratio),
                     )
                 });
                 tokio::time::sleep(delay).await;
@@ -430,7 +430,7 @@ where
                         policy.base_backoff,
                         policy.max_backoff,
                         attempt,
-                        policy.jitter_ratio,
+                        f64::from(policy.jitter_ratio),
                     )
                 });
                 std::thread::sleep(delay);

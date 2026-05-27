@@ -7,11 +7,11 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use serde_json::json;
-use tele::bot::axum::{
-    TELEGRAM_SECRET_HEADER, dispatch_webhook, dispatch_webhook_status, telegram_secret_token,
-    telegram_secret_token_checked, webhook_handler,
+use tele::bot::axum::webhook_handler;
+use tele::bot::{
+    BotContext, DispatchOutcome, HandlerError, Router, TELEGRAM_SECRET_HEADER, WebhookRunner,
+    dispatch_webhook, dispatch_webhook_status, telegram_secret_token,
 };
-use tele::bot::{BotContext, DispatchOutcome, HandlerError, Router, WebhookRunner};
 use tele::types::update::Update;
 use tele::{Client, Error};
 
@@ -109,13 +109,12 @@ async fn dispatch_webhook_status_maps_secret_and_json_errors() -> Result<(), Dyn
 }
 
 #[test]
-fn telegram_secret_token_checked_rejects_invalid_header_shapes() -> Result<(), DynError> {
+fn telegram_secret_token_rejects_invalid_header_shapes() -> Result<(), DynError> {
     let mut duplicate_headers = HeaderMap::new();
     duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
     duplicate_headers.append(TELEGRAM_SECRET_HEADER, HeaderValue::from_static("secret"));
 
-    assert!(telegram_secret_token_checked(&duplicate_headers).is_err());
-    assert_eq!(telegram_secret_token(&duplicate_headers), None);
+    assert!(telegram_secret_token(&duplicate_headers).is_err());
 
     let mut malformed_headers = HeaderMap::new();
     malformed_headers.insert(
@@ -123,8 +122,7 @@ fn telegram_secret_token_checked_rejects_invalid_header_shapes() -> Result<(), D
         HeaderValue::from_bytes(&[0xff]).map_err(|error| format!("invalid header: {error}"))?,
     );
 
-    assert!(telegram_secret_token_checked(&malformed_headers).is_err());
-    assert_eq!(telegram_secret_token(&malformed_headers), None);
+    assert!(telegram_secret_token(&malformed_headers).is_err());
 
     Ok(())
 }
@@ -163,7 +161,7 @@ async fn webhook_handler_works_with_axum_state() -> Result<(), DynError> {
     let payload = update_payload("hello")?;
     let headers = HeaderMap::new();
 
-    assert_eq!(telegram_secret_token(&headers), None);
+    assert_eq!(telegram_secret_token(&headers)?, None);
 
     let status = webhook_handler(State(runner), headers, Bytes::from(payload)).await;
     assert_eq!(status, StatusCode::OK);

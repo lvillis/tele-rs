@@ -129,16 +129,7 @@ fn user_message_for_error(error: &Error, fallback: &str) -> String {
     match error.classification() {
         ErrorClass::Authentication => "bot authentication failed, please contact admin".to_owned(),
         ErrorClass::RateLimited => "too many requests, please retry shortly".to_owned(),
-        _ => normalized_fallback_message(fallback),
-    }
-}
-
-fn normalized_fallback_message(fallback: &str) -> String {
-    let fallback = fallback.trim();
-    if fallback.is_empty() {
-        DEFAULT_HANDLER_ERROR_MESSAGE.to_owned()
-    } else {
-        fallback.to_owned()
+        _ => normalize_user_message(fallback, DEFAULT_HANDLER_ERROR_MESSAGE),
     }
 }
 
@@ -153,8 +144,11 @@ async fn resolve_error_with_policy(
         ErrorPolicy::Ignore => Ok(()),
         ErrorPolicy::ReplyUser { fallback_message } => {
             let message = user_message_for_error(&error, &fallback_message);
-            let _ = context.app().reply_text(&update, message).await?;
-            Ok(())
+            if context.reply_text_if_addressable(&update, message).await? {
+                Ok(())
+            } else {
+                Err(error)
+            }
         }
     }
 }
@@ -338,7 +332,7 @@ impl RouteThrottleState {
             prune_throttle_history(history, now, window);
             !history.is_empty()
         });
-        self.next_gc_at = Some(now + ROUTE_THROTTLE_GC_INTERVAL.min(window));
+        self.next_gc_at = now.checked_add(ROUTE_THROTTLE_GC_INTERVAL.min(window));
     }
 }
 
@@ -555,7 +549,7 @@ fn run_extracted_guards<E>(
 }
 
 fn missing_prepared_route_input() -> HandlerError {
-    HandlerError::internal(invalid_request(
+    HandlerError::internal(runtime_error(
         "prepared route input is missing or already consumed",
     ))
 }
@@ -1129,12 +1123,16 @@ impl Router {
     }
 
     /// Dispatches a single update to the first matching route.
+    #[allow(
+        clippy::manual_async_fn,
+        reason = "the explicit return type preserves the public Send future contract without boxing"
+    )]
     pub fn dispatch(
         &self,
         context: BotContext,
         update: Update,
-    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        Box::pin(async move {
+    ) -> impl Future<Output = Result<bool>> + Send + '_ {
+        async move {
             let dispatch_state = self.current_dispatch_state();
 
             let handler = self
@@ -1158,19 +1156,23 @@ impl Router {
             let wrapped = self.apply_middlewares(handler);
             wrapped(context, update).await?;
             Ok(true)
-        })
+        }
     }
 
     /// Prepares runtime routing state for the given update and immediately dispatches it.
+    #[allow(
+        clippy::manual_async_fn,
+        reason = "the explicit return type preserves the public Send future contract without boxing"
+    )]
     pub fn dispatch_prepared(
         &self,
         context: BotContext,
         update: Update,
-    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        Box::pin(async move {
+    ) -> impl Future<Output = Result<bool>> + Send + '_ {
+        async move {
             self.prepare_for_update(context.client(), &update).await?;
             self.dispatch(context, update).await
-        })
+        }
     }
 
     fn apply_middlewares(&self, handler: HandlerFn) -> HandlerFn {
@@ -1193,6 +1195,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::validation::MAX_MESSAGE_TEXT_CHARS;
 
     fn throttle_entry_count(store: &RouteThrottleStore) -> usize {
         store
@@ -1230,5 +1233,27 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(!state.entries.contains_key("actor:1"));
         assert!(state.entries.contains_key("actor:2"));
+    }
+
+    #[test]
+    fn reply_user_policy_fallback_message_is_sendable_text() {
+        let error = Error::Configuration {
+            reason: "handler failed".to_owned(),
+        };
+
+        assert_eq!(
+            user_message_for_error(&error, " invalid\u{0007}input "),
+            "invalid input"
+        );
+        assert_eq!(
+            user_message_for_error(&error, " \n\t "),
+            DEFAULT_HANDLER_ERROR_MESSAGE
+        );
+        assert_eq!(
+            user_message_for_error(&error, &"a".repeat(MAX_MESSAGE_TEXT_CHARS + 1))
+                .chars()
+                .count(),
+            MAX_MESSAGE_TEXT_CHARS
+        );
     }
 }

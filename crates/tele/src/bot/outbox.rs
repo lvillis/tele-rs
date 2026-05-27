@@ -40,44 +40,41 @@ impl Default for OutboxConfig {
 impl OutboxConfig {
     pub fn validate(&self) -> Result<()> {
         if self.queue_capacity == 0 {
-            return Err(invalid_request(
+            return Err(outbox_config_error(
                 "outbox queue_capacity must be greater than 0",
             ));
         }
         if self.max_attempts == 0 {
-            return Err(invalid_request(
+            return Err(outbox_config_error(
                 "outbox max_attempts must be greater than 0",
             ));
         }
         if self.base_backoff.is_zero() {
-            return Err(invalid_request(
+            return Err(outbox_config_error(
                 "outbox base_backoff must be greater than 0",
             ));
         }
         if self.max_backoff.is_zero() {
-            return Err(invalid_request("outbox max_backoff must be greater than 0"));
+            return Err(outbox_config_error(
+                "outbox max_backoff must be greater than 0",
+            ));
         }
         if self.base_backoff > self.max_backoff {
-            return Err(invalid_request(
+            return Err(outbox_config_error(
                 "outbox base_backoff must not exceed max_backoff",
             ));
         }
         if self.dedupe_ttl.is_zero() {
-            return Err(invalid_request("outbox dedupe_ttl must be greater than 0"));
+            return Err(outbox_config_error(
+                "outbox dedupe_ttl must be greater than 0",
+            ));
         }
         if self.max_dead_letters == 0 {
-            return Err(invalid_request(
+            return Err(outbox_config_error(
                 "outbox max_dead_letters must be greater than 0",
             ));
         }
-        if self
-            .max_message_age
-            .is_some_and(|max_message_age| max_message_age.is_zero())
-        {
-            return Err(invalid_request(
-                "outbox max_message_age must be greater than 0 when set",
-            ));
-        }
+        validate_outbox_max_message_age(self.max_message_age)?;
 
         Ok(())
     }
@@ -97,10 +94,32 @@ impl OutboxConfig {
         self
     }
 
-    pub fn with_max_message_age(mut self, max_age: Option<Duration>) -> Self {
-        self.max_message_age = max_age;
-        self
+    pub fn with_max_message_age(mut self, max_age: Option<Duration>) -> Result<Self> {
+        self.set_max_message_age(max_age)?;
+        Ok(self)
     }
+
+    pub fn set_max_message_age(&mut self, max_age: Option<Duration>) -> Result<&mut Self> {
+        validate_outbox_max_message_age(max_age)?;
+        self.max_message_age = max_age;
+        Ok(self)
+    }
+}
+
+fn outbox_config_error(reason: impl Into<String>) -> Error {
+    Error::Configuration {
+        reason: reason.into(),
+    }
+}
+
+fn validate_outbox_max_message_age(max_age: Option<Duration>) -> Result<()> {
+    if max_age.is_some_and(|max_message_age| max_message_age.is_zero()) {
+        return Err(outbox_config_error(
+            "outbox max_message_age must be greater than 0 when set",
+        ));
+    }
+
+    Ok(())
 }
 
 struct OutboxCommand {
@@ -174,7 +193,7 @@ struct DedupeEntry {
     chat_id: ChatId,
     text: String,
     message: Message,
-    expires_at: Instant,
+    expires_at: Option<Instant>,
 }
 
 enum OutboxQueuePermit {
@@ -241,7 +260,7 @@ impl BotOutbox {
         let permit = Arc::clone(&self.permits)
             .acquire_owned()
             .await
-            .map_err(|_| invalid_request("outbox worker is closed"))?;
+            .map_err(|_| runtime_error("outbox worker is closed"))?;
         let (responder, receiver) = oneshot::channel();
         let command = OutboxCommand {
             chat_id: request.chat_id,
@@ -254,11 +273,11 @@ impl BotOutbox {
         self.sender
             .send(command)
             .await
-            .map_err(|_| invalid_request("outbox worker is closed"))?;
+            .map_err(|_| runtime_error("outbox worker is closed"))?;
 
         receiver
             .await
-            .map_err(|_| invalid_request("outbox worker dropped response"))?
+            .map_err(|_| runtime_error("outbox worker dropped response"))?
     }
 }
 
@@ -383,7 +402,7 @@ async fn run_outbox_worker(
 
         if let Some(key) = front_payload.idempotency_key.as_deref()
             && let Some(cached) = dedupe.get(key)
-            && cached.expires_at > Instant::now()
+            && is_dedupe_entry_fresh(cached, Instant::now())
         {
             if cached.chat_id != front_payload.chat_id || cached.text != front_payload.text {
                 let terminal_error = invalid_request(
@@ -420,14 +439,13 @@ async fn run_outbox_worker(
         match send_result {
             Ok(message) => {
                 if let Some(key) = front_payload.idempotency_key.clone() {
-                    let expires_at = Instant::now() + config.dedupe_ttl;
                     dedupe.insert(
                         key,
                         DedupeEntry {
                             chat_id: front_payload.chat_id.clone(),
                             text: front_payload.text.clone(),
                             message: message.clone(),
-                            expires_at,
+                            expires_at: dedupe_expires_at(config.dedupe_ttl),
                         },
                     );
                 }
@@ -584,7 +602,15 @@ fn delivered_outbox_commit_error(source: Error) -> Error {
 
 fn prune_dedupe_cache(dedupe: &mut HashMap<String, DedupeEntry>) {
     let now = Instant::now();
-    dedupe.retain(|_, entry| entry.expires_at > now);
+    dedupe.retain(|_, entry| is_dedupe_entry_fresh(entry, now));
+}
+
+fn dedupe_expires_at(ttl: Duration) -> Option<Instant> {
+    Instant::now().checked_add(ttl)
+}
+
+fn is_dedupe_entry_fresh(entry: &DedupeEntry, now: Instant) -> bool {
+    entry.expires_at.is_none_or(|expires_at| expires_at > now)
 }
 
 fn unix_timestamp_millis_now() -> i64 {
@@ -887,6 +913,12 @@ mod tests {
 
         assert!(matches!(result, Err(Error::Configuration { .. })));
         Ok(())
+    }
+
+    #[test]
+    fn dedupe_expiry_handles_unrepresentable_ttl_without_panicking() {
+        assert!(dedupe_expires_at(Duration::from_secs(1)).is_some());
+        assert!(dedupe_expires_at(Duration::MAX).is_none());
     }
 
     #[test]

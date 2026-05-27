@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -89,6 +89,8 @@ pub use raw::RawApi;
 pub use setup::BlockingSetupApi;
 #[cfg(feature = "_async")]
 pub use setup::SetupApi;
+#[cfg(feature = "bot")]
+pub(crate) use support::is_missing_reply_target_error;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;
 #[cfg(feature = "_async")]

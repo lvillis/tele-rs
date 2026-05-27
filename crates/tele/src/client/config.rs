@@ -135,7 +135,7 @@ impl Default for RateLimitConfig {
 /// Request defaults used by transport.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct RequestDefaults {
+pub(crate) struct RequestDefaults {
     pub(crate) request_timeout: Duration,
     pub(crate) total_timeout: Option<Duration>,
     pub(crate) connect_timeout: Duration,
@@ -253,6 +253,15 @@ impl ClientBuilder {
         })
     }
 
+    fn with_validated_defaults(
+        mut self,
+        mutate: impl FnOnce(&mut RequestDefaults),
+    ) -> Result<Self, Error> {
+        mutate(&mut self.defaults);
+        self.defaults.validate()?;
+        Ok(self)
+    }
+
     /// Sets authentication mode.
     pub fn auth(mut self, auth: Auth) -> Self {
         self.auth = auth;
@@ -266,79 +275,80 @@ impl ClientBuilder {
     }
 
     /// Sets default per-phase timeout.
-    pub fn request_timeout(mut self, timeout: Duration) -> Self {
-        self.defaults.request_timeout = timeout;
-        self
+    pub fn request_timeout(self, timeout: Duration) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.request_timeout = timeout;
+        })
     }
 
     /// Sets total end-to-end timeout.
-    pub fn total_timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.defaults.total_timeout = timeout;
-        self
+    pub fn total_timeout(self, timeout: Option<Duration>) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.total_timeout = timeout;
+        })
     }
 
     /// Sets connect timeout.
-    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
-        self.defaults.connect_timeout = timeout;
-        self
+    pub fn connect_timeout(self, timeout: Duration) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.connect_timeout = timeout;
+        })
     }
 
     /// Max response bytes accepted from Telegram.
-    pub fn max_response_body_bytes(mut self, max_bytes: usize) -> Self {
-        self.defaults.max_response_body_bytes = max_bytes;
-        self
+    pub fn max_response_body_bytes(self, max_bytes: usize) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.max_response_body_bytes = max_bytes;
+        })
     }
 
     /// Enables or disables body snippet capture in errors.
-    pub fn capture_body_snippet(mut self, enabled: bool) -> Self {
-        self.defaults.capture_body_snippet = enabled;
-        self
+    pub fn capture_body_snippet(self, enabled: bool) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.capture_body_snippet = enabled;
+        })
     }
 
     /// Max chars to keep for body snippets.
-    pub fn body_snippet_limit(mut self, max_chars: usize) -> Self {
-        self.defaults.body_snippet_limit = max_chars;
-        self
+    pub fn body_snippet_limit(self, max_chars: usize) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.body_snippet_limit = max_chars;
+        })
     }
 
     /// Retry policy.
-    pub fn retry_config(mut self, retry: RetryConfig) -> Result<Self, Error> {
-        retry.validate()?;
-        self.defaults.retry = retry;
-        Ok(self)
+    pub fn retry_config(self, retry: RetryConfig) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.retry = retry;
+        })
     }
 
     /// Global local-side token bucket limiter.
-    pub fn global_rate_limit(mut self, rate_limit: Option<RateLimitConfig>) -> Result<Self, Error> {
-        if let Some(rate_limit) = rate_limit.as_ref() {
-            rate_limit.validate()?;
-        }
-        self.defaults.global_rate_limit = rate_limit;
-        Ok(self)
+    pub fn global_rate_limit(self, rate_limit: Option<RateLimitConfig>) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.global_rate_limit = rate_limit;
+        })
     }
 
     /// Per-host local-side token bucket limiter.
-    pub fn per_host_rate_limit(
-        mut self,
-        rate_limit: Option<RateLimitConfig>,
-    ) -> Result<Self, Error> {
-        if let Some(rate_limit) = rate_limit.as_ref() {
-            rate_limit.validate()?;
-        }
-        self.defaults.per_host_rate_limit = rate_limit;
-        Ok(self)
+    pub fn per_host_rate_limit(self, rate_limit: Option<RateLimitConfig>) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.per_host_rate_limit = rate_limit;
+        })
     }
 
     /// Maximum total in-flight requests.
-    pub fn max_in_flight(mut self, max: Option<usize>) -> Self {
-        self.defaults.max_in_flight = max;
-        self
+    pub fn max_in_flight(self, max: Option<usize>) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.max_in_flight = max;
+        })
     }
 
     /// Maximum in-flight requests per host.
-    pub fn max_in_flight_per_host(mut self, max: Option<usize>) -> Self {
-        self.defaults.max_in_flight_per_host = max;
-        self
+    pub fn max_in_flight_per_host(self, max: Option<usize>) -> Result<Self, Error> {
+        self.with_validated_defaults(|defaults| {
+            defaults.max_in_flight_per_host = max;
+        })
     }
 
     /// Adds one default header after validating it.
@@ -512,7 +522,7 @@ fn validate_http_proxy_uri(raw: &str, parsed: &Uri) -> Result<(), Error> {
 }
 
 fn invalid_http_proxy_uri(raw: &str, detail: impl std::fmt::Display) -> Error {
-    Error::InvalidRequest {
+    Error::Configuration {
         reason: format!(
             "invalid http proxy uri `{}`: {detail}",
             redact_url_credentials(raw)
@@ -529,13 +539,14 @@ mod tests {
         let result = ClientBuilder::new("https://api.telegram.org")?.http_proxy("not-a-uri");
         assert!(result.is_err());
         let error = match result {
-            Ok(_) => Error::InvalidRequest {
+            Ok(_) => Error::Configuration {
                 reason: "expected proxy parsing error".to_owned(),
             },
             Err(error) => error,
         };
 
-        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(matches!(error, Error::Configuration { .. }));
+        assert_eq!(error.classification(), crate::ErrorClass::Configuration);
         assert!(error.to_string().contains("invalid http proxy uri"));
         Ok(())
     }
@@ -545,13 +556,14 @@ mod tests {
         let result = ClientBuilder::new("https://api.telegram.org")?
             .http_proxy("http://user:secret@127.0.0.1:8080/proxy");
         let error = match result {
-            Ok(_) => Error::InvalidRequest {
+            Ok(_) => Error::Configuration {
                 reason: "expected proxy validation error".to_owned(),
             },
             Err(error) => error,
         };
         let rendered = error.to_string();
 
+        assert!(matches!(error, Error::Configuration { .. }));
         assert!(rendered.contains("invalid http proxy uri"));
         assert!(!rendered.contains("user:secret"));
         assert!(!rendered.contains("secret"));
@@ -640,49 +652,53 @@ mod tests {
         let builder = ClientBuilder::new("https://api.telegram.org")?;
         assert!(builder.validate().is_ok());
 
-        let zero_request_timeout =
-            ClientBuilder::new("https://api.telegram.org")?.request_timeout(Duration::ZERO);
         assert!(matches!(
-            zero_request_timeout.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.request_timeout(Duration::ZERO),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_total_timeout =
-            ClientBuilder::new("https://api.telegram.org")?.total_timeout(Some(Duration::ZERO));
         assert!(matches!(
-            zero_total_timeout.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.total_timeout(Some(Duration::ZERO)),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_connect_timeout =
-            ClientBuilder::new("https://api.telegram.org")?.connect_timeout(Duration::ZERO);
         assert!(matches!(
-            zero_connect_timeout.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.connect_timeout(Duration::ZERO),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_body = ClientBuilder::new("https://api.telegram.org")?.max_response_body_bytes(0);
         assert!(matches!(
-            zero_body.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.max_response_body_bytes(0),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_snippet = ClientBuilder::new("https://api.telegram.org")?.body_snippet_limit(0);
         assert!(matches!(
-            zero_snippet.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.body_snippet_limit(0),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_in_flight = ClientBuilder::new("https://api.telegram.org")?.max_in_flight(Some(0));
         assert!(matches!(
-            zero_in_flight.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.max_in_flight(Some(0)),
             Err(Error::Configuration { .. })
         ));
 
-        let zero_in_flight_per_host =
-            ClientBuilder::new("https://api.telegram.org")?.max_in_flight_per_host(Some(0));
         assert!(matches!(
-            zero_in_flight_per_host.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.max_in_flight_per_host(Some(0)),
+            Err(Error::Configuration { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn validates_body_snippet_limit_against_capture_state() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .capture_body_snippet(false)?
+            .body_snippet_limit(0)?;
+        assert!(builder.validate().is_ok());
+
+        assert!(matches!(
+            builder.capture_body_snippet(true),
             Err(Error::Configuration { .. })
         ));
 

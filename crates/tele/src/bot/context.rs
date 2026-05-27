@@ -64,10 +64,23 @@ impl BotContext {
     pub async fn resolve_handler_error(&self, update: &Update, error: HandlerError) -> Result<()> {
         match error {
             HandlerError::Rejected(rejection) => {
-                let _ = self.app().reply_text(update, rejection.message()).await?;
+                self.reply_text_if_addressable(update, rejection.message())
+                    .await?;
                 Ok(())
             }
             HandlerError::Internal(error) => Err(error),
+        }
+    }
+
+    pub(crate) async fn reply_text_if_addressable(
+        &self,
+        update: &Update,
+        text: impl Into<String>,
+    ) -> Result<bool> {
+        match self.app().reply_text(update, text).await {
+            Ok(_) => Ok(true),
+            Err(error) if crate::client::is_missing_reply_target_error(&error) => Ok(false),
+            Err(error) => Err(error),
         }
     }
 }

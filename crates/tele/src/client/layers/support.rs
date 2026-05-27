@@ -1,10 +1,17 @@
 use super::bootstrap::WebAppQueryPayload;
 use super::*;
 
+const MISSING_REPLY_TARGET_REASON: &str = "update does not contain a chat id for reply";
+
 pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
     Error::InvalidRequest {
         reason: reason.into(),
     }
+}
+
+#[cfg(feature = "bot")]
+pub(crate) fn is_missing_reply_target_error(error: &Error) -> bool {
+    matches!(error, Error::InvalidRequest { reason } if reason == MISSING_REPLY_TARGET_REASON)
 }
 
 pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
@@ -187,7 +194,7 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         .as_ref()
         .or(update.my_chat_member.as_ref())
         .map(|member_update| member_update.chat.id)
-        .ok_or_else(|| invalid_request("update does not contain a chat id for reply"))?;
+        .ok_or_else(|| invalid_request(MISSING_REPLY_TARGET_REASON))?;
 
     Ok(chat_reply_context(chat_id, None, None, None))
 }

@@ -1,5 +1,5 @@
 use http::HeaderMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::Error;
@@ -132,6 +132,46 @@ pub(crate) fn retry_after_or_backoff(
     error.retry_after().unwrap_or_else(backoff)
 }
 
+pub(crate) fn jittered_duration(delay: Duration, jitter_ratio: f64, max: Duration) -> Duration {
+    let delay = delay.min(max);
+    if delay.is_zero() || jitter_ratio <= 0.0 {
+        return delay;
+    }
+
+    jittered_duration_with_unit(delay, jitter_ratio, max, jitter_unit())
+}
+
+fn jitter_unit() -> f64 {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    (now_nanos % 10_000) as f64 / 10_000.0
+}
+
+fn jittered_duration_with_unit(
+    delay: Duration,
+    jitter_ratio: f64,
+    max: Duration,
+    unit: f64,
+) -> Duration {
+    let ratio = jitter_ratio.clamp(0.0, 1.0);
+    let unit = unit.clamp(0.0, 1.0);
+    let multiplier = (1.0 - ratio) + (2.0 * ratio * unit);
+    duration_from_secs_f64_saturating(delay.as_secs_f64() * multiplier).min(max)
+}
+
+fn duration_from_secs_f64_saturating(seconds: f64) -> Duration {
+    match Duration::try_from_secs_f64(seconds) {
+        Ok(duration) => duration,
+        Err(_) => Duration::MAX,
+    }
+}
+
+#[cfg(feature = "tracing")]
+pub(crate) fn duration_millis_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -190,5 +230,38 @@ mod tests {
         let delay = retry_after_or_backoff(&error, || Duration::from_millis(200));
 
         assert_eq!(delay, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn jittered_duration_applies_bounds_without_panicking() {
+        assert_eq!(
+            super::jittered_duration_with_unit(
+                Duration::from_secs(10),
+                0.5,
+                Duration::from_secs(100),
+                1.0,
+            ),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            super::jittered_duration_with_unit(
+                Duration::from_secs(10),
+                1.0,
+                Duration::from_secs(15),
+                1.0,
+            ),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            super::jittered_duration_with_unit(Duration::MAX, 1.0, Duration::MAX, 1.0),
+            Duration::MAX
+        );
+    }
+
+    #[cfg(feature = "tracing")]
+    #[test]
+    fn duration_millis_u64_saturates_instead_of_truncating() {
+        assert_eq!(super::duration_millis_u64(Duration::from_millis(42)), 42);
+        assert_eq!(super::duration_millis_u64(Duration::MAX), u64::MAX);
     }
 }

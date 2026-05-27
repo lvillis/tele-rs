@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut app = BotApp::long_polling(client, router);
-    app.engine_mut().source_mut().set_poll_timeout_seconds(20);
+    app.engine_mut().source_mut().set_poll_timeout_seconds(20)?;
     app.run().await?;
     Ok(())
 }

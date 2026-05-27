@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -16,10 +16,10 @@ use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
-use super::config::BuilderParts;
+use super::config::{BuilderParts, RequestDefaults};
 use super::{
     BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi, ClientBuilder,
-    ClientObservability, RequestDefaults, emit_client_metric,
+    ClientObservability, emit_client_result_metric,
 };
 
 #[derive(Clone)]
@@ -152,7 +152,12 @@ impl BlockingClient {
             .inner
             .transport
             .execute_json(method, token, payload, config);
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -184,7 +189,12 @@ impl BlockingClient {
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
         let result = self.inner.transport.execute_empty(method, token, config);
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -254,7 +264,12 @@ impl BlockingClient {
             file,
             config,
         );
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -320,36 +335,16 @@ impl BlockingClient {
             .inner
             .transport
             .execute_multipart_files(method, token, &fields, files, config);
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
-    }
-
-    fn emit_metric<R>(&self, method: &str, latency: Duration, result: &Result<R>) {
-        let (success, status, classification, retryable, request_id) = match result {
-            Ok(_) => (true, None, None, false, None),
-            Err(error) => (
-                false,
-                error.status().map(|status| status.as_u16()),
-                Some(error.classification()),
-                error.is_retryable(),
-                error.request_id().map(ToOwned::to_owned),
-            ),
-        };
-        emit_client_metric(
-            &self.inner.observability,
-            super::ClientMetric {
-                method: method.to_owned(),
-                success,
-                latency,
-                status,
-                classification,
-                retryable,
-                request_id,
-            },
-        );
     }
 }

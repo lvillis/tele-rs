@@ -1,28 +1,17 @@
 use super::*;
 use crate::ErrorClass;
-use crate::util::retry_after_or_backoff;
+use crate::util::{jittered_duration, retry_after_or_backoff};
 
 pub(crate) fn backoff_delay(
     base: Duration,
     max: Duration,
     attempt: usize,
-    jitter_ratio: f32,
+    jitter_ratio: f64,
 ) -> Duration {
     let exponent = attempt.saturating_sub(1).min(16);
     let factor = 2u32.saturating_pow(exponent as u32);
     let delay = base.saturating_mul(factor).min(max);
-    if delay.is_zero() || jitter_ratio <= 0.0 {
-        return delay;
-    }
-
-    let ratio = f64::from(jitter_ratio.clamp(0.0, 1.0));
-    let now_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |value| value.as_nanos());
-    let unit = (now_nanos % 10_000) as f64 / 10_000.0;
-    let multiplier = (1.0 - ratio) + (2.0 * ratio * unit);
-    let jittered = Duration::from_secs_f64(delay.as_secs_f64() * multiplier);
-    jittered.min(max)
+    jittered_duration(delay, jitter_ratio, max)
 }
 
 pub(crate) fn method_allows_retry(method: &str, retry: &RetryConfig) -> bool {
@@ -81,7 +70,7 @@ where
                         retry.base_backoff,
                         retry.max_backoff,
                         attempt,
-                        retry.jitter_ratio as f32,
+                        retry.jitter_ratio,
                     )
                 });
                 tokio::time::sleep(delay).await;
@@ -112,7 +101,7 @@ where
                         retry.base_backoff,
                         retry.max_backoff,
                         attempt,
-                        retry.jitter_ratio as f32,
+                        retry.jitter_ratio,
                     )
                 });
                 std::thread::sleep(delay);

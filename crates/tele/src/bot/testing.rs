@@ -57,29 +57,33 @@ impl BotHarness {
         Self { client, router }
     }
 
+    #[allow(
+        clippy::manual_async_fn,
+        reason = "the explicit return type preserves the public Send future contract without boxing"
+    )]
     pub fn dispatch(
         &self,
         update: Update,
-    ) -> Pin<Box<dyn Future<Output = Result<DispatchOutcome>> + Send + '_>> {
-        Box::pin(async move {
+    ) -> impl Future<Output = Result<DispatchOutcome>> + Send + '_ {
+        async move {
             let update_id = update.update_id;
             let context = BotContext::new(self.client.clone());
             match self.router.dispatch_prepared(context, update).await? {
                 true => Ok(DispatchOutcome::Handled { update_id }),
                 false => Ok(DispatchOutcome::Ignored { update_id }),
             }
-        })
+        }
     }
 
     pub fn dispatch_json(
         &self,
         payload: &[u8],
-    ) -> Pin<Box<dyn Future<Output = Result<DispatchOutcome>> + Send + '_>> {
+    ) -> impl Future<Output = Result<DispatchOutcome>> + Send + '_ {
         let update: Result<Update> = serde_json::from_slice(payload).map_err(|source| {
             invalid_request(format!(
                 "failed to deserialize test update payload: {source}"
             ))
         });
-        Box::pin(async move { self.dispatch(update?).await })
+        async move { self.dispatch(update?).await }
     }
 }

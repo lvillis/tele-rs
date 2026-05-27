@@ -50,6 +50,12 @@ impl DispatchFailure {
     }
 }
 
+#[derive(Debug)]
+struct DispatchRecord {
+    outcome: DispatchOutcome,
+    error: Option<Error>,
+}
+
 fn successful_source_order_prefix(outcomes: &[Option<DispatchOutcome>]) -> Vec<DispatchOutcome> {
     let mut prefix = Vec::new();
 
@@ -108,38 +114,31 @@ where
         }
     }
 
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.set_config(config);
-        self
-    }
-
-    pub fn with_config_checked(mut self, config: EngineConfig) -> Result<Self> {
-        config.validate()?;
-        self.set_config(config);
+    /// Applies validated engine configuration.
+    pub fn with_config(mut self, config: EngineConfig) -> Result<Self> {
+        self.set_config(config)?;
         Ok(self)
     }
 
     /// Returns the current engine configuration.
     ///
-    /// Use [`Self::set_config`] or [`Self::with_config_checked`] to change values so derived
-    /// runtime state stays consistent.
+    /// Use [`Self::set_config`] to change values so derived runtime state stays consistent.
     pub fn config(&self) -> &EngineConfig {
         &self.config
     }
 
-    /// Replaces engine configuration and invalidates derived retry state when policy changes.
-    pub fn set_config(&mut self, config: EngineConfig) -> &mut Self {
+    /// Replaces validated engine configuration and invalidates derived retry state when policy changes.
+    pub fn set_config(&mut self, config: EngineConfig) -> Result<&mut Self> {
+        config.validate()?;
+        Ok(self.apply_config(config))
+    }
+
+    fn apply_config(&mut self, config: EngineConfig) -> &mut Self {
         if self.source_error_retry_policy_changed(&config) {
             self.source_error_streak = 0;
         }
         self.config = config;
         self
-    }
-
-    /// Validates and replaces engine configuration.
-    pub fn set_config_checked(&mut self, config: EngineConfig) -> Result<&mut Self> {
-        config.validate()?;
-        Ok(self.set_config(config))
     }
 
     pub fn source_mut(&mut self) -> &mut S {
@@ -386,53 +385,19 @@ where
                 .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
             #[cfg(not(feature = "tracing"))]
             let dispatch_future = self.router.dispatch(context, update);
-            match dispatch_future.await {
-                Ok(true) => {
-                    let outcome = DispatchOutcome::Handled { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Handled,
-                        latency: dispatch_started_at.elapsed(),
-                    })
-                    .await;
-                    outcomes.push(outcome);
-                }
-                Ok(false) => {
-                    let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Ignored,
-                        latency: dispatch_started_at.elapsed(),
-                    })
-                    .await;
-                    outcomes.push(outcome);
-                }
-                Err(error) => {
-                    self.notify_handler_error(update_id, &error).await;
-                    self.notify_event(EngineEvent::DispatchFailed {
-                        update_id,
-                        classification: error.classification(),
-                    })
-                    .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Failed,
-                        latency: dispatch_started_at.elapsed(),
-                    })
-                    .await;
-                    let outcome = DispatchOutcome::Failed { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    if !self.config.continue_on_handler_error {
-                        return Err(DispatchFailure::new(error, outcomes));
-                    }
-                    outcomes.push(outcome);
-                }
+            let record = self
+                .record_dispatch_result(
+                    update_id,
+                    dispatch_started_at.elapsed(),
+                    dispatch_future.await,
+                )
+                .await;
+            if let Some(error) = record.error
+                && !self.config.continue_on_handler_error
+            {
+                return Err(DispatchFailure::new(error, outcomes));
             }
+            outcomes.push(record.outcome);
         }
 
         Ok(outcomes)
@@ -456,7 +421,7 @@ where
 
             let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
                 DispatchFailure::new(
-                    invalid_request("handler semaphore closed unexpectedly"),
+                    runtime_error("handler semaphore closed unexpectedly"),
                     successful_source_order_prefix(&outcomes),
                 )
             })?;
@@ -481,54 +446,20 @@ where
 
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
-                Ok((index, update_id, latency, Ok(true))) => {
-                    let outcome = DispatchOutcome::Handled { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                Ok((index, update_id, latency, result)) => {
+                    let record = self
+                        .record_dispatch_result(update_id, latency, result)
                         .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Handled,
-                        latency,
-                    })
-                    .await;
-                    outcomes[index] = Some(outcome);
-                }
-                Ok((index, update_id, latency, Ok(false))) => {
-                    let outcome = DispatchOutcome::Ignored { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Ignored,
-                        latency,
-                    })
-                    .await;
-                    outcomes[index] = Some(outcome);
-                }
-                Ok((index, update_id, latency, Err(error))) => {
-                    self.notify_handler_error(update_id, &error).await;
-                    self.notify_event(EngineEvent::DispatchFailed {
-                        update_id,
-                        classification: error.classification(),
-                    })
-                    .await;
-                    self.notify_metric(EngineMetric::DispatchLatency {
-                        update_id,
-                        outcome: DispatchMetricOutcome::Failed,
-                        latency,
-                    })
-                    .await;
-                    let outcome = DispatchOutcome::Failed { update_id };
-                    self.notify_event(EngineEvent::DispatchCompleted { outcome })
-                        .await;
-                    if !self.config.continue_on_handler_error {
+                    if let Some(error) = record.error
+                        && !self.config.continue_on_handler_error
+                    {
                         first_error = Some(error);
                         break;
                     }
-                    outcomes[index] = Some(outcome);
+                    outcomes[index] = Some(record.outcome);
                 }
                 Err(join_error) => {
-                    let error = invalid_request(format!("bot handler task failed: {join_error}"));
+                    let error = runtime_error(format!("bot handler task failed: {join_error}"));
                     self.notify_handler_error(-1, &error).await;
                     self.notify_event(EngineEvent::DispatchFailed {
                         update_id: -1,
@@ -555,10 +486,65 @@ where
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
                 DispatchFailure::new(
-                    invalid_request("bot dispatch task completed without an outcome"),
+                    runtime_error("bot dispatch task completed without an outcome"),
                     Vec::new(),
                 )
             })
+    }
+
+    async fn record_dispatch_result(
+        &mut self,
+        update_id: i64,
+        latency: Duration,
+        result: Result<bool>,
+    ) -> DispatchRecord {
+        let (outcome, metric_outcome) = match result {
+            Ok(true) => (
+                DispatchOutcome::Handled { update_id },
+                DispatchMetricOutcome::Handled,
+            ),
+            Ok(false) => (
+                DispatchOutcome::Ignored { update_id },
+                DispatchMetricOutcome::Ignored,
+            ),
+            Err(error) => {
+                self.notify_handler_error(update_id, &error).await;
+                self.notify_event(EngineEvent::DispatchFailed {
+                    update_id,
+                    classification: error.classification(),
+                })
+                .await;
+                self.notify_metric(EngineMetric::DispatchLatency {
+                    update_id,
+                    outcome: DispatchMetricOutcome::Failed,
+                    latency,
+                })
+                .await;
+
+                let outcome = DispatchOutcome::Failed { update_id };
+                self.notify_event(EngineEvent::DispatchCompleted { outcome })
+                    .await;
+
+                return DispatchRecord {
+                    outcome,
+                    error: Some(error),
+                };
+            }
+        };
+
+        self.notify_event(EngineEvent::DispatchCompleted { outcome })
+            .await;
+        self.notify_metric(EngineMetric::DispatchLatency {
+            update_id,
+            outcome: metric_outcome,
+            latency,
+        })
+        .await;
+
+        DispatchRecord {
+            outcome,
+            error: None,
+        }
     }
 
     async fn handle_poll_result(
@@ -593,8 +579,11 @@ where
                         backoff.max_delay,
                         self.source_error_streak,
                     );
-                    let applied_delay =
-                        jitter_duration(delay, backoff.jitter_ratio).min(backoff.max_delay);
+                    let applied_delay = crate::util::jittered_duration(
+                        delay,
+                        f64::from(backoff.jitter_ratio),
+                        backoff.max_delay,
+                    );
                     self.notify_metric(EngineMetric::SourceBackoff {
                         streak: self.source_error_streak,
                         delay: applied_delay,
@@ -666,7 +655,7 @@ where
             } => tracing::debug!(
                 target: "tele::bot",
                 update_count,
-                latency_ms = latency.as_millis() as u64,
+                latency_ms = crate::util::duration_millis_u64(*latency),
                 "bot poll completed"
             ),
             EngineMetric::DispatchLatency {
@@ -677,7 +666,7 @@ where
                 target: "tele::bot",
                 update_id,
                 outcome = ?outcome,
-                latency_ms = latency.as_millis() as u64,
+                latency_ms = crate::util::duration_millis_u64(*latency),
                 "bot dispatch completed"
             ),
             EngineMetric::SourceError {
@@ -694,7 +683,7 @@ where
             EngineMetric::SourceBackoff { streak, delay } => tracing::warn!(
                 target: "tele::bot",
                 streak,
-                delay_ms = delay.as_millis() as u64,
+                delay_ms = crate::util::duration_millis_u64(*delay),
                 "bot source backoff applied"
             ),
         }
@@ -754,13 +743,8 @@ where
         &mut self.engine
     }
 
-    pub fn with_engine_config(mut self, config: EngineConfig) -> Self {
-        self.engine = self.engine.with_config(config);
-        self
-    }
-
-    pub fn with_engine_config_checked(mut self, config: EngineConfig) -> Result<Self> {
-        self.engine = self.engine.with_config_checked(config)?;
+    pub fn with_engine_config(mut self, config: EngineConfig) -> Result<Self> {
+        self.engine = self.engine.with_config(config)?;
         Ok(self)
     }
 
@@ -903,7 +887,7 @@ mod tests {
         engine.set_config(EngineConfig {
             error_delay: Duration::from_secs(2),
             ..EngineConfig::default()
-        });
+        })?;
 
         assert_eq!(engine.source_error_streak, 0);
         Ok(())
@@ -917,17 +901,17 @@ mod tests {
         engine.set_config(EngineConfig {
             max_handler_concurrency: 8,
             ..EngineConfig::default()
-        });
+        })?;
 
         assert_eq!(engine.source_error_streak, 4);
         Ok(())
     }
 
     #[test]
-    fn set_config_checked_rejects_invalid_config_without_mutating_engine() -> Result<()> {
+    fn set_config_rejects_invalid_config_without_mutating_engine() -> Result<()> {
         let mut engine = test_engine()?;
 
-        let result = engine.set_config_checked(EngineConfig {
+        let result = engine.set_config(EngineConfig {
             max_handler_concurrency: 0,
             ..EngineConfig::default()
         });

@@ -16,6 +16,10 @@ use tokio::time::sleep;
 
 #[cfg(feature = "axum")]
 pub mod axum;
+mod webhook_http;
+pub use webhook_http::{
+    TELEGRAM_SECRET_HEADER, dispatch_webhook, dispatch_webhook_status, telegram_secret_token,
+};
 
 use crate::api::{
     AdvancedService, BotService, ChatsService, FilesService, MessagesService, PaymentsService,
@@ -162,6 +166,12 @@ fn invalid_request(reason: impl Into<String>) -> Error {
     }
 }
 
+fn runtime_error(reason: impl Into<String>) -> Error {
+    Error::Runtime {
+        reason: reason.into(),
+    }
+}
+
 fn storage_error(
     operation: impl Into<Box<str>>,
     message: impl Into<Box<str>>,
@@ -239,6 +249,7 @@ pub mod testing;
 pub use app::*;
 pub use context::*;
 pub use context_app::*;
+pub(crate) use handler_error::normalize_user_message;
 pub use handler_error::*;
 pub use outbox::*;
 pub use request_state::*;
@@ -473,18 +484,4 @@ fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duratio
     let factor = 2u32.saturating_pow(exponent as u32);
     let delay = base.saturating_mul(factor);
     delay.min(max)
-}
-
-fn jitter_duration(delay: Duration, jitter_ratio: f32) -> Duration {
-    if delay.is_zero() || jitter_ratio <= 0.0 {
-        return delay;
-    }
-
-    let ratio = f64::from(jitter_ratio.clamp(0.0, 1.0));
-    let now_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |duration| duration.as_nanos());
-    let unit = (now_nanos % 10_000) as f64 / 10_000.0;
-    let multiplier = (1.0 - ratio) + (2.0 * ratio * unit);
-    Duration::from_secs_f64(delay.as_secs_f64() * multiplier)
 }

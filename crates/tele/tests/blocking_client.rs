@@ -1043,8 +1043,8 @@ async fn blocking_membership_facade_handles_bot_member_and_capabilities() -> Res
 async fn blocking_transport_error_has_request_id() -> Result<(), DynError> {
     let client = BlockingClient::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(100))
-        .total_timeout(Some(Duration::from_millis(300)))
+        .request_timeout(Duration::from_millis(100))?
+        .total_timeout(Some(Duration::from_millis(300)))?
         .build_blocking()?;
 
     let error = match client.bot().get_me() {

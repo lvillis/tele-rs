@@ -3821,6 +3821,15 @@ mod tests {
         let valid_pre_message = SendMessageRequest::new(1_i64, "hello")?.entities(vec![valid_pre]);
         assert!(valid_pre_message.validate().is_ok());
 
+        let mut invalid_pre = entity(crate::types::message::MessageEntityKind::Pre, 0, 5);
+        invalid_pre.language = Some("rust\nlang".to_owned());
+        let invalid_pre_message =
+            SendMessageRequest::new(1_i64, "hello")?.entities(vec![invalid_pre]);
+        assert!(matches!(
+            invalid_pre_message.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let mut bold_with_url = bold_entity(5);
         bold_with_url.url = Some("https://example.com".to_owned());
         let bold_with_url_message =

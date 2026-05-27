@@ -18,6 +18,7 @@ pub enum ErrorClass {
     RateLimited,
     Transport,
     Storage,
+    Runtime,
     Api,
     Decode,
     Protocol,
@@ -106,6 +107,9 @@ pub enum Error {
         retryable: bool,
     },
 
+    #[error("runtime error: {reason}")]
+    Runtime { reason: String },
+
     #[error("telegram api error while calling `{method}`: {description}")]
     Api {
         method: String,
@@ -144,6 +148,7 @@ impl Error {
             Self::DeserializeResponse { .. } => ErrorClass::Decode,
             Self::MissingResult { .. } => ErrorClass::Protocol,
             Self::Storage { .. } => ErrorClass::Storage,
+            Self::Runtime { .. } => ErrorClass::Runtime,
             Self::Transport { status, .. } => {
                 if *status == Some(429) {
                     return ErrorClass::RateLimited;

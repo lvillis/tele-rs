@@ -701,6 +701,12 @@ fn validate_message_entity(
                 &["unix_time", "date_time_format"],
             )?;
         }
+        MessageEntityKind::Pre => {
+            if let Some(language) = entity.language.as_deref() {
+                control_free_string("pre language", language)?;
+            }
+            reject_unsupported_message_entity_fields(field, entity, &["language"])?;
+        }
         MessageEntityKind::Mention
         | MessageEntityKind::Hashtag
         | MessageEntityKind::Cashtag
@@ -715,13 +721,8 @@ fn validate_message_entity(
         | MessageEntityKind::Spoiler
         | MessageEntityKind::Blockquote
         | MessageEntityKind::ExpandableBlockquote
-        | MessageEntityKind::Code
-        | MessageEntityKind::Pre => {
-            let allowed = match &entity.kind {
-                MessageEntityKind::Pre => &["language"][..],
-                _ => &[][..],
-            };
-            reject_unsupported_message_entity_fields(field, entity, allowed)?;
+        | MessageEntityKind::Code => {
+            reject_unsupported_message_entity_fields(field, entity, &[])?;
         }
     }
 

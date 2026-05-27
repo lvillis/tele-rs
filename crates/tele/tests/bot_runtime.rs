@@ -1675,8 +1675,8 @@ async fn client_control_exposes_setup_facade() -> Result<(), DynError> {
 async fn bootstrap_router_respects_warn_get_me_policy_without_refetch() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(40))
-        .total_timeout(Some(Duration::from_millis(120)))
+        .request_timeout(Duration::from_millis(40))?
+        .total_timeout(Some(Duration::from_millis(120)))?
         .build()?;
     let control = client.control();
     let router = Router::new();
@@ -1702,8 +1702,8 @@ async fn bootstrap_router_respects_warn_get_me_policy_without_refetch() -> Resul
 async fn bootstrap_router_warn_policy_disables_later_auto_get_me() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(40))
-        .total_timeout(Some(Duration::from_millis(120)))
+        .request_timeout(Duration::from_millis(40))?
+        .total_timeout(Some(Duration::from_millis(120)))?
         .build()?;
     let control = client.control();
     let mut router = Router::new();
@@ -1728,14 +1728,14 @@ async fn bootstrap_router_warn_policy_disables_later_auto_get_me() -> Result<(),
 }
 
 #[tokio::test]
-async fn long_polling_config_checked_fails_early() -> Result<(), DynError> {
+async fn long_polling_config_fails_early() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(500))
-        .total_timeout(Some(Duration::from_millis(500)))
+        .request_timeout(Duration::from_millis(500))?
+        .total_timeout(Some(Duration::from_millis(500)))?
         .build()?;
 
-    let source = LongPollingSource::new(client).with_config_checked(PollingConfig {
+    let source = LongPollingSource::new(client).with_config(PollingConfig {
         poll_timeout_seconds: 30,
         ..PollingConfig::default()
     });
@@ -1745,25 +1745,24 @@ async fn long_polling_config_checked_fails_early() -> Result<(), DynError> {
 }
 
 #[tokio::test]
-async fn long_polling_config_checked_rejects_invalid_request_options() -> Result<(), DynError> {
+async fn long_polling_config_rejects_invalid_request_options() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
         .build()?;
 
-    let invalid_limit = LongPollingSource::new(client.clone()).with_config_checked(PollingConfig {
+    let invalid_limit = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         limit: Some(0),
         ..PollingConfig::default()
     });
     assert!(matches!(invalid_limit, Err(Error::Configuration { .. })));
 
-    let duplicate_allowed_update =
-        LongPollingSource::new(client).with_config_checked(PollingConfig {
-            allowed_updates: Some(vec![
-                AllowedUpdate::new("message")?,
-                AllowedUpdate::new("message")?,
-            ]),
-            ..PollingConfig::default()
-        });
+    let duplicate_allowed_update = LongPollingSource::new(client).with_config(PollingConfig {
+        allowed_updates: Some(vec![
+            AllowedUpdate::new("message")?,
+            AllowedUpdate::new("message")?,
+        ]),
+        ..PollingConfig::default()
+    });
     assert!(matches!(
         duplicate_allowed_update,
         Err(Error::Configuration { .. })
@@ -1816,20 +1815,11 @@ async fn bot_engine_rejects_invalid_config_before_polling_source() -> Result<(),
         .bot_token("123:abc")?
         .build()?;
     let (_sink, source) = channel_source(1)?;
-    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
+    let result = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         max_handler_concurrency: 0,
         ..EngineConfig::default()
     });
-
-    let error = match engine.poll_once().await {
-        Ok(outcomes) => {
-            return Err(
-                format!("invalid config unexpectedly produced outcomes: {outcomes:?}").into(),
-            );
-        }
-        Err(error) => error,
-    };
-    assert!(matches!(error, Error::Configuration { .. }));
+    assert!(matches!(result, Err(Error::Configuration { .. })));
 
     Ok(())
 }
@@ -2096,12 +2086,12 @@ async fn long_polling_source_dispatches_updates() -> Result<(), DynError> {
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 777 }]);
@@ -2123,12 +2113,12 @@ async fn long_polling_source_uses_default_poll_timeout() -> Result<(), DynError>
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         disable_webhook_on_start: false,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert!(outcomes.is_empty());
@@ -2142,20 +2132,13 @@ async fn long_polling_source_rejects_config_when_timeout_budget_is_too_small()
 -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(900))
-        .total_timeout(Some(Duration::from_secs(3)))
+        .request_timeout(Duration::from_millis(900))?
+        .total_timeout(Some(Duration::from_secs(3)))?
         .build()?;
-    let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
+    let error = match LongPollingSource::new(client).with_config(PollingConfig {
         disable_webhook_on_start: false,
         ..PollingConfig::default()
-    });
-    let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
-        continue_on_source_error: false,
-        continue_on_handler_error: false,
-        ..EngineConfig::default()
-    });
-
-    let error = match engine.poll_once().await {
+    }) {
         Ok(_) => return Err("expected polling timeout configuration error".into()),
         Err(error) => error,
     };
@@ -2175,19 +2158,19 @@ async fn long_polling_source_allows_short_polling_with_zero_timeout() -> Result<
 
     let client = Client::builder(base_url)?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(900))
-        .total_timeout(Some(Duration::from_secs(3)))
+        .request_timeout(Duration::from_millis(900))?
+        .total_timeout(Some(Duration::from_secs(3)))?
         .build()?;
     let source = LongPollingSource::new(client.clone()).with_config(PollingConfig {
         disable_webhook_on_start: false,
         poll_timeout_seconds: 0,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert!(outcomes.is_empty());
@@ -2200,16 +2183,14 @@ async fn long_polling_source_allows_short_polling_with_zero_timeout() -> Result<
 fn long_polling_source_rejects_poll_timeout_above_total_timeout_budget() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_secs(40))
-        .total_timeout(Some(Duration::from_secs(5)))
+        .request_timeout(Duration::from_secs(40))?
+        .total_timeout(Some(Duration::from_secs(5)))?
         .build()?;
-    let source = LongPollingSource::new(client).with_config(PollingConfig {
+    let error = match LongPollingSource::new(client).with_config(PollingConfig {
         poll_timeout_seconds: 30,
         ..PollingConfig::default()
-    });
-
-    let error = match source.validate_timeout_budget() {
-        Ok(timeout) => return Err(format!("expected timeout budget error, got {timeout}s").into()),
+    }) {
+        Ok(_) => return Err("expected timeout budget error".into()),
         Err(error) => error,
     };
     assert!(matches!(error, Error::Configuration { .. }));
@@ -2239,12 +2220,12 @@ async fn long_polling_source_loads_persisted_offset() -> Result<(), DynError> {
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert!(outcomes.is_empty());
@@ -2265,7 +2246,7 @@ async fn long_polling_source_rejects_invalid_offset_storage_before_network() -> 
     let mut source = LongPollingSource::new(client).with_config(PollingConfig {
         persist_offset_path: Some(offset_path),
         ..PollingConfig::default()
-    });
+    })?;
 
     let result = source.poll().await;
 
@@ -2285,7 +2266,7 @@ async fn long_polling_source_validates_offset_storage_after_explicit_offset_over
     let mut source = LongPollingSource::new(client).with_config(PollingConfig {
         persist_offset_path: Some(offset_path),
         ..PollingConfig::default()
-    });
+    })?;
     source.set_next_offset(Some(42));
 
     let result = source.poll().await;
@@ -2321,12 +2302,12 @@ async fn long_polling_source_dedupes_duplicate_update_ids() -> Result<(), DynErr
         poll_timeout_seconds: 1,
         dedupe_window_size: 128,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 990 }]);
@@ -2351,12 +2332,12 @@ async fn long_polling_source_persists_offset_after_poll() -> Result<(), DynError
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Ignored { update_id: 701 }]);
@@ -2399,12 +2380,12 @@ async fn long_polling_source_does_not_ack_failed_dispatch() -> Result<(), DynErr
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let error = match engine.poll_once().await {
         Ok(_) => return Err("expected handler failure".into()),
@@ -2442,12 +2423,12 @@ async fn long_polling_source_acks_continued_handler_error() -> Result<(), DynErr
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: true,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Failed { update_id: 811 }]);
@@ -2495,12 +2476,12 @@ async fn long_polling_commits_successful_prefix_before_fail_fast_handler_error()
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let error = match engine.poll_once().await {
         Ok(outcomes) => return Err(format!("expected handler failure, got {outcomes:?}").into()),
@@ -2549,12 +2530,12 @@ async fn bot_engine_with_long_polling_source_dispatches_updates() -> Result<(), 
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes, vec![DispatchOutcome::Handled { update_id: 888 }]);
@@ -2590,7 +2571,7 @@ async fn bot_engine_channel_source_dispatches_updates() -> Result<(), DynError> 
         continue_on_source_error: false,
         continue_on_handler_error: false,
         ..EngineConfig::default()
-    });
+    })?;
 
     let maybe_update = parse_update(message_update(999, 1, "/start"));
     assert!(maybe_update.is_some());
@@ -2610,8 +2591,8 @@ async fn bot_engine_channel_source_dispatches_updates() -> Result<(), DynError> 
 async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(80))
-        .total_timeout(Some(Duration::from_millis(120)))
+        .request_timeout(Duration::from_millis(80))?
+        .total_timeout(Some(Duration::from_millis(120)))?
         .build()?;
     let metrics = Arc::new(Mutex::new(Vec::<EngineMetric>::new()));
 
@@ -2619,14 +2600,14 @@ async fn run_until_stops_on_shutdown_even_when_poll_errors() -> Result<(), DynEr
         disable_webhook_on_start: false,
         poll_timeout_seconds: 0,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new())
         .with_config(EngineConfig {
             continue_on_source_error: true,
             error_delay: Duration::from_millis(10),
             source_error_backoff: Some(Default::default()),
             ..EngineConfig::default()
-        })
+        })?
         .on_metric({
             let metrics = Arc::clone(&metrics);
             move |metric| {
@@ -2671,7 +2652,7 @@ async fn run_until_stops_on_non_retryable_source_error() -> Result<(), DynError>
             continue_on_source_error: true,
             error_delay: Duration::from_secs(60),
             ..EngineConfig::default()
-        })
+        })?
         .on_source_error({
             let source_errors = Arc::clone(&source_errors);
             move |_error| {
@@ -2698,7 +2679,7 @@ async fn run_until_stops_on_non_retryable_source_error() -> Result<(), DynError>
         Err(_) => return Err("closed source was incorrectly retried until timeout".into()),
     };
 
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Runtime { .. }));
     assert!(!error.is_retryable());
     assert_eq!(source_errors.load(Ordering::SeqCst), 1);
     let metrics = metrics.lock().map_err(|_| "engine metric mutex poisoned")?;
@@ -2736,7 +2717,7 @@ async fn run_until_stops_on_fail_fast_handler_error_even_when_source_errors_cont
         continue_on_handler_error: false,
         error_delay: Duration::from_millis(10),
         ..EngineConfig::default()
-    });
+    })?;
 
     sink.send(tele::bot::testing::message_update(820, 1, "fail")?)
         .await?;
@@ -2965,6 +2946,35 @@ async fn fallible_route_normalizes_empty_user_error_to_reply() -> Result<(), Dyn
 
     assert!(router.dispatch(BotContext::new(client), update).await?);
     join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn fallible_route_skips_user_error_reply_without_reply_target() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut router = Router::new();
+    router
+        .inline_query_route()
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::user("invalid input"))
+        });
+
+    let Some(update) = parse_update(json!({
+        "update_id": 905,
+        "inline_query": {
+            "id": "inline-user-error",
+            "from": {"id": 42, "is_bot": false, "first_name": "inline"},
+            "query": "lookup",
+            "offset": ""
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
     Ok(())
 }
 
@@ -3243,13 +3253,13 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: true,
         max_handler_concurrency: 3,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes.len(), 3);
@@ -3288,7 +3298,7 @@ async fn bot_engine_concurrent_outcomes_preserve_source_order() -> Result<(), Dy
         continue_on_handler_error: true,
         max_handler_concurrency: 3,
         ..EngineConfig::default()
-    });
+    })?;
 
     sink.send(tele::bot::testing::message_update(501, 1, "slow")?)
         .await?;
@@ -3350,13 +3360,13 @@ async fn fail_fast_dispatch_stays_serial_even_when_concurrency_configured() -> R
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         max_handler_concurrency: 3,
         ..EngineConfig::default()
-    });
+    })?;
 
     let error = match engine.poll_once().await {
         Ok(_) => return Err("expected fail-fast handler failure".into()),
@@ -3396,12 +3406,12 @@ async fn long_polling_commits_all_outcomes_when_handler_errors_are_continued()
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: true,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(
@@ -3439,13 +3449,13 @@ async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynErr
         persist_offset_path: Some(offset_path.clone()),
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, router).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: true,
         max_handler_concurrency: 2,
         ..EngineConfig::default()
-    });
+    })?;
 
     let error = match engine.poll_once().await {
         Ok(outcomes) => {
@@ -3455,7 +3465,7 @@ async fn concurrent_handler_panic_fails_cycle_without_ack() -> Result<(), DynErr
         }
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Runtime { .. }));
     assert_eq!(engine.source_mut().next_offset(), None);
     assert!(!offset_path.exists());
 
@@ -4097,6 +4107,48 @@ async fn route_with_policy_replies_user_on_error() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn reply_user_policy_preserves_error_without_reply_target() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut router = Router::new();
+    router.inline_query_route().handle_with_policy(
+        ErrorPolicy::ReplyUser {
+            fallback_message: "temporary failure".to_owned(),
+        },
+        |_context: BotContext, _update: Update| async move {
+            Err(HandlerError::internal(Error::Transport {
+                method: "answerInlineQuery".to_owned(),
+                status: Some(502),
+                request_id: None,
+                retry_after: None,
+                request_path: None,
+                message: "upstream unavailable".into(),
+            }))
+        },
+    );
+
+    let Some(update) = parse_update(json!({
+        "update_id": 4103,
+        "inline_query": {
+            "id": "inline-policy-error",
+            "from": {"id": 701, "is_bot": false, "first_name": "searcher"},
+            "query": "lookup",
+            "offset": ""
+        }
+    })) else {
+        return Ok(());
+    };
+
+    let error = router.dispatch(BotContext::new(client), update).await.err();
+    assert!(matches!(
+        error,
+        Some(Error::Transport { message, .. }) if message.as_ref() == "upstream unavailable"
+    ));
+    Ok(())
+}
+
+#[tokio::test]
 async fn join_request_error_reply_targets_user_chat_id() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":121,"date":1710000010,"chat":{"id":7001,"type":"private"},"text":"temporary failure"}}"#;
     let (base_url, handle) = spawn_server_with_checks(
@@ -4276,6 +4328,11 @@ async fn outbox_rejects_invalid_message_before_enqueue() -> Result<(), DynError>
 
 #[tokio::test]
 async fn outbox_rejects_invalid_config_on_spawn() -> Result<(), DynError> {
+    assert!(matches!(
+        OutboxConfig::default().with_max_message_age(Some(Duration::ZERO)),
+        Err(Error::Configuration { .. })
+    ));
+
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
         .build()?;
@@ -4286,7 +4343,7 @@ async fn outbox_rejects_invalid_config_on_spawn() -> Result<(), DynError> {
         Ok(_) => return Err("expected invalid outbox config to be rejected".into()),
         Err(error) => error,
     };
-    assert!(matches!(error, Error::InvalidRequest { .. }));
+    assert!(matches!(error, Error::Configuration { .. }));
     assert!(error.to_string().contains("queue_capacity"));
     Ok(())
 }
@@ -4597,7 +4654,7 @@ async fn outbox_expires_persisted_message_and_moves_to_dead_letter() -> Result<(
     let config = OutboxConfig::default()
         .with_persistence_path(queue_path.clone())
         .with_dead_letter_path(dead_letter_path.clone())
-        .with_max_message_age(Some(Duration::from_millis(1)));
+        .with_max_message_age(Some(Duration::from_millis(1)))?;
     let _outbox = BotOutbox::spawn(client, config)?;
 
     wait_for_condition(Duration::from_secs(2), Duration::from_millis(20), || {
@@ -4719,7 +4776,7 @@ async fn bot_engine_emits_events_and_testing_harness_dispatches() -> Result<(), 
             continue_on_source_error: false,
             continue_on_handler_error: false,
             ..EngineConfig::default()
-        })
+        })?
         .on_event({
             let events = Arc::clone(&events);
             move |event| {
@@ -4843,8 +4900,8 @@ async fn bot_engine_emits_unknown_kind_event() -> Result<(), DynError> {
 async fn bot_engine_poll_failed_emits_details_and_async_hook() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(200))
-        .total_timeout(Some(Duration::from_millis(500)))
+        .request_timeout(Duration::from_millis(200))?
+        .total_timeout(Some(Duration::from_millis(500)))?
         .build()?;
 
     let events = Arc::new(Mutex::new(Vec::<EngineEvent>::new()));
@@ -4853,7 +4910,7 @@ async fn bot_engine_poll_failed_emits_details_and_async_hook() -> Result<(), Dyn
         .with_config(EngineConfig {
             continue_on_source_error: false,
             ..EngineConfig::default()
-        })
+        })?
         .on_event({
             let events = Arc::clone(&events);
             move |event| {
@@ -4933,13 +4990,13 @@ async fn long_polling_source_offset_never_moves_backward() -> Result<(), DynErro
         disable_webhook_on_start: false,
         poll_timeout_seconds: 1,
         ..PollingConfig::default()
-    });
+    })?;
     let mut engine = BotEngine::new(client, source, Router::new()).with_config(EngineConfig {
         continue_on_source_error: false,
         continue_on_handler_error: false,
         max_handler_concurrency: 2,
         ..EngineConfig::default()
-    });
+    })?;
 
     let outcomes = engine.poll_once().await?;
     assert_eq!(outcomes.len(), 2);

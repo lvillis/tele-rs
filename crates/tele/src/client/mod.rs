@@ -11,7 +11,10 @@ mod blocking_client;
 pub use async_client::Client;
 #[cfg(feature = "_blocking")]
 pub use blocking_client::BlockingClient;
-pub use config::{ClientBuilder, RateLimitConfig, RequestDefaults, RetryConfig};
+pub(crate) use config::RequestDefaults;
+pub use config::{ClientBuilder, RateLimitConfig, RetryConfig};
+#[cfg(feature = "bot")]
+pub(crate) use layers::is_missing_reply_target_error;
 #[cfg(feature = "_async")]
 pub use layers::{
     AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
@@ -37,4 +40,4 @@ pub use layers::{
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingSetupApi, BlockingWebAppApi};
 pub use observability::{ClientMetric, ClientMetricHook};
-pub(crate) use observability::{ClientObservability, emit_client_metric};
+pub(crate) use observability::{ClientObservability, emit_client_result_metric};

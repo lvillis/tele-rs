@@ -66,14 +66,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             error_delay: Duration::from_millis(500),
             max_handler_concurrency: 16,
             ..EngineConfig::default()
-        })
+        })?
         .on_event(|event| {
             if let EngineEvent::PollFailed { .. } = event {
                 eprintln!("bot poll failed: {event:?}");
             }
         });
 
-    app.engine_mut().source_mut().set_poll_timeout_seconds(20);
+    app.engine_mut().source_mut().set_poll_timeout_seconds(20)?;
     app.run().await?;
     Ok(())
 }

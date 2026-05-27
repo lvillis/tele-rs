@@ -186,6 +186,16 @@ fn configuration_errors_are_not_retryable() {
 }
 
 #[test]
+fn runtime_errors_are_not_request_validation_errors() {
+    let error = Error::Runtime {
+        reason: "outbox worker is closed".to_owned(),
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Runtime);
+    assert!(!error.is_retryable());
+}
+
+#[test]
 fn storage_errors_preserve_retry_policy() {
     let retryable = Error::Storage {
         operation: "redis GET".into(),

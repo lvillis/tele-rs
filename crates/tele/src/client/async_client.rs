@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -17,10 +17,10 @@ use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
-use super::config::BuilderParts;
+use super::config::{BuilderParts, RequestDefaults};
 use super::{
-    AppApi, ClientBuilder, ClientObservability, ControlApi, RawApi, RequestDefaults, TypedApi,
-    emit_client_metric,
+    AppApi, ClientBuilder, ClientObservability, ControlApi, RawApi, TypedApi,
+    emit_client_result_metric,
 };
 
 #[derive(Clone)]
@@ -161,7 +161,12 @@ impl Client {
             .transport
             .execute_json(method, token, payload, config);
         let result = request_future.await;
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -204,7 +209,12 @@ impl Client {
         #[cfg(not(feature = "tracing"))]
         let request_future = self.inner.transport.execute_empty(method, token, config);
         let result = request_future.await;
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -282,7 +292,12 @@ impl Client {
             config,
         );
         let result = request_future.await;
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
@@ -356,46 +371,26 @@ impl Client {
             .transport
             .execute_multipart_files(method, token, &fields, files, config);
         let result = request_future.await;
-        self.emit_metric(method, started_at.elapsed(), &result);
+        emit_client_result_metric(
+            &self.inner.observability,
+            method,
+            started_at.elapsed(),
+            &result,
+        );
         result
     }
 
     #[cfg(feature = "bot")]
-    pub(crate) fn request_timeout(&self) -> Duration {
+    pub(crate) fn request_timeout(&self) -> std::time::Duration {
         self.inner.defaults.request_timeout
     }
 
     #[cfg(feature = "bot")]
-    pub(crate) fn total_timeout(&self) -> Option<Duration> {
+    pub(crate) fn total_timeout(&self) -> Option<std::time::Duration> {
         self.inner.defaults.total_timeout
     }
 
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
-    }
-
-    fn emit_metric<R>(&self, method: &str, latency: Duration, result: &Result<R>) {
-        let (success, status, classification, retryable, request_id) = match result {
-            Ok(_) => (true, None, None, false, None),
-            Err(error) => (
-                false,
-                error.status().map(|status| status.as_u16()),
-                Some(error.classification()),
-                error.is_retryable(),
-                error.request_id().map(ToOwned::to_owned),
-            ),
-        };
-        emit_client_metric(
-            &self.inner.observability,
-            super::ClientMetric {
-                method: method.to_owned(),
-                success,
-                latency,
-                status,
-                classification,
-                retryable,
-                request_id,
-            },
-        );
     }
 }

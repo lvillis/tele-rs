@@ -60,9 +60,10 @@ pub use crate::bot::{
     MessageReactionCountInput, MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig,
     PaidMediaPurchasedInput, ParsedCommandRouteBuilder, PollAnswerInput, PollInput, PollingConfig,
     PreCheckoutQueryInput, RequestStateKey, RouteRejection, Router, ShippingQueryInput,
-    SourceErrorBackoffConfig, TextInput, ThrottleScope, TypedCallbackInput,
+    SourceErrorBackoffConfig, TELEGRAM_SECRET_HEADER, TextInput, ThrottleScope, TypedCallbackInput,
     TypedCallbackRouteBuilder, TypedCommandInput, UpdateExt, UpdateExtractor, UpdateSink,
-    WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source,
+    WebAppInput, WebhookRunner, WriteAccessAllowedInput, channel_source, dispatch_webhook,
+    dispatch_webhook_status, telegram_secret_token,
 };
 
 #[cfg(feature = "macros")]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::validation::MAX_MESSAGE_TEXT_CHARS;
 
 const DEFAULT_REJECTION_MESSAGE: &str = "request rejected";
 
@@ -22,7 +23,7 @@ pub enum RouteRejection {
 impl RouteRejection {
     pub fn message(&self) -> String {
         match self {
-            Self::Message(message) => normalized_rejection_message(message),
+            Self::Message(message) => normalize_user_message(message, DEFAULT_REJECTION_MESSAGE),
             Self::GroupOnly => "this route is only available in group chats".to_owned(),
             Self::SupergroupOnly => "this route is only available in supergroups".to_owned(),
             Self::AdminOnly => "chat administrators only".to_owned(),
@@ -52,17 +53,34 @@ impl RouteRejection {
 
     pub fn custom(message: impl Into<String>) -> Self {
         let message = message.into();
-        Self::Message(normalized_rejection_message(&message))
+        Self::Message(normalize_user_message(&message, DEFAULT_REJECTION_MESSAGE))
     }
 }
 
-fn normalized_rejection_message(message: &str) -> String {
-    let message = message.trim();
-    if message.is_empty() {
-        DEFAULT_REJECTION_MESSAGE.to_owned()
+pub(crate) fn normalize_user_message(message: &str, default_message: &str) -> String {
+    let mut normalized = message
+        .trim()
+        .chars()
+        .map(|character| {
+            if is_disallowed_rejection_character(character) {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(MAX_MESSAGE_TEXT_CHARS)
+        .collect::<String>();
+    normalized = normalized.trim().to_owned();
+
+    if normalized.is_empty() {
+        default_message.to_owned()
     } else {
-        message.to_owned()
+        normalized
     }
+}
+
+fn is_disallowed_rejection_character(character: char) -> bool {
+    character.is_control() && !matches!(character, '\n' | '\r' | '\t')
 }
 
 /// Handler error type that separates route rejections from internal failures.
@@ -100,3 +118,20 @@ impl From<Error> for HandlerError {
 
 /// Ergonomic result type for bot handlers.
 pub type HandlerResult = std::result::Result<(), HandlerError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_rejection_message_is_sendable_text() {
+        let rejection = RouteRejection::custom(" invalid\u{0007}input ");
+        assert_eq!(rejection.message(), "invalid input");
+
+        let rejection = RouteRejection::custom(" \n\t ");
+        assert_eq!(rejection.message(), DEFAULT_REJECTION_MESSAGE);
+
+        let rejection = RouteRejection::custom("a".repeat(MAX_MESSAGE_TEXT_CHARS + 1));
+        assert_eq!(rejection.message().chars().count(), MAX_MESSAGE_TEXT_CHARS);
+    }
+}

@@ -2121,8 +2121,8 @@ async fn app_reply_text_rejects_guest_message_updates() -> Result<(), DynError> 
 async fn transport_error_redacts_token() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(100))
-        .total_timeout(Some(Duration::from_millis(300)))
+        .request_timeout(Duration::from_millis(100))?
+        .total_timeout(Some(Duration::from_millis(300)))?
         .build()?;
 
     let err = match client.bot().get_me().await {
@@ -2316,8 +2316,8 @@ async fn bootstrap_plan_typed_commands_with_scope_and_language() -> Result<(), D
 async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(100))
-        .total_timeout(Some(Duration::from_millis(300)))
+        .request_timeout(Duration::from_millis(100))?
+        .total_timeout(Some(Duration::from_millis(300)))?
         .build()?;
 
     let plan = BootstrapPlan::new().commands(vec![BotCommand::new("start", "start bot")?])?;
@@ -2347,8 +2347,8 @@ async fn bootstrap_retry_can_continue_on_failure() -> Result<(), DynError> {
 async fn setup_bootstrap_warns_on_retryable_get_me_after_retries() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
-        .request_timeout(Duration::from_millis(40))
-        .total_timeout(Some(Duration::from_millis(120)))
+        .request_timeout(Duration::from_millis(40))?
+        .total_timeout(Some(Duration::from_millis(120)))?
         .build()?;
     let plan = BootstrapPlan::new().warn_and_continue_on_retryable_get_me();
     let outcome = client
