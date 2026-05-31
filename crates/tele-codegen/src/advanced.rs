@@ -287,11 +287,17 @@ fn json_advanced_methods(spec: &BotApiSpec) -> Vec<&MethodSpec> {
 }
 
 fn qualify_common_type(field_ty: &str) -> String {
-    field_ty
-        .replace("NumericChatId", "crate::types::common::NumericChatId")
-        .replace("ChatId", "crate::types::common::ChatId")
-        .replace("MessageId", "crate::types::common::MessageId")
-        .replace("UserId", "crate::types::common::UserId")
+    match field_ty {
+        "ChatId" => "crate::types::common::ChatId".to_owned(),
+        "NumericChatId" => "crate::types::common::NumericChatId".to_owned(),
+        "MessageId" => "crate::types::common::MessageId".to_owned(),
+        "UserId" => "crate::types::common::UserId".to_owned(),
+        _ => field_ty
+            .strip_prefix("Vec<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .map(|inner| format!("Vec<{}>", qualify_common_type(inner)))
+            .unwrap_or_else(|| field_ty.to_owned()),
+    }
 }
 
 fn ctor_arg_type(field_ty: &str) -> &str {
@@ -2145,6 +2151,18 @@ mod tests {
             "AdvancedAnswerWebAppQueryRequest"
         );
         assert_eq!(typed_fn_name("get_me"), "get_me_typed");
+    }
+
+    #[test]
+    fn common_type_qualification_is_token_based() {
+        assert_eq!(
+            qualify_common_type("NumericChatId"),
+            "crate::types::common::NumericChatId"
+        );
+        assert_eq!(
+            qualify_common_type("Vec<MessageId>"),
+            "Vec<crate::types::common::MessageId>"
+        );
     }
 
     #[test]

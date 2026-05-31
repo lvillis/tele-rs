@@ -26,7 +26,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::Error;
-use crate::client::{RateLimitConfig, RequestDefaults, RetryConfig};
+use crate::client::{RateLimitConfig, RequestDefaults};
 use crate::types::common::ResponseParameters;
 use crate::types::upload::UploadFile;
 use crate::util::{
@@ -35,23 +35,20 @@ use crate::util::{
 
 static LOCAL_REQUEST_ID_SEQ: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TransportRetryMode {
-    Inherit,
-    Disabled,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TransportRequestConfig<'a> {
     defaults: &'a RequestDefaults,
-    retry_mode: TransportRetryMode,
+    total_timeout: Option<Duration>,
 }
 
 impl<'a> TransportRequestConfig<'a> {
-    pub(crate) fn new(defaults: &'a RequestDefaults, retry_mode: TransportRetryMode) -> Self {
+    pub(crate) fn with_total_timeout(
+        defaults: &'a RequestDefaults,
+        total_timeout: Option<Duration>,
+    ) -> Self {
         Self {
             defaults,
-            retry_mode,
+            total_timeout,
         }
     }
 
@@ -59,8 +56,8 @@ impl<'a> TransportRequestConfig<'a> {
         self.defaults
     }
 
-    pub(crate) fn retry_mode(&self) -> TransportRetryMode {
-        self.retry_mode
+    pub(crate) fn total_timeout(&self) -> Option<Duration> {
+        self.total_timeout
     }
 }
 
@@ -262,14 +259,6 @@ pub(crate) fn map_reqx_builder_error(source: reqx::Error) -> Error {
     }
 }
 
-pub(crate) fn to_retry_policy(retry: &RetryConfig) -> RetryPolicy {
-    RetryPolicy::standard()
-        .max_attempts(retry.max_attempts)
-        .base_backoff(retry.base_backoff)
-        .max_backoff(retry.max_backoff)
-        .jitter_ratio(retry.jitter_ratio)
-}
-
 pub(crate) fn to_rate_limit_policy(config: &RateLimitConfig) -> RateLimitPolicy {
     RateLimitPolicy::standard()
         .requests_per_second(config.requests_per_second)
@@ -292,7 +281,6 @@ trait TransportClientBuilder: Sized {
     fn max_in_flight_per_host(self, max_in_flight_per_host: usize) -> Self;
     fn global_rate_limit_policy(self, global_rate_limit_policy: RateLimitPolicy) -> Self;
     fn per_host_rate_limit_policy(self, per_host_rate_limit_policy: RateLimitPolicy) -> Self;
-    fn allow_non_idempotent_retries(self, enabled: bool) -> Self;
     fn http_proxy(self, proxy_uri: http::Uri) -> Self;
     fn proxy_authorization(self, proxy_authorization: HeaderValue) -> Self;
     fn try_add_no_proxy(self, rule: &str) -> reqx::Result<Self>;
@@ -350,10 +338,6 @@ impl TransportClientBuilder for reqx::ClientBuilder {
 
     fn per_host_rate_limit_policy(self, per_host_rate_limit_policy: RateLimitPolicy) -> Self {
         reqx::ClientBuilder::per_host_rate_limit_policy(self, per_host_rate_limit_policy)
-    }
-
-    fn allow_non_idempotent_retries(self, enabled: bool) -> Self {
-        reqx::ClientBuilder::allow_non_idempotent_retries(self, enabled)
     }
 
     fn http_proxy(self, proxy_uri: http::Uri) -> Self {
@@ -429,10 +413,6 @@ impl TransportClientBuilder for reqx::blocking::ClientBuilder {
         reqx::blocking::ClientBuilder::per_host_rate_limit_policy(self, per_host_rate_limit_policy)
     }
 
-    fn allow_non_idempotent_retries(self, enabled: bool) -> Self {
-        reqx::blocking::ClientBuilder::allow_non_idempotent_retries(self, enabled)
-    }
-
     fn http_proxy(self, proxy_uri: http::Uri) -> Self {
         reqx::blocking::ClientBuilder::http_proxy(self, proxy_uri)
     }
@@ -468,7 +448,7 @@ where
         .max_response_body_bytes(defaults.max_response_body_bytes)
         .default_status_policy(StatusPolicy::Response)
         .redirect_policy(RedirectPolicy::none())
-        .retry_policy(to_retry_policy(&defaults.retry))
+        .retry_policy(RetryPolicy::disabled())
         .client_name("tele");
 
     if let Some(total_timeout) = defaults.total_timeout {
@@ -489,10 +469,6 @@ where
 
     if let Some(per_host_rate_limit) = defaults.per_host_rate_limit.as_ref() {
         builder = builder.per_host_rate_limit_policy(to_rate_limit_policy(per_host_rate_limit));
-    }
-
-    if defaults.retry.allow_non_idempotent_retries {
-        builder = builder.allow_non_idempotent_retries(true);
     }
 
     if let Some(http_proxy) = defaults.http_proxy.clone() {

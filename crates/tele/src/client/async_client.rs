@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -11,13 +11,14 @@ use crate::api::{
     StickersService, UpdatesService,
 };
 use crate::auth::Auth;
+use crate::transport::TransportRequestConfig;
 use crate::transport::async_transport::AsyncTransport;
 use crate::transport::serialize_multipart_fields;
-use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 use super::config::{BuilderParts, RequestDefaults};
+use super::retry::retry_method_async;
 use super::{
     AppApi, ClientBuilder, ClientObservability, ControlApi, RawApi, TypedApi,
     emit_client_result_metric,
@@ -119,35 +120,41 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Inherit)
-            .await
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_async(
+            method,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| async move {
+                self.call_method_attempt(method, payload, total_timeout)
+                    .await
+            },
+        )
+        .await
     }
 
-    pub(crate) async fn call_method_without_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-    ) -> Result<R>
+    pub(crate) async fn call_method_once<R, P>(&self, method: &str, payload: &P) -> Result<R>
     where
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Disabled)
+        self.call_method_attempt(method, payload, self.inner.defaults.total_timeout)
             .await
     }
 
-    async fn call_method_with_transport_retry<R, P>(
+    pub(crate) async fn call_method_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
         let token = self.require_token()?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
@@ -174,31 +181,38 @@ impl Client {
     where
         R: DeserializeOwned,
     {
-        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Inherit)
-            .await
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_async(
+            method,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| async move {
+                self.call_method_no_params_attempt(method, total_timeout)
+                    .await
+            },
+        )
+        .await
     }
 
-    pub(crate) async fn call_method_no_params_without_transport_retry<R>(
-        &self,
-        method: &str,
-    ) -> Result<R>
+    pub(crate) async fn call_method_no_params_once<R>(&self, method: &str) -> Result<R>
     where
         R: DeserializeOwned,
     {
-        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Disabled)
+        self.call_method_no_params_attempt(method, self.inner.defaults.total_timeout)
             .await
     }
 
-    async fn call_method_no_params_with_transport_retry<R>(
+    pub(crate) async fn call_method_no_params_attempt<R>(
         &self,
         method: &str,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
     {
         let token = self.require_token()?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
@@ -229,44 +243,32 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_multipart_with_transport_retry(
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_async(
             method,
-            payload,
-            file_field_name,
-            file,
-            TransportRetryMode::Inherit,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| async move {
+                self.call_method_multipart_attempt(
+                    method,
+                    payload,
+                    file_field_name,
+                    file,
+                    total_timeout,
+                )
+                .await
+            },
         )
         .await
     }
 
-    pub(crate) async fn call_method_multipart_without_transport_retry<R, P>(
+    pub(crate) async fn call_method_multipart_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
         file_field_name: &str,
         file: &UploadFile,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-        P: Serialize + ?Sized,
-    {
-        self.call_method_multipart_with_transport_retry(
-            method,
-            payload,
-            file_field_name,
-            file,
-            TransportRetryMode::Disabled,
-        )
-        .await
-    }
-
-    async fn call_method_multipart_with_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-        file_field_name: &str,
-        file: &UploadFile,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
@@ -274,7 +276,8 @@ impl Client {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
@@ -312,44 +315,32 @@ impl Client {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_multipart_files_with_transport_retry(
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_async(
             method,
-            payload,
-            skip_fields,
-            files,
-            TransportRetryMode::Inherit,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| async move {
+                self.call_method_multipart_files_attempt(
+                    method,
+                    payload,
+                    skip_fields,
+                    files,
+                    total_timeout,
+                )
+                .await
+            },
         )
         .await
     }
 
-    pub(crate) async fn call_method_multipart_files_without_transport_retry<R, P>(
+    pub(crate) async fn call_method_multipart_files_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
         skip_fields: &[&str],
         files: &[UploadPart],
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-        P: Serialize + ?Sized,
-    {
-        self.call_method_multipart_files_with_transport_retry(
-            method,
-            payload,
-            skip_fields,
-            files,
-            TransportRetryMode::Disabled,
-        )
-        .await
-    }
-
-    async fn call_method_multipart_files_with_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-        skip_fields: &[&str],
-        files: &[UploadPart],
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
@@ -357,7 +348,8 @@ impl Client {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, skip_fields)?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         let started_at = Instant::now();
         #[cfg(feature = "tracing")]
         let request_future = self
@@ -385,7 +377,6 @@ impl Client {
         self.inner.defaults.request_timeout
     }
 
-    #[cfg(feature = "bot")]
     pub(crate) fn total_timeout(&self) -> Option<std::time::Duration> {
         self.inner.defaults.total_timeout
     }

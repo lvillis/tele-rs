@@ -20,15 +20,15 @@ pub use common::{
 };
 pub use content::{
     Checklist, ChecklistTask, Contact, Dice, DiceEmoji, Game, GameHighScore, Location, Poll,
-    PollKind, PollOption, Venue,
+    PollKind, PollMedia, PollOption, Venue,
 };
 pub use forum::{
     ForumTopic, ForumTopicClosed, ForumTopicCreated, ForumTopicEdited, ForumTopicReopened,
     GeneralForumTopicHidden, GeneralForumTopicUnhidden,
 };
 pub use media::{
-    Animation, Audio, Document, PaidMedia, PaidMediaInfo, PaidMediaPhoto, PaidMediaPreview,
-    PaidMediaVideo, Story, Video, VideoNote, VideoQuality, Voice,
+    Animation, Audio, Document, LivePhoto, PaidMedia, PaidMediaInfo, PaidMediaLivePhoto,
+    PaidMediaPhoto, PaidMediaPreview, PaidMediaVideo, Story, Video, VideoNote, VideoQuality, Voice,
 };
 pub use metadata::{
     MessageKind, SuggestedPostApprovalFailed, SuggestedPostApproved, SuggestedPostDeclined,
@@ -45,17 +45,21 @@ pub use requests::{
     DeleteMessagesRequest, EditMessageCaptionRequest, EditMessageLiveLocationRequest,
     EditMessageReplyMarkupRequest, EditMessageResult, EditMessageTextRequest,
     ForwardMessageRequest, InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument,
-    InputMediaGroupItem, InputMediaPhoto, InputMediaVideo, InputPollOption, MessageIdObject,
-    SendAnimationRequest, SendAudioRequest, SendChatActionRequest, SendContactRequest,
-    SendDiceRequest, SendDocumentRequest, SendLocationRequest, SendMediaGroupRequest,
-    SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest, SendVideoNoteRequest,
-    SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopMessageLiveLocationRequest,
-    StopPollRequest,
+    InputMediaGroupItem, InputMediaLivePhoto, InputMediaLocation, InputMediaPhoto,
+    InputMediaSticker, InputMediaVenue, InputMediaVideo, InputPollMedia, InputPollOption,
+    InputPollOptionMedia, MessageIdObject, SendAnimationRequest, SendAudioRequest,
+    SendChatActionRequest, SendContactRequest, SendDiceRequest, SendDocumentRequest,
+    SendLocationRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
+    SendPollRequest, SendVenueRequest, SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest,
+    SentWebAppMessage, StopMessageLiveLocationRequest, StopPollRequest,
 };
 pub use service::{
-    ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft, ChatShared, ChecklistTasksAdded,
-    ChecklistTasksDone, DirectMessagePriceChanged, Giveaway, GiveawayCompleted, GiveawayCreated,
-    GiveawayWinners, MessageAutoDeleteTimerChanged, PaidMessagePriceChanged,
-    ProximityAlertTriggered, SharedUser, UsersShared, VideoChatEnded, VideoChatParticipantsInvited,
-    VideoChatScheduled, VideoChatStarted, WriteAccessAllowed,
+    BackgroundFill, BackgroundFillFreeformGradient, BackgroundFillGradient, BackgroundFillSolid,
+    BackgroundType, BackgroundTypeChatTheme, BackgroundTypeFill, BackgroundTypePattern,
+    BackgroundTypeWallpaper, ChatBackground, ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft,
+    ChatShared, ChecklistTasksAdded, ChecklistTasksDone, DirectMessagePriceChanged,
+    DirectMessagesTopic, Giveaway, GiveawayCompleted, GiveawayCreated, GiveawayWinners,
+    ManagedBotCreated, MessageAutoDeleteTimerChanged, PaidMessagePriceChanged, PollOptionAdded,
+    PollOptionDeleted, ProximityAlertTriggered, SharedUser, UsersShared, VideoChatEnded,
+    VideoChatParticipantsInvited, VideoChatScheduled, VideoChatStarted, WriteAccessAllowed,
 };

@@ -9,7 +9,9 @@ use crate::types::telegram::LinkPreviewOptions;
 
 use super::common::{Chat, MessageEntity, MessageOrigin, PhotoSize};
 use super::content::{Checklist, Contact, Dice, Game, Location, Poll, Venue};
-use super::media::{Animation, Audio, Document, PaidMediaInfo, Story, Video, VideoNote, Voice};
+use super::media::{
+    Animation, Audio, Document, LivePhoto, PaidMediaInfo, Story, Video, VideoNote, Voice,
+};
 use super::model::Message;
 use super::payments::Invoice;
 use super::service::{Giveaway, GiveawayWinners};
@@ -43,6 +45,8 @@ pub struct ExternalReplyInfo {
     pub audio: Option<Audio>,
     #[serde(default)]
     pub document: Option<Document>,
+    #[serde(default)]
+    pub live_photo: Option<LivePhoto>,
     #[serde(default)]
     pub paid_media: Option<PaidMediaInfo>,
     #[serde(default)]

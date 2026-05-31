@@ -22,6 +22,28 @@ pub struct User {
     pub username: Option<String>,
     #[serde(default)]
     pub language_code: Option<String>,
+    #[serde(default)]
+    pub is_premium: bool,
+    #[serde(default)]
+    pub added_to_attachment_menu: bool,
+    #[serde(default)]
+    pub can_join_groups: Option<bool>,
+    #[serde(default)]
+    pub can_read_all_group_messages: Option<bool>,
+    #[serde(default)]
+    pub supports_guest_queries: Option<bool>,
+    #[serde(default)]
+    pub supports_inline_queries: Option<bool>,
+    #[serde(default)]
+    pub can_connect_to_business: Option<bool>,
+    #[serde(default)]
+    pub has_main_web_app: Option<bool>,
+    #[serde(default)]
+    pub has_topics_enabled: Option<bool>,
+    #[serde(default)]
+    pub allows_users_to_create_topics: Option<bool>,
+    #[serde(default)]
+    pub can_manage_bots: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -114,6 +136,17 @@ mod tests {
             "last_name": "Bot",
             "username": "telebot",
             "language_code": "en",
+            "is_premium": true,
+            "added_to_attachment_menu": true,
+            "can_join_groups": true,
+            "can_read_all_group_messages": false,
+            "supports_guest_queries": true,
+            "supports_inline_queries": true,
+            "can_connect_to_business": true,
+            "has_main_web_app": true,
+            "has_topics_enabled": true,
+            "allows_users_to_create_topics": true,
+            "can_manage_bots": true,
             "future_field": "kept"
         }))?;
 
@@ -123,6 +156,17 @@ mod tests {
         assert_eq!(user.last_name.as_deref(), Some("Bot"));
         assert_eq!(user.username.as_deref(), Some("telebot"));
         assert_eq!(user.language_code.as_deref(), Some("en"));
+        assert!(user.is_premium);
+        assert!(user.added_to_attachment_menu);
+        assert_eq!(user.can_join_groups, Some(true));
+        assert_eq!(user.can_read_all_group_messages, Some(false));
+        assert_eq!(user.supports_guest_queries, Some(true));
+        assert_eq!(user.supports_inline_queries, Some(true));
+        assert_eq!(user.can_connect_to_business, Some(true));
+        assert_eq!(user.has_main_web_app, Some(true));
+        assert_eq!(user.has_topics_enabled, Some(true));
+        assert_eq!(user.allows_users_to_create_topics, Some(true));
+        assert_eq!(user.can_manage_bots, Some(true));
         assert_eq!(user.extra["future_field"], "kept");
 
         Ok(())

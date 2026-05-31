@@ -1,11 +1,10 @@
 use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
-use reqx::prelude::RetryPolicy;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::client::RequestDefaults;
 use crate::transport::{
-    PreparedTelegramCall, TransportRequestConfig, TransportRetryMode, build_multipart_payload,
+    PreparedTelegramCall, TransportRequestConfig, build_multipart_payload,
     build_multipart_payload_many, build_transport_client, multipart_header_values,
 };
 use crate::types::upload::{UploadFile, UploadPart};
@@ -141,13 +140,9 @@ impl AsyncTransport {
             .timeout(defaults.request_timeout)
             .max_response_body_bytes(defaults.max_response_body_bytes);
 
-        if let Some(total_timeout) = defaults.total_timeout {
+        if let Some(total_timeout) = config.total_timeout() {
             request = request.total_timeout(total_timeout);
         }
-        if config.retry_mode() == TransportRetryMode::Disabled {
-            request = request.retry_policy(RetryPolicy::disabled());
-        }
-
         request
     }
 }

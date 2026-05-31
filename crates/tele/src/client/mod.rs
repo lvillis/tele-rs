@@ -1,6 +1,7 @@
 mod config;
 mod layers;
 mod observability;
+mod retry;
 
 #[cfg(feature = "_async")]
 mod async_client;
@@ -14,13 +15,17 @@ pub use blocking_client::BlockingClient;
 pub(crate) use config::RequestDefaults;
 pub use config::{ClientBuilder, RateLimitConfig, RetryConfig};
 #[cfg(feature = "bot")]
-pub(crate) use layers::is_missing_reply_target_error;
+pub(crate) use layers::is_unaddressable_reply_error;
 #[cfg(feature = "_async")]
 pub use layers::{
-    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
-    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
-    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
+    AnimationSendBuilder, AnimationUploadBuilder, AppApi, AudioSendBuilder, AudioUploadBuilder,
+    CallbackAnswerBuilder, ChatActionBuilder, ContactSendBuilder, ControlApi, DiceSendBuilder,
+    DocumentSendBuilder, DocumentUploadBuilder, LocationSendBuilder, MediaGroupSendBuilder,
+    MediaGroupUploadBuilder, MembershipApi, ModerationApi, ModerationNoticeApi, PhotoSendBuilder,
+    PhotoUploadBuilder, PollSendBuilder, RawApi, SetupApi, StickerSendBuilder,
+    StickerUploadBuilder, StopPollBuilder, TextSendBuilder, TypedApi, VenueSendBuilder,
+    VideoNoteSendBuilder, VideoNoteUploadBuilder, VideoSendBuilder, VideoUploadBuilder,
+    VoiceSendBuilder, VoiceUploadBuilder, WebAppApi,
 };
 pub use layers::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -30,12 +35,17 @@ pub use layers::{
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{
-    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
-    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
-    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
-    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
-    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAnimationUploadBuilder, BlockingAppApi,
+    BlockingAudioSendBuilder, BlockingAudioUploadBuilder, BlockingCallbackAnswerBuilder,
+    BlockingChatActionBuilder, BlockingContactSendBuilder, BlockingControlApi,
+    BlockingDiceSendBuilder, BlockingDocumentSendBuilder, BlockingDocumentUploadBuilder,
+    BlockingLocationSendBuilder, BlockingMediaGroupSendBuilder, BlockingMediaGroupUploadBuilder,
+    BlockingMembershipApi, BlockingModerationApi, BlockingModerationNoticeApi,
+    BlockingPhotoSendBuilder, BlockingPhotoUploadBuilder, BlockingPollSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingStickerUploadBuilder, BlockingStopPollBuilder,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVenueSendBuilder,
+    BlockingVideoNoteSendBuilder, BlockingVideoNoteUploadBuilder, BlockingVideoSendBuilder,
+    BlockingVideoUploadBuilder, BlockingVoiceSendBuilder, BlockingVoiceUploadBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use layers::{BlockingSetupApi, BlockingWebAppApi};

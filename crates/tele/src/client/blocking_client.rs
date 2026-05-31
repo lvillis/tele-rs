@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -10,13 +10,14 @@ use crate::api::{
     BlockingUpdatesService,
 };
 use crate::auth::Auth;
+use crate::transport::TransportRequestConfig;
 use crate::transport::blocking_transport::BlockingTransport;
 use crate::transport::serialize_multipart_fields;
-use crate::transport::{TransportRequestConfig, TransportRetryMode};
 use crate::types::upload::{UploadFile, UploadPart};
 use crate::{Error, Result};
 
 use super::config::{BuilderParts, RequestDefaults};
+use super::retry::retry_method_blocking;
 use super::{
     BlockingAppApi, BlockingControlApi, BlockingRawApi, BlockingTypedApi, ClientBuilder,
     ClientObservability, emit_client_result_metric,
@@ -118,33 +119,36 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Inherit)
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_blocking(
+            method,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| self.call_method_attempt(method, payload, total_timeout),
+        )
     }
 
-    pub(crate) fn call_method_without_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-    ) -> Result<R>
+    pub(crate) fn call_method_once<R, P>(&self, method: &str, payload: &P) -> Result<R>
     where
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_with_transport_retry(method, payload, TransportRetryMode::Disabled)
+        self.call_method_attempt(method, payload, self.inner.defaults.total_timeout)
     }
 
-    fn call_method_with_transport_retry<R, P>(
+    pub(crate) fn call_method_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
         let token = self.require_token()?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
@@ -165,26 +169,33 @@ impl BlockingClient {
     where
         R: DeserializeOwned,
     {
-        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Inherit)
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_blocking(
+            method,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| self.call_method_no_params_attempt(method, total_timeout),
+        )
     }
 
-    pub(crate) fn call_method_no_params_without_transport_retry<R>(&self, method: &str) -> Result<R>
+    pub(crate) fn call_method_no_params_once<R>(&self, method: &str) -> Result<R>
     where
         R: DeserializeOwned,
     {
-        self.call_method_no_params_with_transport_retry(method, TransportRetryMode::Disabled)
+        self.call_method_no_params_attempt(method, self.inner.defaults.total_timeout)
     }
 
-    fn call_method_no_params_with_transport_retry<R>(
+    pub(crate) fn call_method_no_params_attempt<R>(
         &self,
         method: &str,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
     {
         let token = self.require_token()?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
@@ -209,42 +220,30 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_multipart_with_transport_retry(
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_blocking(
             method,
-            payload,
-            file_field_name,
-            file,
-            TransportRetryMode::Inherit,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| {
+                self.call_method_multipart_attempt(
+                    method,
+                    payload,
+                    file_field_name,
+                    file,
+                    total_timeout,
+                )
+            },
         )
     }
 
-    pub(crate) fn call_method_multipart_without_transport_retry<R, P>(
+    pub(crate) fn call_method_multipart_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
         file_field_name: &str,
         file: &UploadFile,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-        P: Serialize + ?Sized,
-    {
-        self.call_method_multipart_with_transport_retry(
-            method,
-            payload,
-            file_field_name,
-            file,
-            TransportRetryMode::Disabled,
-        )
-    }
-
-    fn call_method_multipart_with_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-        file_field_name: &str,
-        file: &UploadFile,
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
@@ -252,7 +251,8 @@ impl BlockingClient {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, &[file_field_name])?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
@@ -284,42 +284,30 @@ impl BlockingClient {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        self.call_method_multipart_files_with_transport_retry(
+        let retry = self.inner.defaults.retry.clone();
+        retry_method_blocking(
             method,
-            payload,
-            skip_fields,
-            files,
-            TransportRetryMode::Inherit,
+            &retry,
+            self.inner.defaults.total_timeout,
+            |total_timeout| {
+                self.call_method_multipart_files_attempt(
+                    method,
+                    payload,
+                    skip_fields,
+                    files,
+                    total_timeout,
+                )
+            },
         )
     }
 
-    pub(crate) fn call_method_multipart_files_without_transport_retry<R, P>(
+    pub(crate) fn call_method_multipart_files_attempt<R, P>(
         &self,
         method: &str,
         payload: &P,
         skip_fields: &[&str],
         files: &[UploadPart],
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-        P: Serialize + ?Sized,
-    {
-        self.call_method_multipart_files_with_transport_retry(
-            method,
-            payload,
-            skip_fields,
-            files,
-            TransportRetryMode::Disabled,
-        )
-    }
-
-    fn call_method_multipart_files_with_transport_retry<R, P>(
-        &self,
-        method: &str,
-        payload: &P,
-        skip_fields: &[&str],
-        files: &[UploadPart],
-        retry_mode: TransportRetryMode,
+        total_timeout: Option<Duration>,
     ) -> Result<R>
     where
         R: DeserializeOwned,
@@ -327,7 +315,8 @@ impl BlockingClient {
     {
         let token = self.require_token()?;
         let fields = serialize_multipart_fields(payload, skip_fields)?;
-        let config = TransportRequestConfig::new(&self.inner.defaults, retry_mode);
+        let config =
+            TransportRequestConfig::with_total_timeout(&self.inner.defaults, total_timeout);
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!("tele.client.request", method).entered();
         let started_at = Instant::now();
@@ -346,5 +335,9 @@ impl BlockingClient {
 
     fn require_token(&self) -> Result<&str> {
         self.inner.auth.token().ok_or(Error::MissingBotToken)
+    }
+
+    pub(crate) fn total_timeout(&self) -> Option<std::time::Duration> {
+        self.inner.defaults.total_timeout
     }
 }

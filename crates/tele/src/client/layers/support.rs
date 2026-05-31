@@ -2,6 +2,7 @@ use super::bootstrap::WebAppQueryPayload;
 use super::*;
 
 const MISSING_REPLY_TARGET_REASON: &str = "update does not contain a chat id for reply";
+const UNSUPPORTED_GUEST_REPLY_REASON: &str = "guest message replies require answerGuestQuery; ordinary sendMessage cannot target a guest query";
 
 pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
     Error::InvalidRequest {
@@ -10,8 +11,12 @@ pub(crate) fn invalid_request(reason: impl Into<String>) -> Error {
 }
 
 #[cfg(feature = "bot")]
-pub(crate) fn is_missing_reply_target_error(error: &Error) -> bool {
-    matches!(error, Error::InvalidRequest { reason } if reason == MISSING_REPLY_TARGET_REASON)
+pub(crate) fn is_unaddressable_reply_error(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::InvalidRequest { reason }
+            if reason == MISSING_REPLY_TARGET_REASON || reason == UNSUPPORTED_GUEST_REPLY_REASON
+    )
 }
 
 pub(crate) fn normalize_language_code(language_code: Option<String>) -> Result<Option<String>> {
@@ -104,9 +109,7 @@ fn chat_reply_context(
 
 pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
     if update.guest_message.is_some() {
-        return Err(invalid_request(
-            "guest message replies require answerGuestQuery; ordinary sendMessage cannot target a guest query",
-        ));
+        return Err(invalid_request(UNSUPPORTED_GUEST_REPLY_REASON));
     }
 
     if let Some(request) = update.chat_join_request.as_ref() {

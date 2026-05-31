@@ -7,13 +7,14 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::types::chat::ChatAdministratorRights;
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode};
 use crate::types::extra::{
     field_len as extra_field_len, serialize_fields as serialize_extra_fields,
 };
-use crate::types::message::MessageEntity;
 #[cfg(test)]
 use crate::types::message::MessageEntityKind;
+use crate::types::message::{MessageEntity, PollKind};
 use crate::types::tagged::{strip_type, tagged_kind};
 use crate::types::validation::{
     display_text_length_range as validate_display_text_length_range,
@@ -113,18 +114,39 @@ fn validate_optional_bool_field(
     Ok(())
 }
 
-fn validate_required_i64_field(
+fn validate_required_i32_field(
     object: &serde_json::Map<String, Value>,
     object_name: &str,
     field: &str,
-) -> Result<()> {
+) -> Result<i32> {
     let value = object
         .get(field)
         .and_then(Value::as_i64)
         .ok_or_else(|| invalid_request(format!("{object_name}.{field} must be an integer")))?;
-    if value <= 0 {
+
+    i32::try_from(value).map_err(|_| {
+        invalid_request(format!(
+            "{object_name}.{field} must be a signed 32-bit integer"
+        ))
+    })
+}
+
+fn validate_optional_u8_range_field(
+    object: &serde_json::Map<String, Value>,
+    object_name: &str,
+    field: &str,
+    min: u8,
+    max: u8,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        return Ok(());
+    };
+    let value = value
+        .as_u64()
+        .ok_or_else(|| invalid_request(format!("{object_name}.{field} must be an integer")))?;
+    if !(u64::from(min)..=u64::from(max)).contains(&value) {
         return Err(invalid_request(format!(
-            "{object_name}.{field} must be greater than 0"
+            "{object_name}.{field} must be between {min} and {max}"
         )));
     }
 
@@ -173,7 +195,8 @@ fn validate_copy_text_button(value: &Value) -> Result<()> {
 
 fn validate_keyboard_button_request_users(value: &Value) -> Result<()> {
     let object = value_as_object("request_users", value)?;
-    validate_required_i64_field(object, "request_users", "request_id")?;
+    validate_required_i32_field(object, "request_users", "request_id")?;
+    validate_optional_u8_range_field(object, "request_users", "max_quantity", 1, 10)?;
     for field in [
         "user_is_bot",
         "user_is_premium",
@@ -189,7 +212,7 @@ fn validate_keyboard_button_request_users(value: &Value) -> Result<()> {
 
 fn validate_keyboard_button_request_chat(value: &Value) -> Result<()> {
     let object = value_as_object("request_chat", value)?;
-    validate_required_i64_field(object, "request_chat", "request_id")?;
+    validate_required_i32_field(object, "request_chat", "request_id")?;
     object
         .get("chat_is_channel")
         .map(|value| value_as_bool("request_chat.chat_is_channel", value))
@@ -205,6 +228,26 @@ fn validate_keyboard_button_request_chat(value: &Value) -> Result<()> {
         "request_photo",
     ] {
         validate_optional_bool_field(object, "request_chat", field)?;
+    }
+    for field in ["user_administrator_rights", "bot_administrator_rights"] {
+        if let Some(value) = object.get(field) {
+            value_as_object(&format!("request_chat.{field}"), value)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_keyboard_button_request_managed_bot(value: &Value) -> Result<()> {
+    let object = value_as_object("request_managed_bot", value)?;
+    validate_required_i32_field(object, "request_managed_bot", "request_id")?;
+    for field in ["suggested_name", "suggested_username"] {
+        if let Some(value) = object.get(field) {
+            validate_required_visible_text(
+                &format!("request_managed_bot.{field}"),
+                value_as_str(&format!("request_managed_bot.{field}"), value)?,
+            )?;
+        }
     }
 
     Ok(())
@@ -3638,11 +3681,491 @@ json_payload_wrapper!(
     validate_source_object_payload
 );
 
+/// Visual style of an inline or reply keyboard button.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum ButtonStyle {
+    Danger,
+    Success,
+    Primary,
+    Unknown(String),
+}
+
+impl ButtonStyle {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Danger => "danger",
+            Self::Success => "success",
+            Self::Primary => "primary",
+            Self::Unknown(value) => value.as_str(),
+        }
+    }
+
+    pub fn validate(&self, field: &str) -> Result<()> {
+        if matches!(self, Self::Unknown(_)) {
+            return Err(invalid_request(format!(
+                "{field} must be `danger`, `success`, or `primary`"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for ButtonStyle {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "danger" => Self::Danger,
+            "success" => Self::Success,
+            "primary" => Self::Primary,
+            _ => Self::Unknown(value),
+        })
+    }
+}
+
+impl Serialize for ButtonStyle {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Criteria used to request suitable users from a reply keyboard button.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct KeyboardButtonRequestUsers {
+    pub request_id: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_is_bot: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_is_premium: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_quantity: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_name: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_username: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_photo: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl KeyboardButtonRequestUsers {
+    pub fn new(request_id: i32) -> Self {
+        Self {
+            request_id,
+            user_is_bot: None,
+            user_is_premium: None,
+            max_quantity: None,
+            request_name: None,
+            request_username: None,
+            request_photo: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn user_is_bot(mut self, value: bool) -> Self {
+        self.user_is_bot = Some(value);
+        self
+    }
+
+    pub fn user_is_premium(mut self, value: bool) -> Self {
+        self.user_is_premium = Some(value);
+        self
+    }
+
+    pub fn max_quantity(mut self, value: u8) -> Self {
+        self.max_quantity = Some(value);
+        self
+    }
+
+    pub fn request_name(mut self, value: bool) -> Self {
+        self.request_name = Some(value);
+        self
+    }
+
+    pub fn request_username(mut self, value: bool) -> Self {
+        self.request_username = Some(value);
+        self
+    }
+
+    pub fn request_photo(mut self, value: bool) -> Self {
+        self.request_photo = Some(value);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if let Some(max_quantity) = self.max_quantity
+            && !(1..=10).contains(&max_quantity)
+        {
+            return Err(invalid_request(
+                "request_users.max_quantity must be between 1 and 10",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for KeyboardButtonRequestUsers {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "request_id",
+            "user_is_bot",
+            "user_is_premium",
+            "max_quantity",
+            "request_name",
+            "request_username",
+            "request_photo",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.user_is_bot.is_some())
+            + usize::from(self.user_is_premium.is_some())
+            + usize::from(self.max_quantity.is_some())
+            + usize::from(self.request_name.is_some())
+            + usize::from(self.request_username.is_some())
+            + usize::from(self.request_photo.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("request_id", &self.request_id)?;
+        if let Some(value) = self.user_is_bot {
+            object.serialize_entry("user_is_bot", &value)?;
+        }
+        if let Some(value) = self.user_is_premium {
+            object.serialize_entry("user_is_premium", &value)?;
+        }
+        if let Some(value) = self.max_quantity {
+            object.serialize_entry("max_quantity", &value)?;
+        }
+        if let Some(value) = self.request_name {
+            object.serialize_entry("request_name", &value)?;
+        }
+        if let Some(value) = self.request_username {
+            object.serialize_entry("request_username", &value)?;
+        }
+        if let Some(value) = self.request_photo {
+            object.serialize_entry("request_photo", &value)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Criteria used to request a suitable chat from a reply keyboard button.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct KeyboardButtonRequestChat {
+    pub request_id: i32,
+    pub chat_is_channel: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_is_forum: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_has_username: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_is_created: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_administrator_rights: Option<ChatAdministratorRights>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_administrator_rights: Option<ChatAdministratorRights>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_is_member: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_title: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_username: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_photo: Option<bool>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl KeyboardButtonRequestChat {
+    pub fn new(request_id: i32, chat_is_channel: bool) -> Self {
+        Self {
+            request_id,
+            chat_is_channel,
+            chat_is_forum: None,
+            chat_has_username: None,
+            chat_is_created: None,
+            user_administrator_rights: None,
+            bot_administrator_rights: None,
+            bot_is_member: None,
+            request_title: None,
+            request_username: None,
+            request_photo: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn chat_is_forum(mut self, value: bool) -> Self {
+        self.chat_is_forum = Some(value);
+        self
+    }
+
+    pub fn chat_has_username(mut self, value: bool) -> Self {
+        self.chat_has_username = Some(value);
+        self
+    }
+
+    pub fn chat_is_created(mut self, value: bool) -> Self {
+        self.chat_is_created = Some(value);
+        self
+    }
+
+    pub fn user_administrator_rights(mut self, rights: ChatAdministratorRights) -> Self {
+        self.user_administrator_rights = Some(rights);
+        self
+    }
+
+    pub fn bot_administrator_rights(mut self, rights: ChatAdministratorRights) -> Self {
+        self.bot_administrator_rights = Some(rights);
+        self
+    }
+
+    pub fn bot_is_member(mut self, value: bool) -> Self {
+        self.bot_is_member = Some(value);
+        self
+    }
+
+    pub fn request_title(mut self, value: bool) -> Self {
+        self.request_title = Some(value);
+        self
+    }
+
+    pub fn request_username(mut self, value: bool) -> Self {
+        self.request_username = Some(value);
+        self
+    }
+
+    pub fn request_photo(mut self, value: bool) -> Self {
+        self.request_photo = Some(value);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Serialize for KeyboardButtonRequestChat {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = [
+            "request_id",
+            "chat_is_channel",
+            "chat_is_forum",
+            "chat_has_username",
+            "chat_is_created",
+            "user_administrator_rights",
+            "bot_administrator_rights",
+            "bot_is_member",
+            "request_title",
+            "request_username",
+            "request_photo",
+        ];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.chat_is_forum.is_some())
+            + usize::from(self.chat_has_username.is_some())
+            + usize::from(self.chat_is_created.is_some())
+            + usize::from(self.user_administrator_rights.is_some())
+            + usize::from(self.bot_administrator_rights.is_some())
+            + usize::from(self.bot_is_member.is_some())
+            + usize::from(self.request_title.is_some())
+            + usize::from(self.request_username.is_some())
+            + usize::from(self.request_photo.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 2))?;
+        object.serialize_entry("request_id", &self.request_id)?;
+        object.serialize_entry("chat_is_channel", &self.chat_is_channel)?;
+        if let Some(value) = self.chat_is_forum {
+            object.serialize_entry("chat_is_forum", &value)?;
+        }
+        if let Some(value) = self.chat_has_username {
+            object.serialize_entry("chat_has_username", &value)?;
+        }
+        if let Some(value) = self.chat_is_created {
+            object.serialize_entry("chat_is_created", &value)?;
+        }
+        if let Some(value) = self.user_administrator_rights.as_ref() {
+            object.serialize_entry("user_administrator_rights", value)?;
+        }
+        if let Some(value) = self.bot_administrator_rights.as_ref() {
+            object.serialize_entry("bot_administrator_rights", value)?;
+        }
+        if let Some(value) = self.bot_is_member {
+            object.serialize_entry("bot_is_member", &value)?;
+        }
+        if let Some(value) = self.request_title {
+            object.serialize_entry("request_title", &value)?;
+        }
+        if let Some(value) = self.request_username {
+            object.serialize_entry("request_username", &value)?;
+        }
+        if let Some(value) = self.request_photo {
+            object.serialize_entry("request_photo", &value)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Parameters for creating and sharing a managed bot from a reply keyboard button.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct KeyboardButtonRequestManagedBot {
+    pub request_id: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_username: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl KeyboardButtonRequestManagedBot {
+    pub fn new(request_id: i32) -> Self {
+        Self {
+            request_id,
+            suggested_name: None,
+            suggested_username: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn suggested_name(mut self, value: impl Into<String>) -> Self {
+        self.suggested_name = Some(value.into());
+        self
+    }
+
+    pub fn suggested_username(mut self, value: impl Into<String>) -> Self {
+        self.suggested_username = Some(value.into());
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if let Some(value) = self.suggested_name.as_deref() {
+            validate_required_visible_text("request_managed_bot.suggested_name", value)?;
+        }
+        if let Some(value) = self.suggested_username.as_deref() {
+            validate_required_visible_text("request_managed_bot.suggested_username", value)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for KeyboardButtonRequestManagedBot {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["request_id", "suggested_name", "suggested_username"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.suggested_name.is_some())
+            + usize::from(self.suggested_username.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        object.serialize_entry("request_id", &self.request_id)?;
+        if let Some(value) = self.suggested_name.as_ref() {
+            object.serialize_entry("suggested_name", value)?;
+        }
+        if let Some(value) = self.suggested_username.as_ref() {
+            object.serialize_entry("suggested_username", value)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
+/// Poll type allowed from a reply keyboard poll request button.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct KeyboardButtonPollType {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PollKind>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl KeyboardButtonPollType {
+    pub fn new() -> Self {
+        Self {
+            kind: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    pub fn regular() -> Self {
+        Self::new().kind(PollKind::Regular)
+    }
+
+    pub fn quiz() -> Self {
+        Self::new().kind(PollKind::Quiz)
+    }
+
+    pub fn kind(mut self, kind: PollKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if matches!(self.kind, Some(PollKind::Unknown(_))) {
+            return Err(invalid_request(
+                "request_poll.type must be `quiz` or `regular`",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for KeyboardButtonPollType {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<PollKind> for KeyboardButtonPollType {
+    fn from(kind: PollKind) -> Self {
+        Self::new().kind(kind)
+    }
+}
+
+impl Serialize for KeyboardButtonPollType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let reserved = ["type"];
+        let extra_len = extra_field_len(&self.extra, &reserved);
+        let optional_len = usize::from(self.kind.is_some());
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len))?;
+        if let Some(value) = self.kind.as_ref() {
+            object.serialize_entry("type", value)?;
+        }
+        serialize_extra_fields(&mut object, &self.extra, &reserved)?;
+        object.end()
+    }
+}
+
 /// Inline keyboard button.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineKeyboardButton {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_custom_emoji_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ButtonStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_app: Option<WebAppInfo>,
     #[serde(flatten)]
@@ -3653,6 +4176,8 @@ impl InlineKeyboardButton {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            icon_custom_emoji_id: None,
+            style: None,
             web_app: None,
             extra: BTreeMap::new(),
         }
@@ -3689,6 +4214,16 @@ impl InlineKeyboardButton {
 
     pub fn web_app(mut self, web_app: impl Into<WebAppInfo>) -> Self {
         self.web_app = Some(web_app.into());
+        self
+    }
+
+    pub fn icon_custom_emoji_id(mut self, icon_custom_emoji_id: impl Into<String>) -> Self {
+        self.icon_custom_emoji_id = Some(icon_custom_emoji_id.into());
+        self
+    }
+
+    pub fn style(mut self, style: ButtonStyle) -> Self {
+        self.style = Some(style);
         self
     }
 
@@ -3761,6 +4296,15 @@ impl InlineKeyboardButton {
 
     pub fn validate(&self) -> Result<()> {
         validate_required_visible_text("inline keyboard button text", &self.text)?;
+        if let Some(icon_custom_emoji_id) = self.icon_custom_emoji_id.as_deref() {
+            validate_required_visible_text(
+                "inline keyboard button icon_custom_emoji_id",
+                icon_custom_emoji_id,
+            )?;
+        }
+        if let Some(style) = self.style.as_ref() {
+            style.validate("inline keyboard button style")?;
+        }
 
         let mut known_actions = usize::from(self.web_app.is_some());
         if let Some(web_app) = self.web_app.as_ref() {
@@ -3811,7 +4355,7 @@ impl InlineKeyboardButton {
                 "inline keyboard button must define exactly one known action",
             ));
         }
-        let reserved = ["text", "web_app"];
+        let reserved = ["text", "icon_custom_emoji_id", "style", "web_app"];
         if known_actions == 0 && extra_field_len(&self.extra, &reserved) == 0 {
             return Err(invalid_request(
                 "inline keyboard button must define an action",
@@ -3827,11 +4371,19 @@ impl Serialize for InlineKeyboardButton {
     where
         S: serde::Serializer,
     {
-        let reserved = ["text", "web_app"];
+        let reserved = ["text", "icon_custom_emoji_id", "style", "web_app"];
         let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.web_app.is_some());
+        let optional_len = usize::from(self.icon_custom_emoji_id.is_some())
+            + usize::from(self.style.is_some())
+            + usize::from(self.web_app.is_some());
         let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
         object.serialize_entry("text", &self.text)?;
+        if let Some(icon_custom_emoji_id) = self.icon_custom_emoji_id.as_ref() {
+            object.serialize_entry("icon_custom_emoji_id", icon_custom_emoji_id)?;
+        }
+        if let Some(style) = self.style.as_ref() {
+            object.serialize_entry("style", style)?;
+        }
         if let Some(web_app) = self.web_app.as_ref() {
             object.serialize_entry("web_app", web_app)?;
         }
@@ -3903,6 +4455,22 @@ impl Serialize for InlineKeyboardMarkup {
 pub struct KeyboardButton {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_custom_emoji_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ButtonStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_users: Option<KeyboardButtonRequestUsers>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_chat: Option<KeyboardButtonRequestChat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_managed_bot: Option<KeyboardButtonRequestManagedBot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_contact: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_location: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_poll: Option<KeyboardButtonPollType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_app: Option<WebAppInfo>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -3912,6 +4480,14 @@ impl KeyboardButton {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            icon_custom_emoji_id: None,
+            style: None,
+            request_users: None,
+            request_chat: None,
+            request_managed_bot: None,
+            request_contact: None,
+            request_location: None,
+            request_poll: None,
             web_app: None,
             extra: BTreeMap::new(),
         }
@@ -3922,11 +4498,85 @@ impl KeyboardButton {
         self
     }
 
+    pub fn icon_custom_emoji_id(mut self, icon_custom_emoji_id: impl Into<String>) -> Self {
+        self.icon_custom_emoji_id = Some(icon_custom_emoji_id.into());
+        self
+    }
+
+    pub fn style(mut self, style: ButtonStyle) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    pub fn request_users(mut self, request: KeyboardButtonRequestUsers) -> Self {
+        self.request_users = Some(request);
+        self
+    }
+
+    pub fn request_chat(mut self, request: KeyboardButtonRequestChat) -> Self {
+        self.request_chat = Some(request);
+        self
+    }
+
+    pub fn request_managed_bot(mut self, request: KeyboardButtonRequestManagedBot) -> Self {
+        self.request_managed_bot = Some(request);
+        self
+    }
+
+    pub fn request_contact(mut self) -> Self {
+        self.request_contact = Some(true);
+        self
+    }
+
+    pub fn request_location(mut self) -> Self {
+        self.request_location = Some(true);
+        self
+    }
+
+    pub fn request_poll(mut self, request: impl Into<KeyboardButtonPollType>) -> Self {
+        self.request_poll = Some(request.into());
+        self
+    }
+
     pub fn validate(&self) -> Result<()> {
         validate_required_visible_text("keyboard button text", &self.text)?;
-        let mut known_actions = usize::from(self.web_app.is_some());
+        if let Some(icon_custom_emoji_id) = self.icon_custom_emoji_id.as_deref() {
+            validate_required_visible_text(
+                "keyboard button icon_custom_emoji_id",
+                icon_custom_emoji_id,
+            )?;
+        }
+        if let Some(style) = self.style.as_ref() {
+            style.validate("keyboard button style")?;
+        }
+
+        let mut known_actions = usize::from(self.web_app.is_some())
+            + usize::from(self.request_users.is_some())
+            + usize::from(self.request_chat.is_some())
+            + usize::from(self.request_managed_bot.is_some())
+            + usize::from(self.request_contact.is_some())
+            + usize::from(self.request_location.is_some())
+            + usize::from(self.request_poll.is_some());
         if let Some(web_app) = self.web_app.as_ref() {
             web_app.validate()?;
+        }
+        if let Some(request) = self.request_users.as_ref() {
+            request.validate()?;
+        }
+        if let Some(request) = self.request_chat.as_ref() {
+            request.validate()?;
+        }
+        if let Some(request) = self.request_managed_bot.as_ref() {
+            request.validate()?;
+        }
+        if matches!(self.request_contact, Some(false)) {
+            return Err(invalid_request("request_contact must be true"));
+        }
+        if matches!(self.request_location, Some(false)) {
+            return Err(invalid_request("request_location must be true"));
+        }
+        if let Some(request) = self.request_poll.as_ref() {
+            request.validate()?;
         }
         for (key, value) in &self.extra {
             match key.as_str() {
@@ -3940,6 +4590,10 @@ impl KeyboardButton {
                 }
                 "request_chat" => {
                     validate_keyboard_button_request_chat(value)?;
+                    known_actions += 1;
+                }
+                "request_managed_bot" => {
+                    validate_keyboard_button_request_managed_bot(value)?;
                     known_actions += 1;
                 }
                 "request_poll" => {
@@ -3964,11 +4618,54 @@ impl Serialize for KeyboardButton {
     where
         S: serde::Serializer,
     {
-        let reserved = ["text", "web_app"];
+        let reserved = [
+            "text",
+            "icon_custom_emoji_id",
+            "style",
+            "request_users",
+            "request_chat",
+            "request_managed_bot",
+            "request_contact",
+            "request_location",
+            "request_poll",
+            "web_app",
+        ];
         let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.web_app.is_some());
+        let optional_len = usize::from(self.icon_custom_emoji_id.is_some())
+            + usize::from(self.style.is_some())
+            + usize::from(self.request_users.is_some())
+            + usize::from(self.request_chat.is_some())
+            + usize::from(self.request_managed_bot.is_some())
+            + usize::from(self.request_contact.is_some())
+            + usize::from(self.request_location.is_some())
+            + usize::from(self.request_poll.is_some())
+            + usize::from(self.web_app.is_some());
         let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
         object.serialize_entry("text", &self.text)?;
+        if let Some(icon_custom_emoji_id) = self.icon_custom_emoji_id.as_ref() {
+            object.serialize_entry("icon_custom_emoji_id", icon_custom_emoji_id)?;
+        }
+        if let Some(style) = self.style.as_ref() {
+            object.serialize_entry("style", style)?;
+        }
+        if let Some(request) = self.request_users.as_ref() {
+            object.serialize_entry("request_users", request)?;
+        }
+        if let Some(request) = self.request_chat.as_ref() {
+            object.serialize_entry("request_chat", request)?;
+        }
+        if let Some(request) = self.request_managed_bot.as_ref() {
+            object.serialize_entry("request_managed_bot", request)?;
+        }
+        if let Some(value) = self.request_contact {
+            object.serialize_entry("request_contact", &value)?;
+        }
+        if let Some(value) = self.request_location {
+            object.serialize_entry("request_location", &value)?;
+        }
+        if let Some(request) = self.request_poll.as_ref() {
+            object.serialize_entry("request_poll", request)?;
+        }
         if let Some(web_app) = self.web_app.as_ref() {
             object.serialize_entry("web_app", web_app)?;
         }
@@ -4240,6 +4937,10 @@ pub struct ReplyParameters {
     pub quote_entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_position: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checklist_task_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll_option_id: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -4254,8 +4955,20 @@ impl ReplyParameters {
             quote_parse_mode: None,
             quote_entities: None,
             quote_position: None,
+            checklist_task_id: None,
+            poll_option_id: None,
             extra: BTreeMap::new(),
         }
+    }
+
+    pub fn checklist_task_id(mut self, checklist_task_id: i64) -> Self {
+        self.checklist_task_id = Some(checklist_task_id);
+        self
+    }
+
+    pub fn poll_option_id(mut self, poll_option_id: impl Into<String>) -> Self {
+        self.poll_option_id = Some(poll_option_id.into());
+        self
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -4281,6 +4994,17 @@ impl ReplyParameters {
             self.quote_parse_mode,
             self.quote_entities.as_deref(),
         )?;
+        if self.checklist_task_id.is_some_and(|id| id <= 0) {
+            return Err(invalid_request("checklist_task_id must be greater than 0"));
+        }
+        if let Some(poll_option_id) = self.poll_option_id.as_deref() {
+            validate_required_display_text("poll_option_id", poll_option_id)?;
+        }
+        if self.checklist_task_id.is_some() && self.poll_option_id.is_some() {
+            return Err(invalid_request(
+                "checklist_task_id and poll_option_id cannot be combined",
+            ));
+        }
 
         Ok(())
     }
@@ -4299,6 +5023,8 @@ impl Serialize for ReplyParameters {
             "quote_parse_mode",
             "quote_entities",
             "quote_position",
+            "checklist_task_id",
+            "poll_option_id",
         ];
         let extra_len = extra_field_len(&self.extra, &reserved);
         let optional_len = usize::from(self.chat_id.is_some())
@@ -4306,7 +5032,9 @@ impl Serialize for ReplyParameters {
             + usize::from(self.quote.is_some())
             + usize::from(self.quote_parse_mode.is_some())
             + usize::from(self.quote_entities.is_some())
-            + usize::from(self.quote_position.is_some());
+            + usize::from(self.quote_position.is_some())
+            + usize::from(self.checklist_task_id.is_some())
+            + usize::from(self.poll_option_id.is_some());
         let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
         object.serialize_entry("message_id", &self.message_id)?;
         if let Some(chat_id) = self.chat_id.as_ref() {
@@ -4326,6 +5054,12 @@ impl Serialize for ReplyParameters {
         }
         if let Some(quote_position) = self.quote_position {
             object.serialize_entry("quote_position", &quote_position)?;
+        }
+        if let Some(checklist_task_id) = self.checklist_task_id {
+            object.serialize_entry("checklist_task_id", &checklist_task_id)?;
+        }
+        if let Some(poll_option_id) = self.poll_option_id.as_ref() {
+            object.serialize_entry("poll_option_id", poll_option_id)?;
         }
         serialize_extra_fields(&mut object, &self.extra, &reserved)?;
         object.end()
@@ -4551,16 +5285,27 @@ mod tests {
     #[test]
     fn markup_extra_cannot_override_reserved_fields()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut inline_button = InlineKeyboardButton::callback("Open", "real-action")?;
+        let mut inline_button = InlineKeyboardButton::callback("Open", "real-action")?
+            .icon_custom_emoji_id("emoji-real")
+            .style(ButtonStyle::Primary);
         inline_button
             .extra
             .insert("text".to_owned(), serde_json::json!("overridden"));
+        inline_button.extra.insert(
+            "icon_custom_emoji_id".to_owned(),
+            serde_json::json!("emoji-extra"),
+        );
+        inline_button
+            .extra
+            .insert("style".to_owned(), serde_json::json!("danger"));
         inline_button.extra.insert(
             "web_app".to_owned(),
             serde_json::json!({"url": "https://example.com/overridden"}),
         );
         let inline_button_json = serde_json::to_value(&inline_button)?;
         assert_eq!(inline_button_json["text"], "Open");
+        assert_eq!(inline_button_json["icon_custom_emoji_id"], "emoji-real");
+        assert_eq!(inline_button_json["style"], "primary");
         assert!(inline_button_json.get("web_app").is_none());
         assert_eq!(inline_button_json["callback_data"], "real-action");
 
@@ -4583,16 +5328,32 @@ mod tests {
             "real-action"
         );
 
-        let mut keyboard_button = KeyboardButton::new("Share");
+        let mut keyboard_button = KeyboardButton::new("Share")
+            .icon_custom_emoji_id("emoji-real")
+            .style(ButtonStyle::Success)
+            .request_contact();
         keyboard_button
             .extra
             .insert("text".to_owned(), serde_json::json!("overridden"));
+        keyboard_button.extra.insert(
+            "icon_custom_emoji_id".to_owned(),
+            serde_json::json!("emoji-extra"),
+        );
+        keyboard_button
+            .extra
+            .insert("style".to_owned(), serde_json::json!("danger"));
+        keyboard_button
+            .extra
+            .insert("request_contact".to_owned(), serde_json::json!(false));
         keyboard_button.extra.insert(
             "web_app".to_owned(),
             serde_json::json!({"url": "https://example.com/overridden"}),
         );
         let keyboard_button_json = serde_json::to_value(&keyboard_button)?;
         assert_eq!(keyboard_button_json["text"], "Share");
+        assert_eq!(keyboard_button_json["icon_custom_emoji_id"], "emoji-real");
+        assert_eq!(keyboard_button_json["style"], "success");
+        assert_eq!(keyboard_button_json["request_contact"], true);
         assert!(keyboard_button_json.get("web_app").is_none());
 
         let mut reply_keyboard = ReplyKeyboardMarkup::new(vec![vec![keyboard_button]]);
@@ -4675,6 +5436,7 @@ mod tests {
         reply.quote = Some("quoted text".to_owned());
         reply.quote_parse_mode = Some(ParseMode::MarkdownV2);
         reply.quote_position = Some(3);
+        reply.poll_option_id = Some("poll-option-1".to_owned());
         reply
             .extra
             .insert("message_id".to_owned(), serde_json::json!(1));
@@ -4693,6 +5455,9 @@ mod tests {
             .insert("quote_position".to_owned(), serde_json::json!(99));
         reply
             .extra
+            .insert("poll_option_id".to_owned(), serde_json::json!("overridden"));
+        reply
+            .extra
             .insert("future_field".to_owned(), serde_json::json!("kept"));
 
         let value = serde_json::to_value(&reply)?;
@@ -4702,6 +5467,7 @@ mod tests {
         assert_eq!(value["quote"], "quoted text");
         assert_eq!(value["quote_parse_mode"], "MarkdownV2");
         assert_eq!(value["quote_position"], 3);
+        assert_eq!(value["poll_option_id"], "poll-option-1");
         assert_eq!(value["future_field"], "kept");
 
         Ok(())
@@ -4803,9 +5569,11 @@ mod tests {
 
     #[test]
     fn validates_markup_payloads() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let valid_inline = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
-            "Open", "open:1",
-        )?]);
+        let valid_inline = InlineKeyboardMarkup::single_row(vec![
+            InlineKeyboardButton::callback("Open", "open:1")?
+                .icon_custom_emoji_id("emoji-id")
+                .style(ButtonStyle::Primary),
+        ]);
         assert!(valid_inline.validate().is_ok());
 
         let pay_button = InlineKeyboardButton::pay("Pay");
@@ -4875,6 +5643,13 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
+        let invalid_style =
+            InlineKeyboardButton::pay("Pay").style(ButtonStyle::Unknown("future".to_owned()));
+        assert!(matches!(
+            invalid_style.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let mut conflicting_inline_action =
             InlineKeyboardButton::new("Open").web_app("https://example.com/app");
         conflicting_inline_action
@@ -4886,7 +5661,10 @@ mod tests {
         ));
 
         let valid_keyboard = ReplyKeyboardMarkup::new(vec![vec![
-            KeyboardButton::new("Open").web_app("https://example.com/app"),
+            KeyboardButton::new("Open")
+                .icon_custom_emoji_id("emoji-id")
+                .style(ButtonStyle::Success)
+                .web_app("https://example.com/app"),
         ]]);
         assert!(ReplyMarkup::from(valid_keyboard).validate().is_ok());
 
@@ -4900,11 +5678,9 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
-        let mut conflicting_keyboard_action =
-            KeyboardButton::new("Open").web_app("https://example.com/app");
-        conflicting_keyboard_action
-            .extra
-            .insert("request_location".to_owned(), Value::Bool(true));
+        let conflicting_keyboard_action = KeyboardButton::new("Open")
+            .web_app("https://example.com/app")
+            .request_location();
         assert!(matches!(
             conflicting_keyboard_action.validate(),
             Err(Error::InvalidRequest { .. })
@@ -4919,11 +5695,38 @@ mod tests {
             Err(Error::InvalidRequest { .. })
         ));
 
-        let mut valid_request_poll = KeyboardButton::new("Create quiz");
-        valid_request_poll.extra.insert(
-            "request_poll".to_owned(),
-            serde_json::json!({"type": "quiz"}),
+        let valid_request_users =
+            KeyboardButton::new("Pick user").request_users(KeyboardButtonRequestUsers::new(-7));
+        assert!(valid_request_users.validate().is_ok());
+        assert_eq!(
+            serde_json::to_value(&valid_request_users)?["request_users"]["request_id"],
+            -7
         );
+
+        let invalid_request_users_quantity = KeyboardButton::new("Pick users")
+            .request_users(KeyboardButtonRequestUsers::new(7).max_quantity(0));
+        assert!(matches!(
+            invalid_request_users_quantity.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let valid_request_chat =
+            KeyboardButton::new("Pick chat").request_chat(KeyboardButtonRequestChat::new(8, false));
+        assert!(valid_request_chat.validate().is_ok());
+
+        let valid_request_managed_bot = KeyboardButton::new("Create bot")
+            .request_managed_bot(KeyboardButtonRequestManagedBot::new(9).suggested_name("Support"));
+        assert!(valid_request_managed_bot.validate().is_ok());
+
+        let invalid_request_managed_bot = KeyboardButton::new("Create bot")
+            .request_managed_bot(KeyboardButtonRequestManagedBot::new(9).suggested_name("\n"));
+        assert!(matches!(
+            invalid_request_managed_bot.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let valid_request_poll =
+            KeyboardButton::new("Create quiz").request_poll(KeyboardButtonPollType::quiz());
         assert!(valid_request_poll.validate().is_ok());
 
         let invalid_remove = ReplyKeyboardRemove {
@@ -4993,6 +5796,32 @@ mod tests {
         reply_without_quote.quote_parse_mode = Some(ParseMode::MarkdownV2);
         assert!(matches!(
             reply_without_quote.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let reply_to_checklist_task = ReplyParameters::new(MessageId(1)).checklist_task_id(7);
+        assert!(reply_to_checklist_task.validate().is_ok());
+
+        let reply_to_poll_option =
+            ReplyParameters::new(MessageId(1)).poll_option_id("poll-option-1");
+        assert!(reply_to_poll_option.validate().is_ok());
+
+        let invalid_task = ReplyParameters::new(MessageId(1)).checklist_task_id(0);
+        assert!(matches!(
+            invalid_task.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_poll_option = ReplyParameters::new(MessageId(1)).poll_option_id("");
+        assert!(matches!(
+            invalid_poll_option.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let mut conflicting_reply_targets = ReplyParameters::new(MessageId(1)).checklist_task_id(7);
+        conflicting_reply_targets.poll_option_id = Some("poll-option-1".to_owned());
+        assert!(matches!(
+            conflicting_reply_targets.validate(),
             Err(Error::InvalidRequest { .. })
         ));
 

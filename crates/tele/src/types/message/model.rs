@@ -15,7 +15,9 @@ use super::forum::{
     ForumTopicClosed, ForumTopicCreated, ForumTopicEdited, ForumTopicReopened,
     GeneralForumTopicHidden, GeneralForumTopicUnhidden,
 };
-use super::media::{Animation, Audio, Document, PaidMediaInfo, Story, Video, VideoNote, Voice};
+use super::media::{
+    Animation, Audio, Document, LivePhoto, PaidMediaInfo, Story, Video, VideoNote, Voice,
+};
 use super::metadata::{
     KNOWN_MESSAGE_KINDS, MessageKind, SuggestedPostApprovalFailed, SuggestedPostApproved,
     SuggestedPostDeclined, SuggestedPostInfo, SuggestedPostPaid, SuggestedPostRefunded,
@@ -23,9 +25,10 @@ use super::metadata::{
 use super::payments::{Invoice, RefundedPayment, SuccessfulPayment};
 use super::reply::{ExternalReplyInfo, MaybeInaccessibleMessage, TextQuote};
 use super::service::{
-    ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft, ChatShared, ChecklistTasksAdded,
-    ChecklistTasksDone, DirectMessagePriceChanged, Giveaway, GiveawayCompleted, GiveawayCreated,
-    GiveawayWinners, MessageAutoDeleteTimerChanged, PaidMessagePriceChanged,
+    ChatBackground, ChatBoostAdded, ChatOwnerChanged, ChatOwnerLeft, ChatShared,
+    ChecklistTasksAdded, ChecklistTasksDone, DirectMessagePriceChanged, DirectMessagesTopic,
+    Giveaway, GiveawayCompleted, GiveawayCreated, GiveawayWinners, ManagedBotCreated,
+    MessageAutoDeleteTimerChanged, PaidMessagePriceChanged, PollOptionAdded, PollOptionDeleted,
     ProximityAlertTriggered, UsersShared, VideoChatEnded, VideoChatParticipantsInvited,
     VideoChatScheduled, VideoChatStarted, WriteAccessAllowed,
 };
@@ -38,6 +41,8 @@ pub struct Message {
     pub from: Option<User>,
     #[serde(default)]
     pub sender_chat: Option<Chat>,
+    #[serde(default)]
+    pub sender_boost_count: Option<u32>,
     pub chat: Chat,
     pub date: i64,
     #[serde(default)]
@@ -52,6 +57,8 @@ pub struct Message {
     pub sender_tag: Option<String>,
     #[serde(default)]
     pub message_thread_id: Option<i64>,
+    #[serde(default)]
+    pub direct_messages_topic: Option<DirectMessagesTopic>,
     #[serde(default)]
     pub is_topic_message: bool,
     #[serde(default)]
@@ -68,6 +75,8 @@ pub struct Message {
     pub reply_to_story: Option<Story>,
     #[serde(default)]
     pub reply_to_checklist_task_id: Option<i64>,
+    #[serde(default)]
+    pub reply_to_poll_option_id: Option<String>,
     #[serde(default)]
     pub via_bot: Option<User>,
     #[serde(default)]
@@ -110,6 +119,8 @@ pub struct Message {
     pub dice: Option<Dice>,
     #[serde(default)]
     pub document: Option<Document>,
+    #[serde(default)]
+    pub live_photo: Option<LivePhoto>,
     #[serde(default)]
     pub paid_media: Option<Box<PaidMediaInfo>>,
     #[serde(default)]
@@ -193,6 +204,8 @@ pub struct Message {
     #[serde(default)]
     pub boost_added: Option<Box<ChatBoostAdded>>,
     #[serde(default)]
+    pub chat_background_set: Option<Box<ChatBackground>>,
+    #[serde(default)]
     pub checklist_tasks_done: Option<Box<ChecklistTasksDone>>,
     #[serde(default)]
     pub checklist_tasks_added: Option<Box<ChecklistTasksAdded>>,
@@ -219,7 +232,13 @@ pub struct Message {
     #[serde(default)]
     pub giveaway_completed: Option<Box<GiveawayCompleted>>,
     #[serde(default)]
+    pub managed_bot_created: Option<Box<ManagedBotCreated>>,
+    #[serde(default)]
     pub paid_message_price_changed: Option<Box<PaidMessagePriceChanged>>,
+    #[serde(default)]
+    pub poll_option_added: Option<Box<PollOptionAdded>>,
+    #[serde(default)]
+    pub poll_option_deleted: Option<Box<PollOptionDeleted>>,
     #[serde(default)]
     pub suggested_post_approved: Option<Box<SuggestedPostApproved>>,
     #[serde(default)]
@@ -245,7 +264,7 @@ pub struct Message {
 }
 
 fn is_unmodeled_message_content_key(key: &str) -> bool {
-    matches!(key, "passport_data" | "chat_background_set")
+    matches!(key, "passport_data")
 }
 
 impl Message {
@@ -301,6 +320,7 @@ impl Message {
             || self.chat_shared.is_some()
             || self.proximity_alert_triggered.is_some()
             || self.boost_added.is_some()
+            || self.chat_background_set.is_some()
             || self.checklist_tasks_done.is_some()
             || self.checklist_tasks_added.is_some()
             || self.direct_message_price_changed.is_some()
@@ -314,7 +334,10 @@ impl Message {
             || self.giveaway.is_some()
             || self.giveaway_winners.is_some()
             || self.giveaway_completed.is_some()
+            || self.managed_bot_created.is_some()
             || self.paid_message_price_changed.is_some()
+            || self.poll_option_added.is_some()
+            || self.poll_option_deleted.is_some()
             || self.suggested_post_approved.is_some()
             || self.suggested_post_approval_failed.is_some()
             || self.suggested_post_declined.is_some()
@@ -329,6 +352,7 @@ impl Message {
             || self.contact.is_some()
             || self.dice.is_some()
             || self.document.is_some()
+            || self.live_photo.is_some()
             || self.location.is_some()
             || self.photo.is_some()
             || self.sticker.is_some()
@@ -423,6 +447,7 @@ impl Message {
             MessageKind::ChatShared => self.chat_shared.is_some(),
             MessageKind::ProximityAlertTriggered => self.proximity_alert_triggered.is_some(),
             MessageKind::BoostAdded => self.boost_added.is_some(),
+            MessageKind::ChatBackgroundSet => self.chat_background_set.is_some(),
             MessageKind::ChecklistTasksDone => self.checklist_tasks_done.is_some(),
             MessageKind::ChecklistTasksAdded => self.checklist_tasks_added.is_some(),
             MessageKind::DirectMessagePriceChanged => self.direct_message_price_changed.is_some(),
@@ -436,7 +461,10 @@ impl Message {
             MessageKind::Giveaway => self.giveaway.is_some(),
             MessageKind::GiveawayWinners => self.giveaway_winners.is_some(),
             MessageKind::GiveawayCompleted => self.giveaway_completed.is_some(),
+            MessageKind::ManagedBotCreated => self.managed_bot_created.is_some(),
             MessageKind::PaidMessagePriceChanged => self.paid_message_price_changed.is_some(),
+            MessageKind::PollOptionAdded => self.poll_option_added.is_some(),
+            MessageKind::PollOptionDeleted => self.poll_option_deleted.is_some(),
             MessageKind::SuggestedPostApproved => self.suggested_post_approved.is_some(),
             MessageKind::SuggestedPostApprovalFailed => {
                 self.suggested_post_approval_failed.is_some()
@@ -455,6 +483,7 @@ impl Message {
             MessageKind::Contact => self.contact.is_some(),
             MessageKind::Dice => self.dice.is_some(),
             MessageKind::Document => self.document.is_some(),
+            MessageKind::LivePhoto => self.live_photo.is_some(),
             MessageKind::Location => self.location.is_some(),
             MessageKind::Photo => self.photo.is_some(),
             MessageKind::Sticker => self.sticker.is_some(),

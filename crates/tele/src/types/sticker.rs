@@ -37,6 +37,31 @@ fn validate_non_empty_control_free(method: &str, field: &str, value: &str) -> Re
     validate_control_free_string(field, value)
 }
 
+fn validate_json_file_reference(method: &str, field: &str, value: &str) -> Result<(), Error> {
+    validate_non_empty_control_free(method, field, value)?;
+    if value.starts_with("attach://") {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{method} {field} cannot use attach:// outside multipart upload requests"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_optional_json_file_reference(
+    method: &str,
+    field: &str,
+    value: Option<&str>,
+) -> Result<(), Error> {
+    if let Some(value) = value {
+        validate_json_file_reference(method, field, value)?;
+    }
+
+    Ok(())
+}
+
 fn validate_business_connection_id(method: &str, value: Option<&str>) -> Result<(), Error> {
     validate_optional_string_id(method, "business_connection_id", value)
 }
@@ -272,7 +297,7 @@ impl InputSticker {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        validate_non_empty_control_free("inputSticker", "sticker", &self.sticker)?;
+        validate_json_file_reference("inputSticker", "sticker", &self.sticker)?;
         validate_sticker_emoji_list("input sticker", &self.emoji_list)?;
         if let Some(mask_position) = self.mask_position.as_ref() {
             mask_position.validate()?;
@@ -412,7 +437,7 @@ impl SendStickerRequest {
                 reason: "sendSticker requires non-empty `sticker`".to_owned(),
             });
         };
-        validate_non_empty_control_free("sendSticker", "sticker", sticker)?;
+        validate_json_file_reference("sendSticker", "sticker", sticker)?;
         validate_optional_non_empty("sendSticker", "emoji", self.emoji.as_deref())
     }
 
@@ -804,7 +829,7 @@ impl SetStickerSetThumbnailRequest {
     pub fn validate(&self) -> Result<(), Error> {
         validate_non_empty_control_free("setStickerSetThumbnail", "name", &self.name)?;
         self.user_id.validate()?;
-        validate_optional_non_empty(
+        validate_optional_json_file_reference(
             "setStickerSetThumbnail",
             "thumbnail",
             self.thumbnail.as_deref(),
@@ -879,6 +904,12 @@ mod tests {
             .reply_markup(crate::types::telegram::InlineKeyboardMarkup::new(Vec::new()));
         assert!(matches!(send.validate(), Err(Error::InvalidRequest { .. })));
 
+        let attach_send = SendStickerRequest::new(ChatId::from(1), "attach://sticker0");
+        assert!(matches!(
+            attach_send.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
         let mut threaded = SendStickerRequest::new(ChatId::from(1), "sticker-file-id");
         threaded.message_thread_id = Some(0);
         assert!(matches!(
@@ -919,6 +950,14 @@ mod tests {
             StickerFormat::Static,
             vec!["😀".to_owned()],
         )?;
+        assert!(matches!(
+            InputSticker::new(
+                "attach://sticker0",
+                StickerFormat::Static,
+                vec!["😀".to_owned()]
+            ),
+            Err(Error::InvalidRequest { .. })
+        ));
         input.emoji_list = vec!["😀".to_owned(); MAX_STICKER_EMOJIS + 1];
         assert!(matches!(
             input.validate(),
@@ -961,6 +1000,11 @@ mod tests {
         let mut thumbnail_upload =
             SetStickerSetThumbnailRequest::new("set_name", UserId(1), StickerFormat::Static);
         thumbnail_upload.thumbnail = Some("bad\nthumbnail".to_owned());
+        assert!(matches!(
+            thumbnail_upload.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        thumbnail_upload.thumbnail = Some("attach://thumb0".to_owned());
         assert!(matches!(
             thumbnail_upload.validate(),
             Err(Error::InvalidRequest { .. })

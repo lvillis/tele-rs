@@ -116,16 +116,12 @@ impl SetupApi {
     }
 
     async fn get_me_retry_attempt(&self) -> Result<User> {
-        self.client
-            .call_method_no_params_without_transport_retry("getMe")
-            .await
+        self.client.call_method_no_params_once("getMe").await
     }
 
     async fn set_my_commands_retry_attempt(&self, request: &SetMyCommandsRequest) -> Result<bool> {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry("setMyCommands", request)
-            .await
+        self.client.call_method_once("setMyCommands", request).await
     }
 
     async fn get_my_commands_retry_attempt(
@@ -133,9 +129,7 @@ impl SetupApi {
         request: &GetMyCommandsRequest,
     ) -> Result<Vec<BotCommand>> {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry("getMyCommands", request)
-            .await
+        self.client.call_method_once("getMyCommands", request).await
     }
 
     async fn call_advanced_retry_attempt<Q>(&self, request: &Q) -> Result<Q::Response>
@@ -143,9 +137,7 @@ impl SetupApi {
         Q: AdvancedRequest,
     {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry(Q::METHOD, request)
-            .await
+        self.client.call_method_once(Q::METHOD, request).await
     }
 
     pub async fn set_commands(&self, commands: Vec<BotCommand>) -> Result<bool> {
@@ -519,14 +511,12 @@ impl BlockingSetupApi {
     }
 
     fn get_me_retry_attempt(&self) -> Result<User> {
-        self.client
-            .call_method_no_params_without_transport_retry("getMe")
+        self.client.call_method_no_params_once("getMe")
     }
 
     fn set_my_commands_retry_attempt(&self, request: &SetMyCommandsRequest) -> Result<bool> {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry("setMyCommands", request)
+        self.client.call_method_once("setMyCommands", request)
     }
 
     fn get_my_commands_retry_attempt(
@@ -534,8 +524,7 @@ impl BlockingSetupApi {
         request: &GetMyCommandsRequest,
     ) -> Result<Vec<BotCommand>> {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry("getMyCommands", request)
+        self.client.call_method_once("getMyCommands", request)
     }
 
     fn call_advanced_retry_attempt<Q>(&self, request: &Q) -> Result<Q::Response>
@@ -543,8 +532,7 @@ impl BlockingSetupApi {
         Q: AdvancedRequest,
     {
         request.validate()?;
-        self.client
-            .call_method_without_transport_retry(Q::METHOD, request)
+        self.client.call_method_once(Q::METHOD, request)
     }
 
     pub fn set_commands(&self, commands: Vec<BotCommand>) -> Result<bool> {

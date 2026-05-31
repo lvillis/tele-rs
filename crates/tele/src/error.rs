@@ -239,22 +239,41 @@ impl Error {
 
     /// Whether this error is generally retryable.
     pub fn is_retryable(&self) -> bool {
-        if self.classification() == ErrorClass::RateLimited {
-            return true;
-        }
-
-        if let Some(status) = self.status().map(|status| status.as_u16()) {
-            return matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504);
-        }
-
-        matches!(self, Self::Transport { status: None, .. })
-            || matches!(
+        match self.classification() {
+            ErrorClass::RateLimited => true,
+            ErrorClass::Authentication
+            | ErrorClass::Configuration
+            | ErrorClass::Validation
+            | ErrorClass::Runtime
+            | ErrorClass::Decode
+            | ErrorClass::Protocol => false,
+            ErrorClass::Storage => matches!(
                 self,
                 Self::Storage {
                     retryable: true,
                     ..
                 }
-            )
+            ),
+            ErrorClass::Transport => match self {
+                Self::Transport { status: None, .. } => true,
+                Self::Transport {
+                    status: Some(status),
+                    ..
+                } => is_retryable_status_code(*status),
+                _ => false,
+            },
+            ErrorClass::Api => match self {
+                Self::Api {
+                    status, error_code, ..
+                } => {
+                    status.is_some_and(is_retryable_status_code)
+                        || error_code
+                            .and_then(error_code_as_status_code)
+                            .is_some_and(is_retryable_status_code)
+                }
+                _ => false,
+            },
+        }
     }
 
     /// Whether this error indicates API throttling.
@@ -266,4 +285,14 @@ impl Error {
     pub fn is_auth_error(&self) -> bool {
         self.classification() == ErrorClass::Authentication
     }
+}
+
+fn is_retryable_status_code(status: u16) -> bool {
+    matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn error_code_as_status_code(error_code: i64) -> Option<u16> {
+    let status = u16::try_from(error_code).ok()?;
+    StatusCode::from_u16(status).ok()?;
+    Some(status)
 }

@@ -9,10 +9,14 @@ pub use crate::{VerifiedWebAppInitData, parse_web_app_init_data, verify_web_app_
 
 #[cfg(feature = "_async")]
 pub use crate::client::{
-    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
-    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
-    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
+    AnimationSendBuilder, AnimationUploadBuilder, AppApi, AudioSendBuilder, AudioUploadBuilder,
+    CallbackAnswerBuilder, ChatActionBuilder, ContactSendBuilder, ControlApi, DiceSendBuilder,
+    DocumentSendBuilder, DocumentUploadBuilder, LocationSendBuilder, MediaGroupSendBuilder,
+    MediaGroupUploadBuilder, MembershipApi, ModerationApi, ModerationNoticeApi, PhotoSendBuilder,
+    PhotoUploadBuilder, PollSendBuilder, RawApi, SetupApi, StickerSendBuilder,
+    StickerUploadBuilder, StopPollBuilder, TextSendBuilder, TypedApi, VenueSendBuilder,
+    VideoNoteSendBuilder, VideoNoteUploadBuilder, VideoSendBuilder, VideoUploadBuilder,
+    VoiceSendBuilder, VoiceUploadBuilder, WebAppApi,
 };
 pub use crate::client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -22,25 +26,34 @@ pub use crate::client::{
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{
-    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
-    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
-    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
-    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
-    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAnimationUploadBuilder, BlockingAppApi,
+    BlockingAudioSendBuilder, BlockingAudioUploadBuilder, BlockingCallbackAnswerBuilder,
+    BlockingChatActionBuilder, BlockingContactSendBuilder, BlockingControlApi,
+    BlockingDiceSendBuilder, BlockingDocumentSendBuilder, BlockingDocumentUploadBuilder,
+    BlockingLocationSendBuilder, BlockingMediaGroupSendBuilder, BlockingMediaGroupUploadBuilder,
+    BlockingMembershipApi, BlockingModerationApi, BlockingModerationNoticeApi,
+    BlockingPhotoSendBuilder, BlockingPhotoUploadBuilder, BlockingPollSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingStickerUploadBuilder, BlockingStopPollBuilder,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVenueSendBuilder,
+    BlockingVideoNoteSendBuilder, BlockingVideoNoteUploadBuilder, BlockingVideoSendBuilder,
+    BlockingVideoUploadBuilder, BlockingVoiceSendBuilder, BlockingVoiceUploadBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use crate::client::{BlockingSetupApi, BlockingWebAppApi};
 
 pub use crate::types::{
-    AllowedUpdate, BotCommand, BusinessConnection, BusinessMessagesDeleted, CallbackCodec,
-    CallbackPayload, ChatAdministratorCapability, ChatBoostRemoved, ChatBoostUpdated, ChatId,
+    AllowedUpdate, BackgroundFill, BackgroundType, BotCommand, BusinessConnection,
+    BusinessMessagesDeleted, CallbackCodec, CallbackPayload, ChatAction,
+    ChatAdministratorCapability, ChatBackground, ChatBoostRemoved, ChatBoostUpdated, ChatId,
     ChatJoinRequest, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, CompactCallbackPayload,
-    InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument, InputMediaGroupItem,
-    InputMediaPhoto, InputMediaVideo, InputPollOption, ManagedBotUpdated, Message,
+    DirectMessagesTopic, InputMedia, InputMediaAnimation, InputMediaAudio, InputMediaDocument,
+    InputMediaGroupItem, InputMediaLivePhoto, InputMediaLocation, InputMediaPhoto,
+    InputMediaSticker, InputMediaVenue, InputMediaVideo, InputPollMedia, InputPollOption,
+    InputPollOptionMedia, LivePhoto, ManagedBotCreated, ManagedBotUpdated, Message,
     MessageEntityKind, MessageId, MessageKind, MessageOrigin, MessageReactionCountUpdated,
-    MessageReactionUpdated, PaidMediaPurchased, ParseMode, PollKind, PreCheckoutQuery, ReplyMarkup,
-    ReplyParameters, ShippingQuery, Update, UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
+    MessageReactionUpdated, PaidMediaPurchased, ParseMode, Poll, PollKind, PollMedia,
+    PollOptionAdded, PollOptionDeleted, PreCheckoutQuery, ReplyMarkup, ReplyParameters,
+    ShippingQuery, Update, UpdateKind, UploadFile, UploadPart, WebhookSecretToken,
 };
 
 #[cfg(all(feature = "bot", feature = "postgres-session"))]

@@ -1,9 +1,9 @@
 use super::*;
 
 #[cfg(feature = "_async")]
-use super::retry::retry_method_async;
+use super::super::retry::retry_method_async;
 #[cfg(feature = "_blocking")]
-use super::retry::retry_method_blocking;
+use super::super::retry::retry_method_blocking;
 
 /// Raw Telegram API calling layer for async clients.
 #[cfg(feature = "_async")]
@@ -38,11 +38,16 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_async(method, &retry, || async {
-            self.client
-                .call_method_without_transport_retry(method, payload)
-                .await
-        })
+        retry_method_async(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| async move {
+                self.client
+                    .call_method_attempt(method, payload, total_timeout)
+                    .await
+            },
+        )
         .await
     }
 
@@ -59,11 +64,16 @@ impl RawApi {
     where
         R: DeserializeOwned,
     {
-        retry_method_async(method, &retry, || async {
-            self.client
-                .call_method_no_params_without_transport_retry(method)
-                .await
-        })
+        retry_method_async(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| async move {
+                self.client
+                    .call_method_no_params_attempt(method, total_timeout)
+                    .await
+            },
+        )
         .await
     }
 
@@ -114,16 +124,22 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_async(method, &retry, || async {
-            self.client
-                .call_method_multipart_without_transport_retry(
-                    method,
-                    payload,
-                    file_field_name,
-                    file,
-                )
-                .await
-        })
+        retry_method_async(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| async move {
+                self.client
+                    .call_method_multipart_attempt(
+                        method,
+                        payload,
+                        file_field_name,
+                        file,
+                        total_timeout,
+                    )
+                    .await
+            },
+        )
         .await
     }
 
@@ -140,16 +156,22 @@ impl RawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_async(method, &retry, || async {
-            self.client
-                .call_method_multipart_files_without_transport_retry(
-                    method,
-                    payload,
-                    skip_fields,
-                    files,
-                )
-                .await
-        })
+        retry_method_async(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| async move {
+                self.client
+                    .call_method_multipart_files_attempt(
+                        method,
+                        payload,
+                        skip_fields,
+                        files,
+                        total_timeout,
+                    )
+                    .await
+            },
+        )
         .await
     }
 }
@@ -187,10 +209,15 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_blocking(method, &retry, || {
-            self.client
-                .call_method_without_transport_retry(method, payload)
-        })
+        retry_method_blocking(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| {
+                self.client
+                    .call_method_attempt(method, payload, total_timeout)
+            },
+        )
     }
 
     /// Calls any Telegram method without payload.
@@ -206,10 +233,15 @@ impl BlockingRawApi {
     where
         R: DeserializeOwned,
     {
-        retry_method_blocking(method, &retry, || {
-            self.client
-                .call_method_no_params_without_transport_retry(method)
-        })
+        retry_method_blocking(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| {
+                self.client
+                    .call_method_no_params_attempt(method, total_timeout)
+            },
+        )
     }
 
     /// Calls any Telegram method with a multipart file part.
@@ -257,14 +289,20 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_blocking(method, &retry, || {
-            self.client.call_method_multipart_without_transport_retry(
-                method,
-                payload,
-                file_field_name,
-                file,
-            )
-        })
+        retry_method_blocking(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| {
+                self.client.call_method_multipart_attempt(
+                    method,
+                    payload,
+                    file_field_name,
+                    file,
+                    total_timeout,
+                )
+            },
+        )
     }
 
     /// Calls multi-file multipart method with method-scoped retry policy.
@@ -280,14 +318,19 @@ impl BlockingRawApi {
         R: DeserializeOwned,
         P: Serialize + ?Sized,
     {
-        retry_method_blocking(method, &retry, || {
-            self.client
-                .call_method_multipart_files_without_transport_retry(
+        retry_method_blocking(
+            method,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| {
+                self.client.call_method_multipart_files_attempt(
                     method,
                     payload,
                     skip_fields,
                     files,
+                    total_timeout,
                 )
-        })
+            },
+        )
     }
 }

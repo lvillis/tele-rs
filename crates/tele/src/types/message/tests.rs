@@ -419,6 +419,21 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
         MessageKind::BoostAdded => {
             object.insert("boost_added".to_owned(), json!({"boost_count": 2}));
         }
+        MessageKind::ChatBackgroundSet => {
+            object.insert(
+                "chat_background_set".to_owned(),
+                json!({
+                    "type": {
+                        "type": "fill",
+                        "fill": {
+                            "type": "solid",
+                            "color": 0x112233
+                        },
+                        "dark_theme_dimming": 50
+                    }
+                }),
+            );
+        }
         MessageKind::ChecklistTasksDone => {
             object.insert(
                 "checklist_tasks_done".to_owned(),
@@ -533,11 +548,62 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
                 }),
             );
         }
+        MessageKind::ManagedBotCreated => {
+            object.insert(
+                "managed_bot_created".to_owned(),
+                json!({
+                    "bot": {
+                        "id": 15,
+                        "is_bot": true,
+                        "first_name": "managed"
+                    }
+                }),
+            );
+        }
         MessageKind::PaidMessagePriceChanged => {
             object.insert(
                 "paid_message_price_changed".to_owned(),
                 json!({
                     "paid_message_star_count": 7
+                }),
+            );
+        }
+        MessageKind::PollOptionAdded => {
+            object.insert(
+                "poll_option_added".to_owned(),
+                json!({
+                    "poll_message": {
+                        "message_id": 410,
+                        "date": 1700000000,
+                        "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                        "poll": {
+                            "id": "poll-1",
+                            "question": "q?",
+                            "options": [{"text": "a", "voter_count": 1}],
+                            "total_voter_count": 1,
+                            "is_closed": false,
+                            "is_anonymous": false,
+                            "type": "regular",
+                            "allows_multiple_answers": false
+                        }
+                    },
+                    "option_persistent_id": "opt-2",
+                    "option_text": "new option",
+                    "option_text_entities": [{"type": "bold", "offset": 0, "length": 3}]
+                }),
+            );
+        }
+        MessageKind::PollOptionDeleted => {
+            object.insert(
+                "poll_option_deleted".to_owned(),
+                json!({
+                    "poll_message": {
+                        "message_id": 411,
+                        "date": 0,
+                        "chat": {"id": -1001, "type": "supergroup", "title": "mods"}
+                    },
+                    "option_persistent_id": "opt-3",
+                    "option_text": "old option"
                 }),
             );
         }
@@ -668,6 +734,24 @@ fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn S
                 json!({
                     "file_id": "doc-1",
                     "file_unique_id": "doc-u-1"
+                }),
+            );
+        }
+        MessageKind::LivePhoto => {
+            object.insert(
+                "live_photo".to_owned(),
+                json!({
+                    "photo": [{
+                        "file_id": "lp-p-1",
+                        "file_unique_id": "lp-pu-1",
+                        "width": 16,
+                        "height": 16
+                    }],
+                    "file_id": "live-photo-1",
+                    "file_unique_id": "live-photo-u-1",
+                    "width": 640,
+                    "height": 480,
+                    "duration": 3
                 }),
             );
         }
@@ -935,9 +1019,14 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
         "date": 1700000044,
         "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
         "sender_chat": {"id": -1002, "type": "channel", "title": "announcements"},
+        "sender_boost_count": 3,
         "author_signature": "anonymous admin",
         "sender_tag": "ops",
         "message_thread_id": 77,
+        "direct_messages_topic": {
+            "topic_id": 7001,
+            "user": {"id": 3, "is_bot": false, "first_name": "topic-owner"}
+        },
         "is_topic_message": true,
         "via_bot": {"id": 99, "is_bot": true, "first_name": "relay"},
         "has_protected_content": true,
@@ -956,13 +1045,21 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
                 "date": 1700000000,
                 "sender_user": {"id": 2, "is_bot": false, "first_name": "alice"}
             },
-            "message_id": 123
+            "message_id": 123,
+            "live_photo": {
+                "file_id": "external-live-photo-1",
+                "file_unique_id": "external-live-photo-u-1",
+                "width": 640,
+                "height": 480,
+                "duration": 3
+            }
         },
         "reply_to_story": {
             "chat": {"id": -1002, "type": "channel", "title": "announcements"},
             "id": 77
         },
         "reply_to_checklist_task_id": 9,
+        "reply_to_poll_option_id": "opt-1",
         "reply_to_message": {
             "message_id": 10,
             "date": 0,
@@ -977,13 +1074,53 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
         "link_preview_options": {"is_disabled": true},
         "reply_markup": {
             "inline_keyboard": [[{"text": "Open", "url": "https://example.com"}]]
+        },
+        "managed_bot_created": {
+            "bot": {"id": 16, "is_bot": true, "first_name": "managed"}
+        },
+        "poll_option_added": {
+            "poll_message": {
+                "message_id": 12,
+                "date": 1700000000,
+                "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+                "poll": {
+                    "id": "poll-2",
+                    "question": "q?",
+                    "options": [{"text": "a", "voter_count": 1}],
+                    "total_voter_count": 1,
+                    "is_closed": false,
+                    "is_anonymous": false,
+                    "type": "regular",
+                    "allows_multiple_answers": false
+                }
+            },
+            "option_persistent_id": "opt-2",
+            "option_text": "added",
+            "option_text_entities": [{"type": "italic", "offset": 0, "length": 5}]
+        },
+        "poll_option_deleted": {
+            "poll_message": {
+                "message_id": 13,
+                "date": 0,
+                "chat": {"id": -1001, "type": "supergroup", "title": "mods"}
+            },
+            "option_persistent_id": "opt-3",
+            "option_text": "deleted"
         }
     }))?;
 
     assert_eq!(message.sender_chat().map(|chat| chat.id), Some(-1002));
+    assert_eq!(message.sender_boost_count, Some(3));
     assert_eq!(message.author_signature.as_deref(), Some("anonymous admin"));
     assert_eq!(message.sender_tag.as_deref(), Some("ops"));
     assert_eq!(message.message_thread_id, Some(77));
+    assert_eq!(
+        message
+            .direct_messages_topic
+            .as_ref()
+            .map(|topic| topic.topic_id),
+        Some(7001)
+    );
     assert!(message.is_topic_message);
     assert_eq!(
         message.via_bot.as_ref().map(|user| user.id),
@@ -1006,10 +1143,19 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
         Some(MessageId(123))
     );
     assert_eq!(
+        message
+            .external_reply
+            .as_ref()
+            .and_then(|reply| reply.live_photo.as_ref())
+            .map(|live_photo| live_photo.file_id.as_str()),
+        Some("external-live-photo-1")
+    );
+    assert_eq!(
         message.reply_to_story.as_ref().map(|story| story.id),
         Some(77)
     );
     assert_eq!(message.reply_to_checklist_task_id, Some(9));
+    assert_eq!(message.reply_to_poll_option_id.as_deref(), Some("opt-1"));
     assert_eq!(
         message
             .link_preview_options
@@ -1018,6 +1164,44 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
         Some(Some(true))
     );
     assert!(message.reply_markup.is_some());
+    assert_eq!(
+        message
+            .managed_bot_created
+            .as_ref()
+            .map(|event| event.bot.first_name.as_str()),
+        Some("managed")
+    );
+    assert_eq!(
+        message
+            .poll_option_added
+            .as_ref()
+            .map(|event| event.option_persistent_id.as_str()),
+        Some("opt-2")
+    );
+    assert_eq!(
+        message
+            .poll_option_added
+            .as_ref()
+            .and_then(|event| event.poll_message.as_deref())
+            .and_then(MaybeInaccessibleMessage::as_accessible)
+            .and_then(|message| message.poll.as_ref())
+            .map(|poll| poll.id.as_str()),
+        Some("poll-2")
+    );
+    assert_eq!(
+        message
+            .poll_option_deleted
+            .as_ref()
+            .map(|event| event.option_text.as_str()),
+        Some("deleted")
+    );
+    assert!(
+        message
+            .poll_option_deleted
+            .as_ref()
+            .and_then(|event| event.poll_message.as_deref())
+            .is_some_and(MaybeInaccessibleMessage::is_inaccessible)
+    );
 
     let reply = message.reply_to_message().ok_or("missing reply")?;
     assert!(!reply.is_accessible());
@@ -1036,6 +1220,93 @@ fn parses_service_message_metadata_and_references() -> std::result::Result<(), B
 }
 
 #[test]
+fn parses_chat_background_service_message() -> std::result::Result<(), Box<dyn StdError>> {
+    let message: Message = serde_json::from_value(json!({
+        "message_id": 46,
+        "date": 1700000046,
+        "chat": {"id": -1001, "type": "supergroup", "title": "mods"},
+        "chat_background_set": {
+            "type": {
+                "type": "fill",
+                "fill": {
+                    "type": "gradient",
+                    "top_color": 16711680,
+                    "bottom_color": 255,
+                    "rotation_angle": 90,
+                    "future_fill": true
+                },
+                "dark_theme_dimming": 42,
+                "future_type": true
+            },
+            "future_background": true
+        }
+    }))?;
+
+    assert_eq!(message.kind(), MessageKind::ChatBackgroundSet);
+    let background = message
+        .chat_background_set
+        .as_ref()
+        .ok_or("missing chat background")?;
+    assert_eq!(background.background_type.kind(), Some("fill"));
+    assert_eq!(background.extra["future_background"], json!(true));
+    let fill_background = background
+        .background_type
+        .as_fill()
+        .ok_or("missing fill background")?;
+    assert_eq!(fill_background.dark_theme_dimming, 42);
+    assert_eq!(fill_background.fill.kind(), Some("gradient"));
+    assert_eq!(fill_background.extra["future_type"], json!(true));
+    assert_eq!(
+        fill_background
+            .fill
+            .as_gradient()
+            .and_then(|fill| fill.extra.get("future_fill")),
+        Some(&json!(true))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn chat_background_preserves_unknown_variants() -> std::result::Result<(), Box<dyn StdError>> {
+    let background: ChatBackground = serde_json::from_value(json!({
+        "type": {
+            "type": "future_background",
+            "future": true
+        }
+    }))?;
+
+    assert!(background.background_type.is_unknown());
+    assert_eq!(background.background_type.kind(), Some("future_background"));
+    assert_eq!(
+        background.background_type.as_unknown_value(),
+        Some(&json!({
+            "type": "future_background",
+            "future": true
+        }))
+    );
+
+    let background: ChatBackground = serde_json::from_value(json!({
+        "type": {
+            "type": "fill",
+            "fill": {
+                "type": "future_fill",
+                "future": true
+            },
+            "dark_theme_dimming": 25
+        }
+    }))?;
+    let fill = background
+        .background_type
+        .as_fill()
+        .ok_or("missing fill background")?;
+    assert!(fill.fill.is_unknown());
+    assert_eq!(fill.fill.kind(), Some("future_fill"));
+
+    Ok(())
+}
+
+#[test]
 fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Box<dyn StdError>> {
     let message: Message = serde_json::from_value(json!({
         "message_id": 45,
@@ -1044,6 +1315,22 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
         "paid_media": {
             "star_count": 5,
             "paid_media": [{
+                "type": "live_photo",
+                "live_photo": {
+                    "photo": [{
+                        "file_id": "lp-1",
+                        "file_unique_id": "lpu-1",
+                        "width": 32,
+                        "height": 32
+                    }],
+                    "file_id": "lp-video-1",
+                    "file_unique_id": "lp-video-u-1",
+                    "width": 320,
+                    "height": 240,
+                    "duration": 3
+                },
+                "future": {"live": true}
+            }, {
                 "type": "photo",
                 "photo": [{
                     "file_id": "pm-1",
@@ -1091,19 +1378,36 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
     assert_eq!(message.kind(), MessageKind::PaidMedia);
     let paid_media = message.paid_media.as_ref().ok_or("missing paid media")?;
     assert_eq!(paid_media.star_count, 5);
-    let paid_media_photo = paid_media
+    let paid_live_photo = paid_media
         .paid_media
         .first()
-        .and_then(PaidMedia::as_photo)
-        .ok_or("missing paid media photo")?;
+        .and_then(PaidMedia::as_live_photo)
+        .ok_or("missing paid live photo")?;
     assert_eq!(
         paid_media.paid_media.first().and_then(PaidMedia::kind),
-        Some("photo")
+        Some("live_photo")
     );
     assert!(
         paid_media
             .paid_media
             .first()
+            .is_some_and(PaidMedia::is_live_photo)
+    );
+    assert_eq!(paid_live_photo.live_photo.file_id, "lp-video-1");
+    assert_eq!(paid_live_photo.extra["future"], json!({"live": true}));
+    let paid_media_photo = paid_media
+        .paid_media
+        .get(1)
+        .and_then(PaidMedia::as_photo)
+        .ok_or("missing paid media photo")?;
+    assert_eq!(
+        paid_media.paid_media.get(1).and_then(PaidMedia::kind),
+        Some("photo")
+    );
+    assert!(
+        paid_media
+            .paid_media
+            .get(1)
             .is_some_and(PaidMedia::is_photo)
     );
     assert_eq!(paid_media_photo.photo.len(), 1);
@@ -1111,11 +1415,20 @@ fn parses_paid_media_and_suggested_post_payloads() -> std::result::Result<(), Bo
     assert_eq!(
         paid_media
             .paid_media
-            .first()
+            .get(1)
             .cloned()
             .and_then(PaidMedia::into_photo)
             .and_then(|value| value.extra.get("future").cloned()),
         Some(json!({"kept": true}))
+    );
+    assert_eq!(
+        paid_media
+            .paid_media
+            .first()
+            .cloned()
+            .and_then(PaidMedia::into_live_photo)
+            .map(|value| value.live_photo.file_unique_id.clone()),
+        Some("lp-video-u-1".to_owned())
     );
 
     let checklist = message.checklist.as_ref().ok_or("missing checklist")?;
@@ -1191,6 +1504,19 @@ fn input_media_round_trips_with_boxed_variants() -> std::result::Result<(), Box<
     };
     assert_eq!(photo.media, "attach://photo");
     assert_eq!(photo.caption.as_deref(), Some("preview"));
+
+    let live_photo_media = InputMedia::from(InputMediaLivePhoto::new(
+        "live-photo-file-id",
+        "cover-photo-file-id",
+    ));
+    let live_photo_value = serde_json::to_value(&live_photo_media)?;
+    assert_eq!(live_photo_value.get("type"), Some(&json!("live_photo")));
+    let parsed_live_photo: InputMedia = serde_json::from_value(live_photo_value)?;
+    let InputMedia::LivePhoto(live_photo) = parsed_live_photo else {
+        return Err("expected live photo input media".into());
+    };
+    assert_eq!(live_photo.media, "live-photo-file-id");
+    assert_eq!(live_photo.photo, "cover-photo-file-id");
 
     Ok(())
 }

@@ -29,6 +29,15 @@ impl UpdatesService {
         self.client.call_method("getUpdates", request).await
     }
 
+    #[cfg(feature = "bot")]
+    pub(crate) async fn get_updates_once(
+        &self,
+        request: &GetUpdatesRequest,
+    ) -> Result<Vec<Update>> {
+        request.validate()?;
+        self.client.call_method_once("getUpdates", request).await
+    }
+
     /// Calls `setWebhook`.
     pub async fn set_webhook(&self, request: &SetWebhookRequest) -> Result<bool> {
         request.validate()?;

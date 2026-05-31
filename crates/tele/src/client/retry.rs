@@ -1,6 +1,8 @@
-use super::*;
-use crate::ErrorClass;
+use std::time::{Duration, Instant};
+
+use crate::client::RetryConfig;
 use crate::util::{jittered_duration, retry_after_or_backoff};
+use crate::{Error, ErrorClass, Result};
 
 pub(crate) fn backoff_delay(
     base: Duration,
@@ -43,23 +45,52 @@ fn should_retry_method_error(
     error.classification() == ErrorClass::RateLimited || method_allows_retry(method, retry)
 }
 
+fn retry_deadline(total_timeout: Option<Duration>) -> Option<Instant> {
+    total_timeout.and_then(|timeout| Instant::now().checked_add(timeout))
+}
+
+fn remaining_total_timeout(deadline: Option<Instant>) -> Option<Duration> {
+    deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()))
+}
+
+fn can_start_attempt(deadline: Option<Instant>) -> bool {
+    remaining_total_timeout(deadline).is_none_or(|remaining| !remaining.is_zero())
+}
+
+fn can_wait_before_retry(deadline: Option<Instant>, delay: Duration) -> bool {
+    remaining_total_timeout(deadline).is_none_or(|remaining| delay < remaining)
+}
+
 #[cfg(feature = "_async")]
 pub(crate) async fn retry_method_async<T, F, Fut>(
     method: &str,
     retry: &RetryConfig,
+    total_timeout: Option<Duration>,
     mut op: F,
 ) -> Result<T>
 where
-    F: FnMut() -> Fut,
+    F: FnMut(Option<Duration>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
     retry.validate()?;
+    let deadline = retry_deadline(total_timeout);
     let max_attempts = retry.max_attempts;
     let mut attempt = 0;
 
     loop {
+        if !can_start_attempt(deadline) {
+            return Err(Error::Transport {
+                method: method.to_owned(),
+                status: None,
+                request_id: None,
+                retry_after: None,
+                request_path: None,
+                message: "total timeout elapsed before retry attempt".into(),
+            });
+        }
+
         attempt += 1;
-        match op().await {
+        match op(remaining_total_timeout(deadline)).await {
             Ok(value) => return Ok(value),
             Err(error) => {
                 if !should_retry_method_error(method, retry, &error, attempt, max_attempts) {
@@ -73,6 +104,9 @@ where
                         retry.jitter_ratio,
                     )
                 });
+                if !can_wait_before_retry(deadline, delay) {
+                    return Err(error);
+                }
                 tokio::time::sleep(delay).await;
             }
         }
@@ -80,17 +114,34 @@ where
 }
 
 #[cfg(feature = "_blocking")]
-pub(crate) fn retry_method_blocking<T, F>(method: &str, retry: &RetryConfig, mut op: F) -> Result<T>
+pub(crate) fn retry_method_blocking<T, F>(
+    method: &str,
+    retry: &RetryConfig,
+    total_timeout: Option<Duration>,
+    mut op: F,
+) -> Result<T>
 where
-    F: FnMut() -> Result<T>,
+    F: FnMut(Option<Duration>) -> Result<T>,
 {
     retry.validate()?;
+    let deadline = retry_deadline(total_timeout);
     let max_attempts = retry.max_attempts;
     let mut attempt = 0;
 
     loop {
+        if !can_start_attempt(deadline) {
+            return Err(Error::Transport {
+                method: method.to_owned(),
+                status: None,
+                request_id: None,
+                retry_after: None,
+                request_path: None,
+                message: "total timeout elapsed before retry attempt".into(),
+            });
+        }
+
         attempt += 1;
-        match op() {
+        match op(remaining_total_timeout(deadline)) {
             Ok(value) => return Ok(value),
             Err(error) => {
                 if !should_retry_method_error(method, retry, &error, attempt, max_attempts) {
@@ -104,6 +155,9 @@ where
                         retry.jitter_ratio,
                     )
                 });
+                if !can_wait_before_retry(deadline, delay) {
+                    return Err(error);
+                }
                 std::thread::sleep(delay);
             }
         }

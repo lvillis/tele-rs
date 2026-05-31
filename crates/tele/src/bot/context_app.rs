@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::InputMediaGroupItem;
+use crate::types::{ChatAction, InputMediaGroupItem, InputPollOption, MessageId};
 
 /// Request-scoped runtime facade for handler code.
 ///
@@ -68,6 +68,135 @@ impl ContextAppApi {
         self.client.app().reply(update, text)
     }
 
+    /// Starts a location-send builder for a target chat.
+    pub fn location(
+        &self,
+        chat_id: impl Into<ChatId>,
+        latitude: f64,
+        longitude: f64,
+    ) -> crate::client::LocationSendBuilder {
+        self.client.app().location(chat_id, latitude, longitude)
+    }
+
+    /// Starts a location-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_location(
+        &self,
+        update: &Update,
+        latitude: f64,
+        longitude: f64,
+    ) -> Result<crate::client::LocationSendBuilder> {
+        self.client
+            .app()
+            .reply_location(update, latitude, longitude)
+    }
+
+    /// Starts a venue-send builder for a target chat.
+    pub fn venue(
+        &self,
+        chat_id: impl Into<ChatId>,
+        latitude: f64,
+        longitude: f64,
+        title: impl Into<String>,
+        address: impl Into<String>,
+    ) -> crate::client::VenueSendBuilder {
+        self.client
+            .app()
+            .venue(chat_id, latitude, longitude, title, address)
+    }
+
+    /// Starts a venue-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_venue(
+        &self,
+        update: &Update,
+        latitude: f64,
+        longitude: f64,
+        title: impl Into<String>,
+        address: impl Into<String>,
+    ) -> Result<crate::client::VenueSendBuilder> {
+        self.client
+            .app()
+            .reply_venue(update, latitude, longitude, title, address)
+    }
+
+    /// Starts a contact-send builder for a target chat.
+    pub fn contact(
+        &self,
+        chat_id: impl Into<ChatId>,
+        phone_number: impl Into<String>,
+        first_name: impl Into<String>,
+    ) -> crate::client::ContactSendBuilder {
+        self.client.app().contact(chat_id, phone_number, first_name)
+    }
+
+    /// Starts a contact-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_contact(
+        &self,
+        update: &Update,
+        phone_number: impl Into<String>,
+        first_name: impl Into<String>,
+    ) -> Result<crate::client::ContactSendBuilder> {
+        self.client
+            .app()
+            .reply_contact(update, phone_number, first_name)
+    }
+
+    /// Starts a poll-send builder for a target chat.
+    pub fn poll(
+        &self,
+        chat_id: impl Into<ChatId>,
+        question: impl Into<String>,
+        options: impl IntoIterator<Item = impl Into<InputPollOption>>,
+    ) -> Result<crate::client::PollSendBuilder> {
+        self.client.app().poll(chat_id, question, options)
+    }
+
+    /// Starts a poll-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_poll(
+        &self,
+        update: &Update,
+        question: impl Into<String>,
+        options: impl IntoIterator<Item = impl Into<InputPollOption>>,
+    ) -> Result<crate::client::PollSendBuilder> {
+        self.client.app().reply_poll(update, question, options)
+    }
+
+    /// Starts a stop-poll builder for a target chat and message.
+    pub fn stop_poll(
+        &self,
+        chat_id: impl Into<ChatId>,
+        message_id: MessageId,
+    ) -> crate::client::StopPollBuilder {
+        self.client.app().stop_poll(chat_id, message_id)
+    }
+
+    /// Starts a dice-send builder for a target chat.
+    pub fn dice(&self, chat_id: impl Into<ChatId>) -> crate::client::DiceSendBuilder {
+        self.client.app().dice(chat_id)
+    }
+
+    /// Starts a dice-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_dice(&self, update: &Update) -> Result<crate::client::DiceSendBuilder> {
+        self.client.app().reply_dice(update)
+    }
+
+    /// Starts a chat-action builder for a target chat.
+    pub fn chat_action(
+        &self,
+        chat_id: impl Into<ChatId>,
+        action: ChatAction,
+    ) -> crate::client::ChatActionBuilder {
+        self.client.app().chat_action(chat_id, action)
+    }
+
+    /// Starts a chat-action builder using the update reply target.
+    pub fn chat_action_for_update(
+        &self,
+        update: &Update,
+        action: ChatAction,
+    ) -> Result<crate::client::ChatActionBuilder> {
+        self.client.app().chat_action_for_update(update, action)
+    }
+
     /// Starts a photo-send builder for a target chat.
     pub fn photo(
         &self,
@@ -78,7 +207,7 @@ impl ContextAppApi {
     }
 
     /// Starts a photo-upload builder for a target chat.
-    pub fn photo_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::PhotoSendBuilder {
+    pub fn photo_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::PhotoUploadBuilder {
         self.client.app().photo_upload(chat_id)
     }
 
@@ -92,7 +221,7 @@ impl ContextAppApi {
     }
 
     /// Starts a photo-upload builder using the update reply target and quoting its source message when present.
-    pub fn reply_photo_upload(&self, update: &Update) -> Result<crate::client::PhotoSendBuilder> {
+    pub fn reply_photo_upload(&self, update: &Update) -> Result<crate::client::PhotoUploadBuilder> {
         self.client.app().reply_photo_upload(update)
     }
 
@@ -109,7 +238,7 @@ impl ContextAppApi {
     pub fn document_upload(
         &self,
         chat_id: impl Into<ChatId>,
-    ) -> crate::client::DocumentSendBuilder {
+    ) -> crate::client::DocumentUploadBuilder {
         self.client.app().document_upload(chat_id)
     }
 
@@ -126,7 +255,7 @@ impl ContextAppApi {
     pub fn reply_document_upload(
         &self,
         update: &Update,
-    ) -> Result<crate::client::DocumentSendBuilder> {
+    ) -> Result<crate::client::DocumentUploadBuilder> {
         self.client.app().reply_document_upload(update)
     }
 
@@ -140,7 +269,7 @@ impl ContextAppApi {
     }
 
     /// Starts a video-upload builder for a target chat.
-    pub fn video_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VideoSendBuilder {
+    pub fn video_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VideoUploadBuilder {
         self.client.app().video_upload(chat_id)
     }
 
@@ -154,7 +283,7 @@ impl ContextAppApi {
     }
 
     /// Starts a video-upload builder using the update reply target and quoting its source message when present.
-    pub fn reply_video_upload(&self, update: &Update) -> Result<crate::client::VideoSendBuilder> {
+    pub fn reply_video_upload(&self, update: &Update) -> Result<crate::client::VideoUploadBuilder> {
         self.client.app().reply_video_upload(update)
     }
 
@@ -168,7 +297,7 @@ impl ContextAppApi {
     }
 
     /// Starts an audio-upload builder for a target chat.
-    pub fn audio_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::AudioSendBuilder {
+    pub fn audio_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::AudioUploadBuilder {
         self.client.app().audio_upload(chat_id)
     }
 
@@ -182,7 +311,7 @@ impl ContextAppApi {
     }
 
     /// Starts an audio-upload builder using the update reply target and quoting its source message when present.
-    pub fn reply_audio_upload(&self, update: &Update) -> Result<crate::client::AudioSendBuilder> {
+    pub fn reply_audio_upload(&self, update: &Update) -> Result<crate::client::AudioUploadBuilder> {
         self.client.app().reply_audio_upload(update)
     }
 
@@ -199,7 +328,7 @@ impl ContextAppApi {
     pub fn animation_upload(
         &self,
         chat_id: impl Into<ChatId>,
-    ) -> crate::client::AnimationSendBuilder {
+    ) -> crate::client::AnimationUploadBuilder {
         self.client.app().animation_upload(chat_id)
     }
 
@@ -216,7 +345,7 @@ impl ContextAppApi {
     pub fn reply_animation_upload(
         &self,
         update: &Update,
-    ) -> Result<crate::client::AnimationSendBuilder> {
+    ) -> Result<crate::client::AnimationUploadBuilder> {
         self.client.app().reply_animation_upload(update)
     }
 
@@ -230,7 +359,7 @@ impl ContextAppApi {
     }
 
     /// Starts a voice-upload builder for a target chat.
-    pub fn voice_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VoiceSendBuilder {
+    pub fn voice_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::VoiceUploadBuilder {
         self.client.app().voice_upload(chat_id)
     }
 
@@ -244,8 +373,42 @@ impl ContextAppApi {
     }
 
     /// Starts a voice-upload builder using the update reply target and quoting its source message when present.
-    pub fn reply_voice_upload(&self, update: &Update) -> Result<crate::client::VoiceSendBuilder> {
+    pub fn reply_voice_upload(&self, update: &Update) -> Result<crate::client::VoiceUploadBuilder> {
         self.client.app().reply_voice_upload(update)
+    }
+
+    /// Starts a video-note-send builder for a target chat.
+    pub fn video_note(
+        &self,
+        chat_id: impl Into<ChatId>,
+        video_note: impl Into<String>,
+    ) -> crate::client::VideoNoteSendBuilder {
+        self.client.app().video_note(chat_id, video_note)
+    }
+
+    /// Starts a video-note-upload builder for a target chat.
+    pub fn video_note_upload(
+        &self,
+        chat_id: impl Into<ChatId>,
+    ) -> crate::client::VideoNoteUploadBuilder {
+        self.client.app().video_note_upload(chat_id)
+    }
+
+    /// Starts a video-note-send builder using the update reply target and quoting its source message when present.
+    pub fn reply_video_note(
+        &self,
+        update: &Update,
+        video_note: impl Into<String>,
+    ) -> Result<crate::client::VideoNoteSendBuilder> {
+        self.client.app().reply_video_note(update, video_note)
+    }
+
+    /// Starts a video-note-upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_video_note_upload(
+        &self,
+        update: &Update,
+    ) -> Result<crate::client::VideoNoteUploadBuilder> {
+        self.client.app().reply_video_note_upload(update)
     }
 
     /// Starts a sticker-send builder for a target chat.
@@ -258,7 +421,10 @@ impl ContextAppApi {
     }
 
     /// Starts a sticker-upload builder for a target chat.
-    pub fn sticker_upload(&self, chat_id: impl Into<ChatId>) -> crate::client::StickerSendBuilder {
+    pub fn sticker_upload(
+        &self,
+        chat_id: impl Into<ChatId>,
+    ) -> crate::client::StickerUploadBuilder {
         self.client.app().sticker_upload(chat_id)
     }
 
@@ -275,7 +441,7 @@ impl ContextAppApi {
     pub fn reply_sticker_upload(
         &self,
         update: &Update,
-    ) -> Result<crate::client::StickerSendBuilder> {
+    ) -> Result<crate::client::StickerUploadBuilder> {
         self.client.app().reply_sticker_upload(update)
     }
 
@@ -292,6 +458,19 @@ impl ContextAppApi {
         self.client.app().media_group(chat_id, media)
     }
 
+    /// Starts a media-group upload builder for a target chat.
+    pub fn media_group_upload<I, M>(
+        &self,
+        chat_id: impl Into<ChatId>,
+        media: I,
+    ) -> Result<crate::client::MediaGroupUploadBuilder>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<InputMediaGroupItem>,
+    {
+        self.client.app().media_group_upload(chat_id, media)
+    }
+
     /// Starts a media-group builder using the update reply target and quoting its source message when present.
     pub fn reply_media_group<I, M>(
         &self,
@@ -303,6 +482,19 @@ impl ContextAppApi {
         M: Into<InputMediaGroupItem>,
     {
         self.client.app().reply_media_group(update, media)
+    }
+
+    /// Starts a media-group upload builder using the update reply target and quoting its source message when present.
+    pub fn reply_media_group_upload<I, M>(
+        &self,
+        update: &Update,
+        media: I,
+    ) -> Result<crate::client::MediaGroupUploadBuilder>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<InputMediaGroupItem>,
+    {
+        self.client.app().reply_media_group_upload(update, media)
     }
 
     /// Shortcut for `text(...).send().await`.

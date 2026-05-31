@@ -335,6 +335,8 @@ pub struct PollAnswer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<User>,
     pub option_ids: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_persistent_ids: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -1450,7 +1452,8 @@ mod tests {
                 "poll_answer": {
                     "poll_id": "poll-107",
                     "user": {"id": 1, "is_bot": false, "first_name": "tester"},
-                    "option_ids": [0]
+                    "option_ids": [0],
+                    "option_persistent_ids": ["opt-0"]
                 }
             }),
             UpdateKind::MyChatMember => json!({
@@ -1685,6 +1688,21 @@ mod tests {
             .purchased_paid_media()
             .ok_or("missing paid media purchase")?;
         assert_eq!(purchase.paid_media_payload, "paid-media-payload");
+
+        let poll_answer = update_for_kind(UpdateKind::PollAnswer)?;
+        let poll_answer = poll_answer
+            .poll_answer
+            .as_ref()
+            .ok_or("missing poll answer")?;
+        assert_eq!(poll_answer.option_ids.as_slice(), &[0]);
+        assert_eq!(
+            poll_answer
+                .option_persistent_ids
+                .as_ref()
+                .and_then(|ids| ids.first())
+                .map(String::as_str),
+            Some("opt-0")
+        );
 
         let boost = update_for_kind(UpdateKind::ChatBoost)?;
         let boost = boost.chat_boost().ok_or("missing chat boost")?;

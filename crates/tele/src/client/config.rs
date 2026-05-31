@@ -416,15 +416,22 @@ impl ClientBuilder {
             invalid_http_proxy_uri(raw, format!("failed to parse proxy uri: {source}"))
         })?;
         validate_http_proxy_uri(raw, &parsed)?;
-        self.defaults.http_proxy = Some(parsed);
+        self.set_http_proxy(parsed);
         Ok(self)
     }
 
     /// Sets HTTP proxy URI using a pre-parsed value.
     pub fn http_proxy_uri(mut self, proxy_uri: Uri) -> Result<Self, Error> {
         validate_http_proxy_uri(&proxy_uri.to_string(), &proxy_uri)?;
-        self.defaults.http_proxy = Some(proxy_uri);
+        self.set_http_proxy(proxy_uri);
         Ok(self)
+    }
+
+    fn set_http_proxy(&mut self, proxy_uri: Uri) {
+        if self.defaults.http_proxy.as_ref() != Some(&proxy_uri) {
+            self.defaults.proxy_authorization = None;
+        }
+        self.defaults.http_proxy = Some(proxy_uri);
     }
 
     /// Clears configured HTTP proxy URI and proxy authorization.
@@ -436,8 +443,26 @@ impl ClientBuilder {
 
     /// Sets proxy authorization header value.
     pub fn proxy_authorization(mut self, value: impl AsRef<str>) -> Result<Self, Error> {
+        if self.defaults.http_proxy.is_none() {
+            return Err(invalid_proxy_authorization(
+                "proxy_authorization requires http_proxy",
+            ));
+        }
+
+        let raw = value.as_ref();
+        if raw.is_empty() || raw.trim().len() != raw.len() {
+            return Err(invalid_proxy_authorization(
+                "proxy_authorization must not be empty or padded",
+            ));
+        }
+        if raw.chars().any(char::is_control) {
+            return Err(invalid_proxy_authorization(
+                "proxy_authorization must not contain control characters",
+            ));
+        }
+
         let mut parsed =
-            HeaderValue::from_str(value.as_ref()).map_err(|source| Error::InvalidHeaderValue {
+            HeaderValue::from_str(raw).map_err(|source| Error::InvalidHeaderValue {
                 name: "proxy-authorization".to_owned(),
                 source,
             })?;
@@ -524,6 +549,15 @@ fn validate_http_proxy_uri(raw: &str, parsed: &Uri) -> Result<(), Error> {
     if parsed.host().is_none() {
         return Err(invalid_http_proxy_uri(raw, "proxy uri must include host"));
     }
+    if parsed
+        .authority()
+        .is_some_and(|authority| authority.as_str().contains('@'))
+    {
+        return Err(invalid_http_proxy_uri(
+            raw,
+            "proxy uri must not include credentials; use proxy_authorization instead",
+        ));
+    }
     if let Some(path_and_query) = parsed.path_and_query() {
         let path = path_and_query.path();
         if !path.is_empty() && path != "/" {
@@ -549,6 +583,12 @@ fn invalid_http_proxy_uri(raw: &str, detail: impl std::fmt::Display) -> Error {
             "invalid http proxy uri `{}`: {detail}",
             redact_url_credentials(raw)
         ),
+    }
+}
+
+fn invalid_proxy_authorization(detail: impl Into<String>) -> Error {
+    Error::Configuration {
+        reason: detail.into(),
     }
 }
 
@@ -647,6 +687,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_proxy_uri_credentials() -> Result<(), Error> {
+        let result = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://user:secret@127.0.0.1:8080");
+
+        assert!(matches!(result, Err(Error::Configuration { .. })));
+        Ok(())
+    }
+
+    #[test]
     fn stores_proxy_and_no_proxy_settings() -> Result<(), Error> {
         let builder = ClientBuilder::new("https://api.telegram.org")?
             .http_proxy("http://127.0.0.1:8080")?
@@ -666,11 +715,25 @@ mod tests {
 
     #[test]
     fn rejects_proxy_authorization_without_proxy() -> Result<(), Error> {
-        let builder =
-            ClientBuilder::new("https://api.telegram.org")?.proxy_authorization("Basic token")?;
-
         assert!(matches!(
-            builder.validate(),
+            ClientBuilder::new("https://api.telegram.org")?.proxy_authorization("Basic token"),
+            Err(Error::Configuration { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_empty_or_padded_proxy_authorization() -> Result<(), Error> {
+        assert!(matches!(
+            ClientBuilder::new("https://api.telegram.org")?
+                .http_proxy("http://127.0.0.1:8080")?
+                .proxy_authorization(""),
+            Err(Error::Configuration { .. })
+        ));
+        assert!(matches!(
+            ClientBuilder::new("https://api.telegram.org")?
+                .http_proxy("http://127.0.0.1:8080")?
+                .proxy_authorization(" Basic token "),
             Err(Error::Configuration { .. })
         ));
         Ok(())
@@ -687,6 +750,36 @@ mod tests {
         let parts = builder.into_parts();
         assert!(parts.defaults.http_proxy.is_none());
         assert!(parts.defaults.proxy_authorization.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn changing_proxy_removes_bound_authorization() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://127.0.0.1:8080")?
+            .proxy_authorization("Basic token")?
+            .http_proxy("http://127.0.0.1:8081")?;
+
+        builder.validate()?;
+        let parts = builder.into_parts();
+        assert_eq!(
+            parts.defaults.http_proxy.as_ref().and_then(Uri::port_u16),
+            Some(8081)
+        );
+        assert!(parts.defaults.proxy_authorization.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn resetting_same_proxy_keeps_bound_authorization() -> Result<(), Error> {
+        let builder = ClientBuilder::new("https://api.telegram.org")?
+            .http_proxy("http://127.0.0.1:8080")?
+            .proxy_authorization("Basic token")?
+            .http_proxy("http://127.0.0.1:8080")?;
+
+        builder.validate()?;
+        let parts = builder.into_parts();
+        assert!(parts.defaults.proxy_authorization.is_some());
         Ok(())
     }
 
@@ -881,6 +974,17 @@ mod tests {
     #[test]
     fn validates_preparsed_http_proxy_uri() -> Result<(), Error> {
         let parsed = match "https://127.0.0.1:8080".parse::<Uri>() {
+            Ok(parsed) => parsed,
+            Err(source) => {
+                return Err(Error::InvalidRequest {
+                    reason: format!("failed to parse test uri: {source}"),
+                });
+            }
+        };
+        let result = ClientBuilder::new("https://api.telegram.org")?.http_proxy_uri(parsed);
+        assert!(result.is_err());
+
+        let parsed = match "http://user:secret@127.0.0.1:8080".parse::<Uri>() {
             Ok(parsed) => parsed,
             Err(source) => {
                 return Err(Error::InvalidRequest {

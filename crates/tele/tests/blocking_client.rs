@@ -5,9 +5,10 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
-    ChatAdministratorCapability, CreateInvoiceLinkRequest, GetChatMemberCountRequest,
-    InlineKeyboardButton, InlineKeyboardMarkup, InputMediaGroupItem, LabeledPrice, MessageId,
-    ParseMode, SuggestedPostParameters, WebAppData,
+    ChatAction, ChatAdministratorCapability, CreateInvoiceLinkRequest, DiceEmoji,
+    GetChatMemberCountRequest, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaGroupItem,
+    InputPollMedia, LabeledPrice, MessageId, ParseMode, PollKind, SendMessageRequest,
+    SuggestedPostParameters, UploadFile, UploadPart, WebAppData,
 };
 use tele::{
     BanMemberOptions, BlockingClient, BootstrapPlan, BootstrapRetryPolicy, Error, ErrorClass,
@@ -370,6 +371,80 @@ async fn blocking_raw_retry_does_not_multiply_transport_retries() -> Result<(), 
 }
 
 #[tokio::test]
+async fn blocking_client_default_retry_applies_method_policy_to_read_only_methods()
+-> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let success =
+        r#"{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"tele","username":"retry_bot"}}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 200, success),
+    ])?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(2, false))?
+        .build_blocking()?;
+
+    let me = client.bot().get_me()?;
+
+    assert_eq!(me.username.as_deref(), Some("retry_bot"));
+    assert_eq!(server.finish()?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_client_default_retry_respects_total_timeout_across_attempts()
+-> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server("/bot123:abc/getMe", 502, failure)?;
+    let mut retry = fast_retry(2, false);
+    retry.base_backoff = Duration::from_secs(1);
+    retry.max_backoff = Duration::from_secs(1);
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .total_timeout(Some(Duration::from_millis(500)))?
+        .retry_config(retry)?
+        .build_blocking()?;
+
+    let error = match client.bot().get_me() {
+        Ok(_) => return Err("retry must not start after total timeout budget is exhausted".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(server.finish()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_client_default_retry_keeps_mutating_methods_single_attempt_without_opt_in()
+-> Result<(), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post("/bot123:abc/sendMessage").respond_json(
+            503,
+            r#"{"ok":false,"error_code":503,"description":"Service Unavailable"}"#,
+        ),
+    )?;
+
+    let client = BlockingClient::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(2, false))?
+        .build_blocking()?;
+    let request = SendMessageRequest::new(12_i64, "hello")?;
+
+    let error = match client.messages().send_message(&request) {
+        Ok(_) => return Err("sendMessage must not retry ambiguous 503 without opt-in".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(server.finish()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_raw_retry_keeps_retry_after_503_api_error_non_idempotent_safe()
 -> Result<(), DynError> {
     let server = FakeTelegramServer::single(
@@ -528,6 +603,176 @@ async fn blocking_text_builder_supports_markup_and_common_options() -> Result<()
     assert_eq!(sent.message_id.0, 12);
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_non_file_message_builders_support_common_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendLocation")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"latitude\":37.5")
+            .contains_case_insensitive("\"longitude\":-122.25")
+            .contains_case_insensitive("\"horizontal_accuracy\":12.5")
+            .contains_case_insensitive("\"live_period\":60")
+            .contains_case_insensitive("\"heading\":90")
+            .contains_case_insensitive("\"proximity_alert_radius\":100")
+            .contains_case_insensitive("\"message_thread_id\":41")
+            .contains_case_insensitive("\"direct_messages_topic_id\":9")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":90")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":40,"date":1710000030,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVenue")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"title\":\"Blocking HQ\"")
+            .contains_case_insensitive("\"address\":\"2 Bot Street\"")
+            .contains_case_insensitive("\"foursquare_id\":\"fs-1\"")
+            .contains_case_insensitive("\"foursquare_type\":\"office\"")
+            .contains_case_insensitive("\"message_thread_id\":42")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":41,"date":1710000031,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendContact")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"phone_number\":\"+15551111111\"")
+            .contains_case_insensitive("\"first_name\":\"Blocking\"")
+            .contains_case_insensitive("\"last_name\":\"Bot\"")
+            .contains_case_insensitive("\"message_thread_id\":43")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":42,"date":1710000032,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendPoll")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"question\":\"Blocking poll\"")
+            .contains_case_insensitive("\"options\":[{\"text\":\"one\"},{\"text\":\"two\"}]")
+            .contains_case_insensitive("\"type\":\"regular\"")
+            .contains_case_insensitive("\"is_anonymous\":false")
+            .contains_case_insensitive("\"allows_revoting\":true")
+            .contains_case_insensitive("\"shuffle_options\":true")
+            .contains_case_insensitive("\"allow_adding_options\":true")
+            .contains_case_insensitive("\"hide_results_until_closes\":true")
+            .contains_case_insensitive("\"members_only\":true")
+            .contains_case_insensitive("\"media\":{\"type\":\"location\"")
+            .contains_case_insensitive("\"explanation_media\":{\"type\":\"photo\"")
+            .contains_case_insensitive("\"message_thread_id\":44")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":91")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":43,"date":1710000033,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendDice")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"message_thread_id\":45")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":92")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":44,"date":1710000034,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendChatAction")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"action\":\"upload_document\"")
+            .contains_case_insensitive("\"message_thread_id\":46")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/stopPoll")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"message_id\":93")
+            .contains_case_insensitive("\"business_connection_id\":\"blocking-business-stop-poll\"")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Blocking closed\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"id":"blocking-poll-1","question":"Blocking poll","options":[{"text":"one","voter_count":0},{"text":"two","voter_count":0}],"total_voter_count":0,"is_closed":true,"is_anonymous":false,"type":"regular","allows_multiple_answers":false}}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = BlockingClient::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+
+    let location = client
+        .app()
+        .location(1_i64, 37.5, -122.25)
+        .horizontal_accuracy(12.5)
+        .live_period(60)
+        .heading(90)
+        .proximity_alert_radius(100)
+        .reply_to_message(MessageId(90))
+        .message_thread_id(41)
+        .direct_messages_topic_id(9)
+        .send()?;
+    assert_eq!(location.message_id.0, 40);
+
+    let venue = client
+        .app()
+        .venue(1_i64, 37.5, -122.25, "Blocking HQ", "2 Bot Street")
+        .foursquare_id("fs-1")
+        .foursquare_type("office")
+        .message_thread_id(42)
+        .send()?;
+    assert_eq!(venue.message_id.0, 41);
+
+    let contact = client
+        .app()
+        .contact(1_i64, "+15551111111", "Blocking")
+        .last_name("Bot")
+        .message_thread_id(43)
+        .send()?;
+    assert_eq!(contact.message_id.0, 42);
+
+    let poll = client
+        .app()
+        .poll(1_i64, "Blocking poll", ["one", "two"])?
+        .anonymous(false)
+        .kind(PollKind::Regular)
+        .allows_revoting(true)
+        .shuffle_options(true)
+        .allow_adding_options(true)
+        .hide_results_until_closes(true)
+        .members_only(true)
+        .media(InputPollMedia::location(40.0, -73.0))
+        .explanation_media(InputPollMedia::photo("blocking-poll-explanation-photo"))
+        .reply_to_message(MessageId(91))
+        .message_thread_id(44)
+        .send()?;
+    assert_eq!(poll.message_id.0, 43);
+
+    let dice = client
+        .app()
+        .dice(1_i64)
+        .reply_to_message(MessageId(92))
+        .message_thread_id(45)
+        .send()?;
+    assert_eq!(dice.message_id.0, 44);
+
+    let dice_request = client
+        .app()
+        .dice(1_i64)
+        .emoji(DiceEmoji::Bowling)
+        .into_request();
+    assert!(matches!(dice_request.emoji, Some(DiceEmoji::Bowling)));
+
+    let action_ok = client
+        .app()
+        .chat_action(1_i64, ChatAction::UploadDocument)
+        .message_thread_id(46)
+        .send()?;
+    assert!(action_ok);
+
+    let stopped = client
+        .app()
+        .stop_poll(1_i64, MessageId(93))
+        .business_connection_id("blocking-business-stop-poll")
+        .reply_markup(InlineKeyboardMarkup::single_row(vec![
+            InlineKeyboardButton::callback("Blocking closed", "blocking-poll:closed")?,
+        ]))
+        .send()?;
+    assert_eq!(stopped.id, "blocking-poll-1");
+
+    join_server(server)?;
     Ok(())
 }
 
@@ -741,6 +986,20 @@ async fn blocking_richer_media_builders_support_common_send_options() -> Result<
                 200,
                 r#"{"ok":true,"result":{"message_id":25,"date":1710000015,"chat":{"id":1,"type":"private"}}}"#,
             ),
+        RequestExpectation::post("/bot123:abc/sendVideoNote")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"video_note\":\"blocking-video-note-file-id\"")
+            .contains_case_insensitive("\"duration\":14")
+            .contains_case_insensitive("\"length\":220")
+            .contains_case_insensitive("\"thumbnail\":\"blocking-video-note-thumb-id\"")
+            .contains_case_insensitive("\"message_thread_id\":29")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":73")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play blocking video note\"")
+            .contains_case_insensitive("\"callback_data\":\"blocking-video-note:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":29,"date":1710000019,"chat":{"id":1,"type":"private"}}}"#,
+            ),
         RequestExpectation::post("/bot123:abc/sendSticker")
             .contains_case_insensitive("\"chat_id\":1")
             .contains_case_insensitive("\"sticker\":\"blocking-sticker-file-id\"")
@@ -823,6 +1082,22 @@ async fn blocking_richer_media_builders_support_common_send_options() -> Result<
         .send()?;
     assert_eq!(voice.message_id.0, 25);
 
+    let video_note_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play blocking video note",
+        "blocking-video-note:1",
+    )?]);
+    let video_note = client
+        .app()
+        .video_note(1_i64, "blocking-video-note-file-id")
+        .duration(14)
+        .length(220)
+        .thumbnail("blocking-video-note-thumb-id")
+        .reply_to_message(MessageId(73))
+        .message_thread_id(29)
+        .reply_markup(video_note_markup)
+        .send()?;
+    assert_eq!(video_note.message_id.0, 29);
+
     let sticker_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
         "Review blocking sticker",
         "blocking-sticker:1",
@@ -867,6 +1142,47 @@ async fn blocking_richer_media_builders_support_common_send_options() -> Result<
     assert_eq!(group[0].message_id.0, 27);
 
     join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_app_video_note_upload_builder_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":108,"date":1710000016,"chat":{"id":1,"type":"private"}}}"#;
+    const CHECKS: [&str; 8] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"duration\"",
+        "name=\"length\"",
+        "attach://blocking_video_note_thumb0",
+        "name=\"video_note\"; filename=\"blocking-builder-video-note.mp4\"",
+        "name=\"blocking_video_note_thumb0\"; filename=\"blocking-builder-video-note-thumb.jpg\"",
+        "binary-blocking-builder-video-note-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendVideoNote", 200, response, &CHECKS)?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let file = UploadFile::from_bytes(
+        "blocking-builder-video-note.mp4",
+        b"binary-blocking-builder-video-note-data".to_vec(),
+    )?;
+    let thumbnail = UploadPart::from_bytes(
+        "blocking_video_note_thumb0",
+        "blocking-builder-video-note-thumb.jpg",
+        b"binary-blocking-builder-video-note-thumb-data".to_vec(),
+    )?;
+    let message = client
+        .app()
+        .video_note_upload(1_i64)
+        .duration(3)
+        .length(240)
+        .thumbnail(thumbnail.attach_uri())
+        .send_parts(&file, &[thumbnail])?;
+    assert_eq!(message.message_id.0, 108);
+
+    join_server(handle)?;
     Ok(())
 }
 

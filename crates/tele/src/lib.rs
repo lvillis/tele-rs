@@ -5,8 +5,8 @@
 //!
 //! Recommended stable surface:
 //!
-//! - `client.app()` / `context.app()` for runtime business code such as text/media sends,
-//!   replies, callback answers, Web App flows, moderation, and membership/capability checks.
+//! - `client.app()` / `context.app()` for runtime business code such as message sends, replies,
+//!   callback answers, Web App flows, moderation, and membership/capability checks.
 //! - `client.control()` for startup/setup/orchestration such as bootstrap, router preparation,
 //!   and outbox management.
 //! - `client.raw()` / `client.typed()` / `client.advanced()` as lower-level escape hatches when
@@ -39,8 +39,10 @@
 //! startup/bootstrap/outbox orchestration. For richer runtime flows, prefer
 //! `client.app().callback_answer(...)`,
 //! `client.app().photo()/document()/video()/audio()/animation()/voice()/sticker()/media_group()`,
-//! and `client.app().membership()` before dropping to raw request structs. The package README and
-//! `examples/` directory contain the minimal bot and API layer walkthroughs.
+//! `client.app().location()/venue()/contact()/poll()/dice()`,
+//! `client.app().chat_action()/stop_poll()`, and `client.app().membership()` before dropping to
+//! raw request structs. The package README and `examples/` directory contain the minimal bot and
+//! API layer walkthroughs.
 
 #[cfg(not(any(feature = "_async", feature = "_blocking")))]
 compile_error!(
@@ -69,10 +71,14 @@ pub use client::BlockingClient;
 pub use client::Client;
 #[cfg(feature = "_async")]
 pub use client::{
-    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, ControlApi,
-    DocumentSendBuilder, MediaGroupSendBuilder, MembershipApi, ModerationApi, ModerationNoticeApi,
-    PhotoSendBuilder, RawApi, SetupApi, StickerSendBuilder, TextSendBuilder, TypedApi,
-    VideoSendBuilder, VoiceSendBuilder, WebAppApi,
+    AnimationSendBuilder, AnimationUploadBuilder, AppApi, AudioSendBuilder, AudioUploadBuilder,
+    CallbackAnswerBuilder, ChatActionBuilder, ContactSendBuilder, ControlApi, DiceSendBuilder,
+    DocumentSendBuilder, DocumentUploadBuilder, LocationSendBuilder, MediaGroupSendBuilder,
+    MediaGroupUploadBuilder, MembershipApi, ModerationApi, ModerationNoticeApi, PhotoSendBuilder,
+    PhotoUploadBuilder, PollSendBuilder, RawApi, SetupApi, StickerSendBuilder,
+    StickerUploadBuilder, StopPollBuilder, TextSendBuilder, TypedApi, VenueSendBuilder,
+    VideoNoteSendBuilder, VideoNoteUploadBuilder, VideoSendBuilder, VideoUploadBuilder,
+    VoiceSendBuilder, VoiceUploadBuilder, WebAppApi,
 };
 pub use client::{
     BanMemberOptions, BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome,
@@ -82,12 +88,17 @@ pub use client::{
 };
 #[cfg(feature = "_blocking")]
 pub use client::{
-    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
-    BlockingCallbackAnswerBuilder, BlockingControlApi, BlockingDocumentSendBuilder,
-    BlockingMediaGroupSendBuilder, BlockingMembershipApi, BlockingModerationApi,
-    BlockingModerationNoticeApi, BlockingPhotoSendBuilder, BlockingRawApi,
-    BlockingStickerSendBuilder, BlockingTextSendBuilder, BlockingTypedApi,
-    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAnimationUploadBuilder, BlockingAppApi,
+    BlockingAudioSendBuilder, BlockingAudioUploadBuilder, BlockingCallbackAnswerBuilder,
+    BlockingChatActionBuilder, BlockingContactSendBuilder, BlockingControlApi,
+    BlockingDiceSendBuilder, BlockingDocumentSendBuilder, BlockingDocumentUploadBuilder,
+    BlockingLocationSendBuilder, BlockingMediaGroupSendBuilder, BlockingMediaGroupUploadBuilder,
+    BlockingMembershipApi, BlockingModerationApi, BlockingModerationNoticeApi,
+    BlockingPhotoSendBuilder, BlockingPhotoUploadBuilder, BlockingPollSendBuilder, BlockingRawApi,
+    BlockingStickerSendBuilder, BlockingStickerUploadBuilder, BlockingStopPollBuilder,
+    BlockingTextSendBuilder, BlockingTypedApi, BlockingVenueSendBuilder,
+    BlockingVideoNoteSendBuilder, BlockingVideoNoteUploadBuilder, BlockingVideoSendBuilder,
+    BlockingVideoUploadBuilder, BlockingVoiceSendBuilder, BlockingVoiceUploadBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use client::{BlockingSetupApi, BlockingWebAppApi};

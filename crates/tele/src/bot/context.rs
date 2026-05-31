@@ -79,7 +79,7 @@ impl BotContext {
     ) -> Result<bool> {
         match self.app().reply_text(update, text).await {
             Ok(_) => Ok(true),
-            Err(error) if crate::client::is_missing_reply_target_error(&error) => Ok(false),
+            Err(error) if crate::client::is_unaddressable_reply_error(&error) => Ok(false),
             Err(error) => Err(error),
         }
     }

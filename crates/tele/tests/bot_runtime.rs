@@ -42,7 +42,7 @@ use tele::types::update::Update;
 use tele::types::{
     AllowedUpdate, ChatAdministratorCapability, ChatMember, MessageKind, UpdateKind,
 };
-use tele::{BootstrapStepStatus, Error, ErrorClass, MenuButtonConfig};
+use tele::{BootstrapStepStatus, Error, ErrorClass, MenuButtonConfig, RetryConfig};
 
 type DynError = Box<dyn std::error::Error>;
 type ServerHandle = thread::JoinHandle<Result<(), String>>;
@@ -265,6 +265,56 @@ fn spawn_server_sequence(
     });
 
     Ok((format!("http://{address}"), handle))
+}
+
+fn spawn_counting_server(
+    expected_path: &'static str,
+    response_status: u16,
+    response_body: &'static str,
+    idle_timeout: Duration,
+) -> Result<(String, Arc<AtomicUsize>, ServerHandle), DynError> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let thread_request_count = Arc::clone(&request_count);
+
+    let handle = thread::spawn(move || {
+        loop {
+            let (mut stream, _) = match accept_with_timeout(&listener, idle_timeout) {
+                Ok(connection) => connection,
+                Err(error) if error.contains("timed out waiting for request") => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .map_err(|error| error.to_string())?;
+
+            let mut buffer = vec![0_u8; 16 * 1024];
+            let read_bytes = stream
+                .read(&mut buffer)
+                .map_err(|error| error.to_string())?;
+            let request = String::from_utf8_lossy(&buffer[..read_bytes]);
+
+            let expected_request_line = format!("POST {expected_path} HTTP/1.1");
+            if !request.contains(&expected_request_line) {
+                return Err(format!("unexpected request line: {request}"));
+            }
+
+            thread_request_count.fetch_add(1, Ordering::SeqCst);
+
+            let response = format!(
+                "HTTP/1.1 {response_status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+
+            stream
+                .write_all(response.as_bytes())
+                .map_err(|error| error.to_string())?;
+            stream.flush().map_err(|error| error.to_string())?;
+        }
+    });
+
+    Ok((format!("http://{address}"), request_count, handle))
 }
 
 async fn join_server(handle: ServerHandle) -> Result<(), DynError> {
@@ -1858,6 +1908,59 @@ fn channel_source_rejects_zero_capacity_values() -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn channel_source_replays_in_flight_batch_until_ordered_commit() -> Result<(), DynError> {
+    let (sink, mut source) = channel_source(4)?;
+    source = source.with_max_batch(4)?;
+
+    sink.send(tele::bot::testing::message_update(1901, 1, "first")?)
+        .await?;
+    sink.send(tele::bot::testing::message_update(1902, 1, "second")?)
+        .await?;
+
+    let first = source.poll().await?;
+    assert_eq!(
+        first
+            .iter()
+            .map(|update| update.update_id)
+            .collect::<Vec<_>>(),
+        vec![1901, 1902]
+    );
+
+    let replay = source.poll().await?;
+    assert_eq!(
+        replay
+            .iter()
+            .map(|update| update.update_id)
+            .collect::<Vec<_>>(),
+        vec![1901, 1902]
+    );
+
+    source
+        .commit(&[DispatchOutcome::Handled { update_id: 1901 }])
+        .await?;
+    let after_partial_commit = source.poll().await?;
+    assert_eq!(
+        after_partial_commit
+            .iter()
+            .map(|update| update.update_id)
+            .collect::<Vec<_>>(),
+        vec![1902]
+    );
+
+    assert!(matches!(
+        source
+            .commit(&[DispatchOutcome::Handled { update_id: 1901 }])
+            .await,
+        Err(Error::Runtime { .. })
+    ));
+    source
+        .commit(&[DispatchOutcome::Ignored { update_id: 1902 }])
+        .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn router_routes_by_message_and_update_kind() -> Result<(), DynError> {
     let client = Client::builder("http://127.0.0.1:9")?
         .bot_token("123:abc")?
@@ -3112,6 +3215,37 @@ async fn fallible_route_skips_user_error_reply_without_reply_target() -> Result<
 }
 
 #[tokio::test]
+async fn fallible_route_skips_user_error_reply_for_guest_message() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let mut router = Router::new();
+    router
+        .custom_route("guest_message", |update| update.guest_message.is_some())
+        .handle(|_context: BotContext, _update: Update| async move {
+            Err(HandlerError::user("invalid input"))
+        });
+
+    let Some(update) = parse_update(json!({
+        "update_id": 906,
+        "guest_message": {
+            "message_id": 78,
+            "guest_query_id": "guest-1",
+            "date": 1710000003,
+            "chat": {"id": 8001, "type": "private", "first_name": "guest"},
+            "from": {"id": 8001, "is_bot": false, "first_name": "guest"},
+            "text": "guest hello"
+        }
+    })) else {
+        return Ok(());
+    };
+
+    assert!(router.dispatch(BotContext::new(client), update).await?);
+    Ok(())
+}
+
+#[tokio::test]
 async fn bot_context_app_answers_callback_from_update() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":true}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/answerCallbackQuery", 200, response)?;
@@ -4352,6 +4486,41 @@ async fn outbox_dedupes_and_retries() -> Result<(), DynError> {
 
     assert_eq!(first.message_id, second.message_id);
     join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn outbox_send_attempt_does_not_inherit_client_retry_budget() -> Result<(), DynError> {
+    let retry_response = r#"{"ok":false,"error_code":502,"description":"bad gateway"}"#;
+    let (base_url, request_count, handle) = spawn_counting_server(
+        "/bot123:abc/sendMessage",
+        502,
+        retry_response,
+        Duration::from_millis(100),
+    )?;
+
+    let mut retry = RetryConfig::default();
+    retry.max_attempts = 3;
+    retry.base_backoff = Duration::from_millis(1);
+    retry.max_backoff = Duration::from_millis(1);
+    retry.jitter_ratio = 0.0;
+    retry.allow_non_idempotent_retries = true;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(retry)?
+        .build()?;
+    let mut config = OutboxConfig::default();
+    config.max_attempts = 1;
+    config.base_backoff = Duration::from_millis(1);
+    config.max_backoff = Duration::from_millis(1);
+    let outbox = BotOutbox::spawn(client, config)?;
+
+    let result = outbox.send_text(12_i64, "hello").await;
+    assert!(result.is_err());
+
+    join_server(handle).await?;
+    assert_eq!(request_count.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

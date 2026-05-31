@@ -14,14 +14,16 @@ use crate::types::command::{
 };
 use crate::types::common::{ChatId, MessageId, NumericChatId, ParseMode, UserId};
 use crate::types::message::{
-    InputMediaGroupItem, Message, MessageEntity, SendAnimationRequest, SendAudioRequest,
-    SendDocumentRequest, SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest,
-    SendVideoRequest, SendVoiceRequest, SentWebAppMessage,
+    ChatAction, DiceEmoji, InputMediaGroupItem, InputPollMedia, InputPollOption, Message,
+    MessageEntity, Poll, PollKind, SendAnimationRequest, SendAudioRequest, SendChatActionRequest,
+    SendContactRequest, SendDiceRequest, SendDocumentRequest, SendLocationRequest,
+    SendMediaGroupRequest, SendMessageRequest, SendPhotoRequest, SendPollRequest, SendVenueRequest,
+    SendVideoNoteRequest, SendVideoRequest, SendVoiceRequest, SentWebAppMessage, StopPollRequest,
 };
 use crate::types::sticker::SendStickerRequest;
 use crate::types::telegram::{
-    InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup, ReplyParameters,
-    SuggestedPostParameters, WebAppData,
+    InlineKeyboardMarkup, InlineQueryResult, LinkPreviewOptions, MenuButton, ReplyMarkup,
+    ReplyParameters, SuggestedPostParameters, WebAppData,
 };
 use crate::types::update::{AnswerCallbackQueryRequest, Update};
 use crate::types::upload::{UploadFile, UploadPart};
@@ -39,7 +41,6 @@ mod membership;
 mod menu;
 mod moderation;
 mod raw;
-mod retry;
 mod setup;
 mod support;
 mod typed;
@@ -47,16 +48,26 @@ mod web_app;
 
 #[cfg(feature = "_async")]
 pub use app::{
-    AnimationSendBuilder, AppApi, AudioSendBuilder, CallbackAnswerBuilder, DocumentSendBuilder,
-    MediaGroupSendBuilder, PhotoSendBuilder, StickerSendBuilder, TextSendBuilder, VideoSendBuilder,
-    VoiceSendBuilder,
+    AnimationSendBuilder, AnimationUploadBuilder, AppApi, AudioSendBuilder, AudioUploadBuilder,
+    CallbackAnswerBuilder, ChatActionBuilder, ContactSendBuilder, DiceSendBuilder,
+    DocumentSendBuilder, DocumentUploadBuilder, LocationSendBuilder, MediaGroupSendBuilder,
+    MediaGroupUploadBuilder, PhotoSendBuilder, PhotoUploadBuilder, PollSendBuilder,
+    StickerSendBuilder, StickerUploadBuilder, StopPollBuilder, TextSendBuilder, VenueSendBuilder,
+    VideoNoteSendBuilder, VideoNoteUploadBuilder, VideoSendBuilder, VideoUploadBuilder,
+    VoiceSendBuilder, VoiceUploadBuilder,
 };
 #[cfg(feature = "_blocking")]
 pub use app::{
-    BlockingAnimationSendBuilder, BlockingAppApi, BlockingAudioSendBuilder,
-    BlockingCallbackAnswerBuilder, BlockingDocumentSendBuilder, BlockingMediaGroupSendBuilder,
-    BlockingPhotoSendBuilder, BlockingStickerSendBuilder, BlockingTextSendBuilder,
-    BlockingVideoSendBuilder, BlockingVoiceSendBuilder,
+    BlockingAnimationSendBuilder, BlockingAnimationUploadBuilder, BlockingAppApi,
+    BlockingAudioSendBuilder, BlockingAudioUploadBuilder, BlockingCallbackAnswerBuilder,
+    BlockingChatActionBuilder, BlockingContactSendBuilder, BlockingDiceSendBuilder,
+    BlockingDocumentSendBuilder, BlockingDocumentUploadBuilder, BlockingLocationSendBuilder,
+    BlockingMediaGroupSendBuilder, BlockingMediaGroupUploadBuilder, BlockingPhotoSendBuilder,
+    BlockingPhotoUploadBuilder, BlockingPollSendBuilder, BlockingStickerSendBuilder,
+    BlockingStickerUploadBuilder, BlockingStopPollBuilder, BlockingTextSendBuilder,
+    BlockingVenueSendBuilder, BlockingVideoNoteSendBuilder, BlockingVideoNoteUploadBuilder,
+    BlockingVideoSendBuilder, BlockingVideoUploadBuilder, BlockingVoiceSendBuilder,
+    BlockingVoiceUploadBuilder,
 };
 pub use bootstrap::{
     BootstrapFetchStepReport, BootstrapGetMePolicy, BootstrapOutcome, BootstrapPlan,
@@ -90,7 +101,7 @@ pub use setup::BlockingSetupApi;
 #[cfg(feature = "_async")]
 pub use setup::SetupApi;
 #[cfg(feature = "bot")]
-pub(crate) use support::is_missing_reply_target_error;
+pub(crate) use support::is_unaddressable_reply_error;
 #[cfg(feature = "_blocking")]
 pub use typed::BlockingTypedApi;
 #[cfg(feature = "_async")]

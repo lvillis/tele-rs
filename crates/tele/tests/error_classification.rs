@@ -107,6 +107,41 @@ fn classifies_auth_errors_from_api_status_without_error_code() {
 }
 
 #[test]
+fn api_error_code_drives_retry_when_http_status_is_not_retryable() {
+    let error = Error::Api {
+        method: "getMe".to_owned(),
+        status: Some(200),
+        request_id: None,
+        error_code: Some(503),
+        description: "service unavailable".into(),
+        retry_after: None,
+        parameters: None,
+        body_snippet: None,
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Api);
+    assert!(error.is_retryable());
+}
+
+#[test]
+fn authentication_classification_wins_over_retryable_http_status() {
+    let error = Error::Api {
+        method: "getMe".to_owned(),
+        status: Some(503),
+        request_id: None,
+        error_code: Some(401),
+        description: "unauthorized".into(),
+        retry_after: None,
+        parameters: None,
+        body_snippet: None,
+    };
+
+    assert_eq!(error.classification(), ErrorClass::Authentication);
+    assert!(error.is_auth_error());
+    assert!(!error.is_retryable());
+}
+
+#[test]
 fn auth_transport_statuses_are_not_retryable() {
     let error = Error::Transport {
         method: "getMe".to_owned(),

@@ -906,7 +906,8 @@ async fn persist_outbox_queue_async(
 
 async fn send_once(client: &Client, chat_id: &ChatId, text: &str) -> Result<Message> {
     let request = SendMessageRequest::new(chat_id.clone(), text.to_owned())?;
-    client.messages().send_message(&request).await
+    request.validate()?;
+    client.call_method_once("sendMessage", &request).await
 }
 
 #[cfg(test)]

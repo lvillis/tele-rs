@@ -578,7 +578,7 @@ impl UpdateSource for LongPollingSource {
             request.limit = self.config.limit;
             request.allowed_updates = self.config.allowed_updates.clone();
 
-            let updates = self.client.updates().get_updates(&request).await?;
+            let updates = self.client.updates().get_updates_once(&request).await?;
 
             let mut deduped = Vec::with_capacity(updates.len());
             let mut batch_seen = HashSet::new();
@@ -717,6 +717,7 @@ impl UpdateSink {
 pub struct ChannelUpdateSource {
     receiver: mpsc::Receiver<Update>,
     max_batch: usize,
+    in_flight: VecDeque<Update>,
 }
 
 impl ChannelUpdateSource {
@@ -724,6 +725,7 @@ impl ChannelUpdateSource {
         Self {
             receiver,
             max_batch: 32,
+            in_flight: VecDeque::new(),
         }
     }
 
@@ -741,22 +743,42 @@ impl ChannelUpdateSource {
 impl UpdateSource for ChannelUpdateSource {
     fn poll<'a>(&'a mut self) -> SourceFuture<'a> {
         Box::pin(async move {
-            let Some(first) = self.receiver.recv().await else {
-                return Err(runtime_error("update source channel is closed"));
-            };
+            if self.in_flight.is_empty() {
+                let Some(first) = self.receiver.recv().await else {
+                    return Err(runtime_error("update source channel is closed"));
+                };
 
-            let mut updates = Vec::with_capacity(self.max_batch);
-            updates.push(first);
+                self.in_flight.push_back(first);
 
-            while updates.len() < self.max_batch {
-                match self.receiver.try_recv() {
-                    Ok(update) => updates.push(update),
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                while self.in_flight.len() < self.max_batch {
+                    match self.receiver.try_recv() {
+                        Ok(update) => self.in_flight.push_back(update),
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                        Err(mpsc::error::TryRecvError::Disconnected) => break,
+                    }
                 }
             }
 
-            Ok(updates)
+            Ok(self.in_flight.iter().cloned().collect())
+        })
+    }
+
+    fn commit<'a>(&'a mut self, outcomes: &'a [DispatchOutcome]) -> SourceCommitFuture<'a> {
+        Box::pin(async move {
+            for outcome in outcomes {
+                let Some(front) = self.in_flight.front() else {
+                    return Err(runtime_error(
+                        "channel update source commit received more outcomes than in-flight updates",
+                    ));
+                };
+                if front.update_id != outcome.update_id() {
+                    return Err(runtime_error(
+                        "channel update source commit must acknowledge an ordered update prefix",
+                    ));
+                }
+                let _ = self.in_flight.pop_front();
+            }
+            Ok(())
         })
     }
 }

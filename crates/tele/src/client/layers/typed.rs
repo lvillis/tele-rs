@@ -1,9 +1,9 @@
 use super::*;
 
 #[cfg(feature = "_async")]
-use super::retry::retry_method_async;
+use super::super::retry::retry_method_async;
 #[cfg(feature = "_blocking")]
-use super::retry::retry_method_blocking;
+use super::super::retry::retry_method_blocking;
 
 /// Typed Telegram API layer for async clients.
 #[cfg(feature = "_async")]
@@ -33,11 +33,16 @@ impl TypedApi {
         Q: AdvancedRequest,
     {
         request.validate()?;
-        retry_method_async(Q::METHOD, &retry, || async {
-            self.client
-                .call_method_without_transport_retry(Q::METHOD, request)
-                .await
-        })
+        retry_method_async(
+            Q::METHOD,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| async move {
+                self.client
+                    .call_method_attempt(Q::METHOD, request, total_timeout)
+                    .await
+            },
+        )
         .await
     }
 }
@@ -70,9 +75,14 @@ impl BlockingTypedApi {
         Q: AdvancedRequest,
     {
         request.validate()?;
-        retry_method_blocking(Q::METHOD, &retry, || {
-            self.client
-                .call_method_without_transport_retry(Q::METHOD, request)
-        })
+        retry_method_blocking(
+            Q::METHOD,
+            &retry,
+            self.client.total_timeout(),
+            |total_timeout| {
+                self.client
+                    .call_method_attempt(Q::METHOD, request, total_timeout)
+            },
+        )
     }
 }

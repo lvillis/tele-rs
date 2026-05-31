@@ -540,11 +540,20 @@ where
 }
 
 #[cfg(feature = "postgres-session")]
+const POSTGRES_IDENTIFIER_MAX_BYTES: usize = 63;
+
+#[cfg(feature = "postgres-session")]
 fn validate_sql_identifier(identifier: &str) -> Result<()> {
     let mut chars = identifier.chars();
     let Some(first) = chars.next() else {
         return Err(configuration_error("sql identifier cannot be empty"));
     };
+
+    if identifier.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
+        return Err(configuration_error(format!(
+            "sql identifier `{identifier}` exceeds PostgreSQL {POSTGRES_IDENTIFIER_MAX_BYTES}-byte limit"
+        )));
+    }
 
     if !(first.is_ascii_alphabetic() || first == '_') {
         return Err(configuration_error(format!(
@@ -941,6 +950,17 @@ mod tests {
         validate_sql_identifier("SessionState")?;
         assert_eq!(quote_sql_identifier("SessionState"), "\"SessionState\"");
         Ok(())
+    }
+
+    #[cfg(feature = "postgres-session")]
+    #[test]
+    fn rejects_postgres_identifiers_that_postgres_would_truncate() {
+        let too_long = "a".repeat(POSTGRES_IDENTIFIER_MAX_BYTES + 1);
+
+        assert!(matches!(
+            validate_sql_identifier(&too_long),
+            Err(Error::Configuration { .. })
+        ));
     }
 
     #[cfg(feature = "postgres-session")]

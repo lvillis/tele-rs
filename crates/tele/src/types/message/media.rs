@@ -69,6 +69,25 @@ pub struct Document {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Telegram live photo object.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct LivePhoto {
+    #[serde(default)]
+    pub photo: Option<Vec<PhotoSize>>,
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub duration: u32,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<u64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Telegram story object.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
@@ -175,6 +194,15 @@ pub struct PaidMediaPhoto {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Telegram paid live photo payload.
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct PaidMediaLivePhoto {
+    pub live_photo: Box<LivePhoto>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Telegram paid media video payload.
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
@@ -189,6 +217,7 @@ pub struct PaidMediaVideo {
 #[non_exhaustive]
 pub enum PaidMedia {
     Preview(PaidMediaPreview),
+    LivePhoto(Box<PaidMediaLivePhoto>),
     Photo(PaidMediaPhoto),
     Video(Box<PaidMediaVideo>),
     Unknown(Value),
@@ -198,6 +227,7 @@ impl PaidMedia {
     pub fn kind(&self) -> Option<&str> {
         match self {
             Self::Preview(_) => Some("preview"),
+            Self::LivePhoto(_) => Some("live_photo"),
             Self::Photo(_) => Some("photo"),
             Self::Video(_) => Some("video"),
             Self::Unknown(value) => tagged_kind(value),
@@ -206,6 +236,10 @@ impl PaidMedia {
 
     pub fn is_preview(&self) -> bool {
         matches!(self, Self::Preview(_))
+    }
+
+    pub fn is_live_photo(&self) -> bool {
+        matches!(self, Self::LivePhoto(_))
     }
 
     pub fn is_photo(&self) -> bool {
@@ -219,56 +253,70 @@ impl PaidMedia {
     pub fn as_preview(&self) -> Option<&PaidMediaPreview> {
         match self {
             Self::Preview(value) => Some(value),
-            Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
+            Self::LivePhoto(_) | Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn into_preview(self) -> Option<PaidMediaPreview> {
         match self {
             Self::Preview(value) => Some(value),
-            Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
+            Self::LivePhoto(_) | Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn as_live_photo(&self) -> Option<&PaidMediaLivePhoto> {
+        match self {
+            Self::LivePhoto(value) => Some(value),
+            Self::Preview(_) | Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
+        }
+    }
+
+    pub fn into_live_photo(self) -> Option<PaidMediaLivePhoto> {
+        match self {
+            Self::LivePhoto(value) => Some(*value),
+            Self::Preview(_) | Self::Photo(_) | Self::Video(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn as_photo(&self) -> Option<&PaidMediaPhoto> {
         match self {
             Self::Photo(value) => Some(value),
-            Self::Preview(_) | Self::Video(_) | Self::Unknown(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Video(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn into_photo(self) -> Option<PaidMediaPhoto> {
         match self {
             Self::Photo(value) => Some(value),
-            Self::Preview(_) | Self::Video(_) | Self::Unknown(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Video(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn as_video(&self) -> Option<&PaidMediaVideo> {
         match self {
             Self::Video(value) => Some(value),
-            Self::Preview(_) | Self::Photo(_) | Self::Unknown(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Photo(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn into_video(self) -> Option<PaidMediaVideo> {
         match self {
             Self::Video(value) => Some(*value),
-            Self::Preview(_) | Self::Photo(_) | Self::Unknown(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Photo(_) | Self::Unknown(_) => None,
         }
     }
 
     pub fn as_unknown_value(&self) -> Option<&Value> {
         match self {
             Self::Unknown(value) => Some(value),
-            Self::Preview(_) | Self::Photo(_) | Self::Video(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Photo(_) | Self::Video(_) => None,
         }
     }
 
     pub fn into_unknown_value(self) -> Option<Value> {
         match self {
             Self::Unknown(value) => Some(value),
-            Self::Preview(_) | Self::Photo(_) | Self::Video(_) => None,
+            Self::Preview(_) | Self::LivePhoto(_) | Self::Photo(_) | Self::Video(_) => None,
         }
     }
 }
@@ -280,6 +328,10 @@ impl<'de> Deserialize<'de> for PaidMedia {
     {
         let value = Value::deserialize(deserializer)?;
         match tagged_kind(&value) {
+            Some("live_photo") => serde_json::from_value(strip_type(value))
+                .map(Box::new)
+                .map(Self::LivePhoto)
+                .map_err(serde::de::Error::custom),
             Some("preview") => serde_json::from_value(strip_type(value))
                 .map(Self::Preview)
                 .map_err(serde::de::Error::custom),

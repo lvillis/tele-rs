@@ -25,11 +25,12 @@ use tele::types::advanced::{
     AdvancedSetUserEmojiStatusRequest, AdvancedVerifyUserRequest,
 };
 use tele::types::{
-    AnswerInlineQueryRequest, BotCommand, ChatAdministratorCapability, ChatId,
-    CreateInvoiceLinkRequest, GetFileRequest, GetMyCommandsRequest, InlineKeyboardButton,
-    InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton, InputMediaGroupItem,
-    InputMediaPhoto, InputMediaVideo, InputPaidMedia, InputStoryContent, KeyboardButton,
-    LabeledPrice, MessageEntity, MessageId, ParseMode, SendDocumentRequest, SendMediaGroupRequest,
+    AnswerInlineQueryRequest, BotCommand, ChatAction, ChatAdministratorCapability, ChatId,
+    CreateInvoiceLinkRequest, DiceEmoji, GetFileRequest, GetMyCommandsRequest,
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResult, InlineQueryResultsButton,
+    InputMediaGroupItem, InputMediaPhoto, InputMediaVideo, InputPaidMedia, InputPollMedia,
+    InputStoryContent, KeyboardButton, KeyboardButtonRequestUsers, LabeledPrice, MessageEntity,
+    MessageId, ParseMode, PollKind, SendDocumentRequest, SendMediaGroupRequest, SendMessageRequest,
     SendPhotoRequest, SendStickerRequest, SetChatPhotoRequest, SetMyCommandsRequest,
     ShippingOption, StickerFormat, StoryArea, StoryAreaPosition, SuggestedPostParameters, Update,
     UploadStickerFileRequest, WebAppData,
@@ -1045,6 +1046,78 @@ async fn raw_retry_does_not_multiply_transport_retries() -> Result<(), DynError>
 }
 
 #[tokio::test]
+async fn client_default_retry_applies_method_policy_to_read_only_methods() -> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let success =
+        r#"{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"tele","username":"retry_bot"}}"#;
+    let (base_url, server) = spawn_server_script(vec![
+        ("/bot123:abc/getMe", 502, failure),
+        ("/bot123:abc/getMe", 200, success),
+    ])?;
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(2, false))?
+        .build()?;
+
+    let me = client.bot().get_me().await?;
+
+    assert_eq!(me.username.as_deref(), Some("retry_bot"));
+    assert_eq!(server.finish()?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_default_retry_respects_total_timeout_across_attempts() -> Result<(), DynError> {
+    let failure = r#"{"ok":false,"error_code":502,"description":"Bad Gateway"}"#;
+    let (base_url, server) = spawn_server("/bot123:abc/getMe", 502, failure)?;
+    let mut retry = fast_retry(2, false);
+    retry.base_backoff = Duration::from_secs(1);
+    retry.max_backoff = Duration::from_secs(1);
+
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .total_timeout(Some(Duration::from_millis(500)))?
+        .retry_config(retry)?
+        .build()?;
+
+    let error = match client.bot().get_me().await {
+        Ok(_) => return Err("retry must not start after total timeout budget is exhausted".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(server.finish()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_default_retry_keeps_mutating_methods_single_attempt_without_opt_in()
+-> Result<(), DynError> {
+    let server = FakeTelegramServer::single(
+        RequestExpectation::post("/bot123:abc/sendMessage").respond_json(
+            503,
+            r#"{"ok":false,"error_code":503,"description":"Service Unavailable"}"#,
+        ),
+    )?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(2, false))?
+        .build()?;
+    let request = SendMessageRequest::new(12_i64, "hello")?;
+
+    let error = match client.messages().send_message(&request).await {
+        Ok(_) => return Err("sendMessage must not retry ambiguous 503 without opt-in".into()),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, Error::Api { .. }));
+    assert_eq!(server.finish()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn raw_retry_retries_non_json_rate_limit_for_mutating_method() -> Result<(), DynError> {
     let rate_limited = "<html>too many requests</html>";
     let ok_response = r#"{"ok":true,"result":{"message_id":91,"date":1710000013,"chat":{"id":12,"type":"private"},"text":"hello"}}"#;
@@ -1219,7 +1292,10 @@ async fn api_error_exposes_retry_after() -> Result<(), DynError> {
     let response = r#"{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":3}}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getMe", 200, response)?;
 
-    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let client = Client::builder(base_url)?
+        .bot_token("123:abc")?
+        .retry_config(fast_retry(1, false))?
+        .build()?;
 
     let err = match client.bot().get_me().await {
         Ok(_) => {
@@ -1296,6 +1372,223 @@ async fn app_text_builder_supports_markup_and_common_options() -> Result<(), Dyn
         .send()
         .await?;
     assert_eq!(sent.message_id.0, 9);
+
+    join_server(server)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_non_file_message_builders_support_common_options() -> Result<(), DynError> {
+    let expectations = vec![
+        RequestExpectation::post("/bot123:abc/sendLocation")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"latitude\":37.5")
+            .contains_case_insensitive("\"longitude\":-122.25")
+            .contains_case_insensitive("\"horizontal_accuracy\":12.5")
+            .contains_case_insensitive("\"live_period\":60")
+            .contains_case_insensitive("\"heading\":90")
+            .contains_case_insensitive("\"proximity_alert_radius\":100")
+            .contains_case_insensitive("\"disable_notification\":true")
+            .contains_case_insensitive("\"protect_content\":true")
+            .contains_case_insensitive("\"message_thread_id\":31")
+            .contains_case_insensitive("\"direct_messages_topic_id\":8")
+            .contains_case_insensitive("\"allow_paid_broadcast\":true")
+            .contains_case_insensitive("\"message_effect_id\":\"location-effect\"")
+            .contains_case_insensitive("\"suggested_post_parameters\":{")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":80")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Open map\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":30,"date":1710000020,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendVenue")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"latitude\":37.5")
+            .contains_case_insensitive("\"longitude\":-122.25")
+            .contains_case_insensitive("\"title\":\"Tele HQ\"")
+            .contains_case_insensitive("\"address\":\"1 Bot Street\"")
+            .contains_case_insensitive("\"google_place_id\":\"place-1\"")
+            .contains_case_insensitive("\"google_place_type\":\"office\"")
+            .contains_case_insensitive("\"message_thread_id\":32")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":81")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":31,"date":1710000021,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendContact")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"phone_number\":\"+15550000000\"")
+            .contains_case_insensitive("\"first_name\":\"Tele\"")
+            .contains_case_insensitive("\"last_name\":\"Bot\"")
+            .contains_case_insensitive("\"vcard\":\"BEGIN:VCARD")
+            .contains_case_insensitive("\"message_thread_id\":33")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":82")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":32,"date":1710000022,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendPoll")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"question\":\"Pick one\"")
+            .contains_case_insensitive("\"options\":[{\"text\":\"yes\"},{\"text\":\"no\"}]")
+            .contains_case_insensitive("\"is_anonymous\":false")
+            .contains_case_insensitive("\"type\":\"regular\"")
+            .contains_case_insensitive("\"allows_multiple_answers\":true")
+            .contains_case_insensitive("\"allows_revoting\":true")
+            .contains_case_insensitive("\"shuffle_options\":true")
+            .contains_case_insensitive("\"allow_adding_options\":true")
+            .contains_case_insensitive("\"hide_results_until_closes\":true")
+            .contains_case_insensitive("\"members_only\":true")
+            .contains_case_insensitive("\"open_period\":60")
+            .contains_case_insensitive("\"description\":\"runtime poll\"")
+            .contains_case_insensitive("\"media\":{\"type\":\"location\"")
+            .contains_case_insensitive("\"explanation_media\":{\"type\":\"photo\"")
+            .contains_case_insensitive("\"message_thread_id\":34")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":83")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Vote\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":33,"date":1710000023,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendDice")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"message_thread_id\":35")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":84")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":34,"date":1710000024,"chat":{"id":1,"type":"private"}}}"#,
+            ),
+        RequestExpectation::post("/bot123:abc/sendChatAction")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"action\":\"typing\"")
+            .contains_case_insensitive("\"message_thread_id\":36")
+            .contains_case_insensitive("\"business_connection_id\":\"business-1\"")
+            .respond_json(200, r#"{"ok":true,"result":true}"#),
+        RequestExpectation::post("/bot123:abc/stopPoll")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"message_id\":85")
+            .contains_case_insensitive("\"business_connection_id\":\"business-stop-poll\"")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Closed\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"id":"poll-1","question":"Pick one","options":[{"text":"yes","voter_count":0},{"text":"no","voter_count":0}],"total_voter_count":0,"is_closed":true,"is_anonymous":false,"type":"regular","allows_multiple_answers":false}}"#,
+            ),
+    ];
+    let server = FakeTelegramServer::start(expectations)?;
+
+    let client = Client::builder(server.base_url())?
+        .bot_token("123:abc")?
+        .build()?;
+
+    let location_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Open map",
+        "location:1",
+    )?]);
+    let location = client
+        .app()
+        .location(1_i64, 37.5, -122.25)
+        .horizontal_accuracy(12.5)
+        .live_period(60)
+        .heading(90)
+        .proximity_alert_radius(100)
+        .reply_to_message(MessageId(80))
+        .message_thread_id(31)
+        .direct_messages_topic_id(8)
+        .disable_notification(true)
+        .protect_content(true)
+        .allow_paid_broadcast(true)
+        .message_effect_id("location-effect")
+        .suggested_post_parameters(SuggestedPostParameters::new(serde_json::json!({
+            "send_date": valid_suggested_post_send_date()
+        }))?)
+        .reply_markup(location_markup)
+        .send()
+        .await?;
+    assert_eq!(location.message_id.0, 30);
+
+    let venue = client
+        .app()
+        .venue(1_i64, 37.5, -122.25, "Tele HQ", "1 Bot Street")
+        .google_place_id("place-1")
+        .google_place_type("office")
+        .reply_to_message(MessageId(81))
+        .message_thread_id(32)
+        .send()
+        .await?;
+    assert_eq!(venue.message_id.0, 31);
+
+    let contact = client
+        .app()
+        .contact(1_i64, "+15550000000", "Tele")
+        .last_name("Bot")
+        .vcard("BEGIN:VCARD\nEND:VCARD")
+        .reply_to_message(MessageId(82))
+        .message_thread_id(33)
+        .send()
+        .await?;
+    assert_eq!(contact.message_id.0, 32);
+
+    let poll_markup =
+        InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback("Vote", "poll:1")?]);
+    let poll = client
+        .app()
+        .poll(1_i64, "Pick one", ["yes", "no"])?
+        .anonymous(false)
+        .kind(PollKind::Regular)
+        .allows_multiple_answers(true)
+        .allows_revoting(true)
+        .shuffle_options(true)
+        .allow_adding_options(true)
+        .hide_results_until_closes(true)
+        .members_only(true)
+        .open_period(60)
+        .description("runtime poll")
+        .media(InputPollMedia::location(37.5, -122.25))
+        .explanation_media(InputPollMedia::photo("poll-explanation-photo"))
+        .reply_to_message(MessageId(83))
+        .message_thread_id(34)
+        .reply_markup(poll_markup)
+        .send()
+        .await?;
+    assert_eq!(poll.message_id.0, 33);
+
+    let dice = client
+        .app()
+        .dice(1_i64)
+        .reply_to_message(MessageId(84))
+        .message_thread_id(35)
+        .send()
+        .await?;
+    assert_eq!(dice.message_id.0, 34);
+
+    let dice_request = client
+        .app()
+        .dice(1_i64)
+        .emoji(DiceEmoji::Darts)
+        .into_request();
+    assert!(matches!(dice_request.emoji, Some(DiceEmoji::Darts)));
+
+    let action_ok = client
+        .app()
+        .chat_action(1_i64, ChatAction::Typing)
+        .message_thread_id(36)
+        .business_connection_id("business-1")
+        .send()
+        .await?;
+    assert!(action_ok);
+
+    let closed_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Closed",
+        "poll:closed",
+    )?]);
+    let stopped = client
+        .app()
+        .stop_poll(1_i64, MessageId(85))
+        .business_connection_id("business-stop-poll")
+        .reply_markup(closed_markup)
+        .send()
+        .await?;
+    assert_eq!(stopped.id, "poll-1");
 
     join_server(server)?;
     Ok(())
@@ -1523,6 +1816,20 @@ async fn app_richer_media_builders_support_common_send_options() -> Result<(), D
                 200,
                 r#"{"ok":true,"result":{"message_id":15,"date":1710000007,"chat":{"id":1,"type":"private"}}}"#,
             ),
+        RequestExpectation::post("/bot123:abc/sendVideoNote")
+            .contains_case_insensitive("\"chat_id\":1")
+            .contains_case_insensitive("\"video_note\":\"video-note-file-id\"")
+            .contains_case_insensitive("\"duration\":12")
+            .contains_case_insensitive("\"length\":240")
+            .contains_case_insensitive("\"thumbnail\":\"video-note-thumb-id\"")
+            .contains_case_insensitive("\"message_thread_id\":19")
+            .contains_case_insensitive("\"reply_parameters\":{\"message_id\":63")
+            .contains_case_insensitive("\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Play video note\"")
+            .contains_case_insensitive("\"callback_data\":\"video-note:1\"")
+            .respond_json(
+                200,
+                r#"{"ok":true,"result":{"message_id":19,"date":1710000011,"chat":{"id":1,"type":"private"}}}"#,
+            ),
         RequestExpectation::post("/bot123:abc/sendSticker")
             .contains_case_insensitive("\"chat_id\":1")
             .contains_case_insensitive("\"sticker\":\"sticker-file-id\"")
@@ -1607,6 +1914,23 @@ async fn app_richer_media_builders_support_common_send_options() -> Result<(), D
         .send()
         .await?;
     assert_eq!(voice.message_id.0, 15);
+
+    let video_note_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
+        "Play video note",
+        "video-note:1",
+    )?]);
+    let video_note = client
+        .app()
+        .video_note(1_i64, "video-note-file-id")
+        .duration(12)
+        .length(240)
+        .thumbnail("video-note-thumb-id")
+        .reply_to_message(MessageId(63))
+        .message_thread_id(19)
+        .reply_markup(video_note_markup)
+        .send()
+        .await?;
+    assert_eq!(video_note.message_id.0, 19);
 
     let sticker_markup = InlineKeyboardMarkup::single_row(vec![InlineKeyboardButton::callback(
         "Review sticker",
@@ -2846,7 +3170,7 @@ async fn app_photo_builder_send_upload_success() -> Result<(), DynError> {
         .app()
         .photo_upload(1_i64)
         .caption("builder upload")
-        .send_upload(&file)
+        .send(&file)
         .await?;
     assert_eq!(message.message_id.0, 102);
 
@@ -2873,9 +3197,49 @@ async fn app_audio_builder_send_upload_success() -> Result<(), DynError> {
         .app()
         .audio_upload(1_i64)
         .caption("builder audio upload")
-        .send_upload(&file)
+        .send(&file)
         .await?;
     assert_eq!(message.message_id.0, 103);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_video_note_upload_builder_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":{"message_id":108,"date":1710000016,"chat":{"id":1,"type":"private"}}}"#;
+    const CHECKS: [&str; 8] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"duration\"",
+        "name=\"length\"",
+        "attach://video_note_thumb0",
+        "name=\"video_note\"; filename=\"builder-video-note.mp4\"",
+        "name=\"video_note_thumb0\"; filename=\"builder-video-note-thumb.jpg\"",
+        "binary-builder-video-note-data",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendVideoNote", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let file = UploadFile::from_bytes(
+        "builder-video-note.mp4",
+        b"binary-builder-video-note-data".to_vec(),
+    )?;
+    let thumbnail = UploadPart::from_bytes(
+        "video_note_thumb0",
+        "builder-video-note-thumb.jpg",
+        b"binary-builder-video-note-thumb-data".to_vec(),
+    )?;
+    let message = client
+        .app()
+        .video_note_upload(1_i64)
+        .duration(3)
+        .length(240)
+        .thumbnail(thumbnail.attach_uri())
+        .send_parts(&file, &[thumbnail])
+        .await?;
+    assert_eq!(message.message_id.0, 108);
 
     join_server(handle)?;
     Ok(())
@@ -2958,6 +3322,50 @@ async fn send_media_group_upload_multipart_success() -> Result<(), DynError> {
         .await?;
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].message_id.0, 104);
+
+    join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_media_group_upload_builder_success() -> Result<(), DynError> {
+    let response = r#"{"ok":true,"result":[{"message_id":106,"date":1710000014,"chat":{"id":1,"type":"private"},"photo":[{"file_id":"photo_2","file_unique_id":"photo_unique_2","width":10,"height":10}]},{"message_id":107,"date":1710000015,"chat":{"id":1,"type":"private"},"video":{"file_id":"video_2","file_unique_id":"video_unique_2","width":640,"height":480,"duration":5}}]}"#;
+    const CHECKS: [&str; 7] = [
+        "Content-Type: multipart/form-data; boundary=",
+        "name=\"chat_id\"",
+        "name=\"media\"",
+        "attach://builder_photo0",
+        "attach://builder_video0",
+        "name=\"builder_photo0\"; filename=\"builder-album-photo.jpg\"",
+        "name=\"builder_video0\"; filename=\"builder-album-video.mp4\"",
+    ];
+    let (base_url, handle) =
+        spawn_server_with_checks("/bot123:abc/sendMediaGroup", 200, response, &CHECKS)?;
+
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let photo_part = UploadPart::from_bytes(
+        "builder_photo0",
+        "builder-album-photo.jpg",
+        b"builder-photo-data".to_vec(),
+    )?;
+    let video_part = UploadPart::from_bytes(
+        "builder_video0",
+        "builder-album-video.mp4",
+        b"builder-video-data".to_vec(),
+    )?;
+    let messages = client
+        .app()
+        .media_group_upload(
+            1_i64,
+            vec![
+                InputMediaGroupItem::from(InputMediaPhoto::new(photo_part.attach_uri())),
+                InputMediaGroupItem::from(InputMediaVideo::new(video_part.attach_uri())),
+            ],
+        )?
+        .send(&[photo_part, video_part])
+        .await?;
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].message_id.0, 106);
 
     join_server(handle)?;
     Ok(())
@@ -3259,11 +3667,7 @@ async fn advanced_prepared_mini_app_outputs_are_typed() -> Result<(), DynError> 
     assert_eq!(prepared_inline.id, "prepared-inline");
     assert_eq!(prepared_inline.expiration_date, 1_710_086_400);
 
-    let mut button = KeyboardButton::new("Pick user");
-    button.extra.insert(
-        "request_users".to_owned(),
-        serde_json::json!({ "request_id": 1 }),
-    );
+    let button = KeyboardButton::new("Pick user").request_users(KeyboardButtonRequestUsers::new(1));
     let keyboard_request =
         AdvancedSavePreparedKeyboardButtonRequest::new(tele::types::UserId(42), button);
     let prepared_keyboard = client
