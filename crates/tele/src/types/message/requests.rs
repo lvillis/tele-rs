@@ -13,8 +13,9 @@ use crate::types::validation::{
     message_text as validate_message_text, optional_caption as validate_optional_caption,
     optional_positive_i64 as validate_optional_positive_i64,
     optional_text_formatting as validate_optional_text_formatting,
-    reply_markup as validate_reply_markup, reply_parameters as validate_reply_parameters,
-    required_text as validate_required_text, string_id as validate_string_id,
+    reject_http_file_url as validate_no_http_file_url, reply_markup as validate_reply_markup,
+    reply_parameters as validate_reply_parameters, required_text as validate_required_text,
+    string_id as validate_string_id,
     suggested_post_parameters as validate_suggested_post_parameters,
     text_formatting as validate_text_formatting,
 };
@@ -3119,6 +3120,15 @@ fn validate_file_reference_with_attach_mode(
     }
 }
 
+fn validate_non_url_file_reference_with_attach_mode(
+    label: &str,
+    value: &str,
+    allow_multipart_attach: bool,
+) -> Result<(), Error> {
+    validate_file_reference_with_attach_mode(label, value, allow_multipart_attach)?;
+    validate_no_http_file_url(label, value)
+}
+
 fn validate_optional_file_reference_with_attach_mode(
     label: &str,
     value: Option<&str>,
@@ -3286,8 +3296,16 @@ fn validate_input_media_live_photo(
     media: &InputMediaLivePhoto,
     allow_multipart_attach: bool,
 ) -> Result<(), Error> {
-    validate_file_reference_with_attach_mode("media", &media.media, allow_multipart_attach)?;
-    validate_file_reference_with_attach_mode("photo", &media.photo, allow_multipart_attach)?;
+    validate_non_url_file_reference_with_attach_mode(
+        "media",
+        &media.media,
+        allow_multipart_attach,
+    )?;
+    validate_non_url_file_reference_with_attach_mode(
+        "photo",
+        &media.photo,
+        allow_multipart_attach,
+    )?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -5047,6 +5065,24 @@ mod tests {
         assert_eq!(input_live_photo_json["type"], "live_photo");
         assert_eq!(input_live_photo_json["media"], "live-photo-file-id");
         assert_eq!(input_live_photo_json["photo"], "cover-photo-file-id");
+
+        let invalid_live_photo_url = InputMedia::from(InputMediaLivePhoto::new(
+            "https://example.com/live.mp4",
+            "cover-photo-file-id",
+        ));
+        assert!(matches!(
+            invalid_live_photo_url.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+
+        let invalid_live_photo_cover_url = InputMedia::from(InputMediaLivePhoto::new(
+            "live-photo-file-id",
+            "HTTPS://example.com/cover.jpg",
+        ));
+        assert!(matches!(
+            invalid_live_photo_cover_url.validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let attach_input_media = InputMedia::from(InputMediaPhoto::new("attach://photo0"));
         assert!(matches!(

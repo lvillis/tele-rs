@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::client::RetryConfig;
-use crate::util::{jittered_duration, retry_after_or_backoff};
+use crate::util::{exponential_backoff, jittered_duration, retry_after_or_backoff};
 use crate::{Error, ErrorClass, Result};
 
 pub(crate) fn backoff_delay(
@@ -10,9 +10,7 @@ pub(crate) fn backoff_delay(
     attempt: usize,
     jitter_ratio: f64,
 ) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(16);
-    let factor = 2u32.saturating_pow(exponent as u32);
-    let delay = base.saturating_mul(factor).min(max);
+    let delay = exponential_backoff(base, max, attempt);
     jittered_duration(delay, jitter_ratio, max)
 }
 

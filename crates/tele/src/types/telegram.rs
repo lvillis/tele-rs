@@ -21,6 +21,7 @@ use crate::types::validation::{
     https_url as validate_https_url,
     optional_rich_text_formatting as validate_optional_rich_text_formatting,
     optional_text_formatting as validate_optional_text_formatting,
+    reject_http_file_url as validate_no_http_file_url,
     required_display_text as validate_required_display_text,
     rich_text_formatting as validate_rich_text_formatting,
     suggested_post_parameters_send_date as validate_suggested_post_parameters_send_date,
@@ -723,7 +724,9 @@ impl InputPaidMediaLivePhoto {
 
     pub fn validate(&self) -> Result<()> {
         validate_required_visible_text("input_paid_media.media", &self.media)?;
-        validate_required_visible_text("input_paid_media.photo", &self.photo)
+        validate_no_http_file_url("input_paid_media.media", &self.media)?;
+        validate_required_visible_text("input_paid_media.photo", &self.photo)?;
+        validate_no_http_file_url("input_paid_media.photo", &self.photo)
     }
 }
 
@@ -5920,6 +5923,14 @@ mod tests {
         assert_eq!(paid_video.kind(), Some("video"));
         let paid_live_photo = InputPaidMedia::live_photo("video-file-id", "photo-file-id");
         paid_live_photo.validate()?;
+        assert!(matches!(
+            InputPaidMedia::live_photo("https://example.com/live.mp4", "photo-file-id").validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            InputPaidMedia::live_photo("video-file-id", "HTTP://example.com/photo.jpg").validate(),
+            Err(Error::InvalidRequest { .. })
+        ));
 
         let profile_photo = InputProfilePhoto::static_photo("file-id");
         assert_eq!(profile_photo.kind(), Some("static"));

@@ -536,13 +536,6 @@ fn sync_parent_directory(_parent: &Path, _subject: &str) -> Result<()> {
     Ok(())
 }
 
-fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(16);
-    let factor = 2u32.saturating_pow(exponent as u32);
-    let delay = base.saturating_mul(factor);
-    delay.min(max)
-}
-
 #[cfg(test)]
 mod storage_tests {
     use super::*;

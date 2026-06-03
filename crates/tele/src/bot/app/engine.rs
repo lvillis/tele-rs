@@ -1,4 +1,5 @@
 use super::*;
+use crate::util::{exponential_backoff, jittered_duration};
 #[cfg(feature = "tracing")]
 use tracing::Instrument;
 
@@ -613,7 +614,7 @@ where
                         backoff.max_delay,
                         self.source_error_streak,
                     );
-                    let applied_delay = crate::util::jittered_duration(
+                    let applied_delay = jittered_duration(
                         delay,
                         f64::from(backoff.jitter_ratio),
                         backoff.max_delay,

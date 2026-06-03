@@ -180,6 +180,12 @@ pub(crate) fn retry_after_or_backoff(
     error.retry_after().unwrap_or_else(backoff)
 }
 
+pub(crate) fn exponential_backoff(base: Duration, max: Duration, attempt: usize) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(16);
+    let factor = 2u32.saturating_pow(exponent as u32);
+    base.saturating_mul(factor).min(max)
+}
+
 pub(crate) fn jittered_duration(delay: Duration, jitter_ratio: f64, max: Duration) -> Duration {
     let delay = delay.min(max);
     if delay.is_zero() || jitter_ratio <= 0.0 {
@@ -225,8 +231,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        body_snippet, normalize_base_url, redact_token, redact_url_credentials,
-        retry_after_or_backoff, validate_method_name,
+        body_snippet, exponential_backoff, normalize_base_url, redact_token,
+        redact_url_credentials, retry_after_or_backoff, validate_method_name,
     };
     use crate::Error;
 
@@ -323,6 +329,26 @@ mod tests {
         let delay = retry_after_or_backoff(&error, || Duration::from_millis(200));
 
         assert_eq!(delay, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn exponential_backoff_saturates_and_clamps_to_max() {
+        assert_eq!(
+            exponential_backoff(Duration::from_millis(100), Duration::from_secs(10), 0),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            exponential_backoff(Duration::from_millis(100), Duration::from_secs(10), 3),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            exponential_backoff(Duration::from_secs(1), Duration::from_secs(5), 16),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            exponential_backoff(Duration::MAX, Duration::MAX, usize::MAX),
+            Duration::MAX
+        );
     }
 
     #[test]

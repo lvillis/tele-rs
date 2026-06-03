@@ -1,5 +1,5 @@
 use super::*;
-use crate::util::retry_after_or_backoff;
+use crate::util::{exponential_backoff, retry_after_or_backoff};
 
 const MAX_OUTBOX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 

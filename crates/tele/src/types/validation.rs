@@ -46,6 +46,20 @@ pub(crate) fn control_free_string(field: &str, value: &str) -> Result<(), Error>
     Ok(())
 }
 
+pub(crate) fn reject_http_file_url(field: &str, value: &str) -> Result<(), Error> {
+    if value.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+    }) {
+        return Err(Error::InvalidRequest {
+            reason: format!(
+                "{field} cannot be an HTTP URL; use a Telegram file_id or attach:// upload"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 pub(crate) fn suggested_post_parameters_send_date(field: &str, value: i64) -> Result<(), Error> {
     validate_send_date_delay(
         value,
@@ -842,6 +856,21 @@ mod tests {
         ));
         assert!(matches!(
             https_url("url", "http://example.com"),
+            Err(Error::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn file_url_rejection_allows_telegram_file_references() {
+        assert!(reject_http_file_url("media", "file-id").is_ok());
+        assert!(reject_http_file_url("media", "attach://media0").is_ok());
+
+        assert!(matches!(
+            reject_http_file_url("media", "https://example.com/live.mp4"),
+            Err(Error::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            reject_http_file_url("media", "HTTP://example.com/live.mp4"),
             Err(Error::InvalidRequest { .. })
         ));
     }
