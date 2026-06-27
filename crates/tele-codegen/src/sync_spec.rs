@@ -1,14 +1,17 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use regex::Regex;
 use reqwest::blocking::Client;
 use scraper::{ElementRef, Html, Selector};
 
+use crate::fs_util::write_text_if_changed;
 use crate::spec::{BotApiSpec, MethodSpec, ParamSpec};
 
 const DEFAULT_BOT_API_URL: &str = "https://core.telegram.org/bots/api";
+const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) fn sync(source_url: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -36,6 +39,7 @@ pub(crate) fn sync(source_url: Option<String>) -> Result<(), Box<dyn std::error:
 
     let html = Client::builder()
         .user_agent("tele-codegen/0")
+        .timeout(SYNC_REQUEST_TIMEOUT)
         .build()?
         .get(&source_url)
         .send()?
@@ -43,8 +47,8 @@ pub(crate) fn sync(source_url: Option<String>) -> Result<(), Box<dyn std::error:
         .text()?;
 
     let synced = build_synced_spec(&html, &source_url, &existing_spec)?;
-    fs::write(&spec_path, serde_json::to_string_pretty(&synced)? + "\n")?;
-    fs::write(&fixture_path, synced.all_methods.join("\n") + "\n")?;
+    write_text_if_changed(&spec_path, &(serde_json::to_string_pretty(&synced)? + "\n"))?;
+    write_text_if_changed(&fixture_path, &(synced.all_methods.join("\n") + "\n"))?;
     Ok(())
 }
 
@@ -157,7 +161,7 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
                 element.select(&paragraph_selector).next()
             }
         }) else {
-            continue;
+            return Err(format!("method `{heading}` is missing a summary paragraph").into());
         };
         let summary = normalize_ws(&first_paragraph.text().collect::<String>());
 
@@ -180,24 +184,8 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
                         "Description".to_owned(),
                     ]
             })
-            .map(|table| {
-                table
-                    .select(&row_selector)
-                    .filter_map(|row| {
-                        let cells = row
-                            .select(&cell_selector)
-                            .map(|cell| normalize_ws(&cell.text().collect::<String>()))
-                            .collect::<Vec<_>>();
-                        (cells.len() == 4).then(|| ParamSpec {
-                            name: cells[0].clone(),
-                            field_name: rust_field_name(&cells[0]),
-                            required: cells[2] == "Yes",
-                            type_raw: cells[1].clone(),
-                            type_rust: infer_type_rust(&cells[0], &cells[1]),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .map(|table| parse_parameter_rows(&heading, table, &row_selector, &cell_selector))
+            .transpose()?
             .unwrap_or_default();
 
         methods.push(MethodSpec {
@@ -213,6 +201,55 @@ fn parse_official_methods(html: &str) -> Result<Vec<MethodSpec>, Box<dyn std::er
     }
 
     Ok(methods)
+}
+
+fn parse_parameter_rows(
+    method: &str,
+    table: ElementRef<'_>,
+    row_selector: &Selector,
+    cell_selector: &Selector,
+) -> Result<Vec<ParamSpec>, Box<dyn std::error::Error>> {
+    let mut params = Vec::new();
+
+    for row in table.select(row_selector) {
+        let cells = row
+            .select(cell_selector)
+            .map(|cell| normalize_ws(&cell.text().collect::<String>()))
+            .collect::<Vec<_>>();
+        if cells.len() != 4 {
+            return Err(format!(
+                "method `{method}` has malformed parameter row with {} cells",
+                cells.len()
+            )
+            .into());
+        }
+
+        let required = parse_required_cell(method, &cells[0], &cells[2])?;
+        params.push(ParamSpec {
+            name: cells[0].clone(),
+            field_name: rust_field_name(&cells[0]),
+            required,
+            type_raw: cells[1].clone(),
+            type_rust: infer_type_rust(&cells[0], &cells[1]),
+        });
+    }
+
+    Ok(params)
+}
+
+fn parse_required_cell(
+    method: &str,
+    param: &str,
+    value: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match value {
+        "Yes" => Ok(true),
+        "Optional" => Ok(false),
+        _ => Err(format!(
+            "method `{method}` parameter `{param}` has invalid Required value `{value}`"
+        )
+        .into()),
+    }
 }
 
 fn collect_method_section<'a>(heading: ElementRef<'a>) -> Vec<ElementRef<'a>> {
@@ -390,8 +427,10 @@ fn to_snake_case(value: &str) -> String {
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn extracts_methods_from_official_like_fragment() {
+    fn extracts_methods_from_official_like_fragment() -> TestResult {
         let html = r##"
             <h4><a class="anchor" name="getme" href="#getme"><i class="anchor-icon"></i></a>getMe</h4>
             <p>Use this method to get basic information about the bot. Returns a User object.</p>
@@ -405,12 +444,7 @@ mod tests {
             <p>This object represents a Telegram user or bot.</p>
         "##;
 
-        let methods = parse_official_methods(html);
-        assert!(methods.is_ok());
-        let methods = match methods {
-            Ok(methods) => methods,
-            Err(_) => return,
-        };
+        let methods = parse_official_methods(html)?;
         assert_eq!(methods.len(), 2);
         assert_eq!(methods[0].method, "getMe");
         assert_eq!(methods[0].fn_name, "get_me");
@@ -421,10 +455,11 @@ mod tests {
             methods[1].return_desc,
             "the list of gifts that can be sent by the bot to users and channel chats"
         );
+        Ok(())
     }
 
     #[test]
-    fn extracts_methods_from_flexible_heading_markup() {
+    fn extracts_methods_from_flexible_heading_markup() -> TestResult {
         let html = r##"
             <h4 id="getme">
               <a href="#getme" name="getme" class="anchor">
@@ -453,17 +488,66 @@ mod tests {
             </table>
         "##;
 
-        let methods = parse_official_methods(html);
-        assert!(methods.is_ok());
-        let methods = match methods {
-            Ok(methods) => methods,
-            Err(_) => return,
-        };
+        let methods = parse_official_methods(html)?;
 
         assert_eq!(methods.len(), 1);
         assert_eq!(methods[0].method, "getMe");
         assert_eq!(methods[0].params.len(), 1);
         assert_eq!(methods[0].params[0].type_rust, "UserId");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_parameter_rows() -> TestResult {
+        let html = r##"
+            <h4><a class="anchor" name="sendmessage" href="#sendmessage"><i class="anchor-icon"></i></a>sendMessage</h4>
+            <p>Use this method to send text messages. On success, returns a Message object.</p>
+            <table class="table">
+              <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>chat_id</td><td>Integer or String</td><td>Yes</td></tr>
+              </tbody>
+            </table>
+        "##;
+
+        let error = match parse_official_methods(html) {
+            Ok(methods) => {
+                return Err(
+                    format!("expected malformed rows to fail sync, got {methods:?}").into(),
+                );
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("malformed parameter row"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_required_marker() -> TestResult {
+        let html = r##"
+            <h4><a class="anchor" name="sendmessage" href="#sendmessage"><i class="anchor-icon"></i></a>sendMessage</h4>
+            <p>Use this method to send text messages. On success, returns a Message object.</p>
+            <table class="table">
+              <thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>chat_id</td><td>Integer or String</td><td>Maybe</td><td>Target chat</td></tr>
+              </tbody>
+            </table>
+        "##;
+
+        let error = match parse_official_methods(html) {
+            Ok(methods) => {
+                return Err(format!(
+                    "expected unknown Required marker to fail sync, got {methods:?}"
+                )
+                .into());
+            }
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("invalid Required value"));
+        Ok(())
     }
 
     #[test]
@@ -488,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_preserves_existing_advanced_methods_and_adopts_new_methods() {
+    fn sync_preserves_existing_advanced_methods_and_adopts_new_methods() -> TestResult {
         let existing_spec = BotApiSpec {
             version: "Bot API 9.4".to_owned(),
             generated_from: "https://core.telegram.org/bots/api".to_owned(),
@@ -518,12 +602,7 @@ mod tests {
             </table>
         "##;
 
-        let synced = build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec);
-        assert!(synced.is_ok());
-        let synced = match synced {
-            Ok(synced) => synced,
-            Err(_) => return,
-        };
+        let synced = build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec)?;
 
         assert_eq!(
             synced.all_methods,
@@ -537,6 +616,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["sendMessage", "sendPaidMedia"]
         );
+        Ok(())
     }
 
     #[test]
@@ -564,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_rejects_missing_existing_methods_even_when_count_does_not_shrink() {
+    fn sync_rejects_missing_existing_methods_even_when_count_does_not_shrink() -> TestResult {
         let existing_spec = BotApiSpec {
             version: "Bot API 9.4".to_owned(),
             generated_from: "https://core.telegram.org/bots/api".to_owned(),
@@ -587,9 +667,10 @@ mod tests {
         let result = build_synced_spec(html, "https://core.telegram.org/bots/api", &existing_spec);
         assert!(result.is_err());
         let error = match result {
-            Ok(_) => return,
+            Ok(spec) => return Err(format!("expected sync to fail, got {spec:?}").into()),
             Err(error) => error,
         };
         assert!(error.to_string().contains("sendMessage"));
+        Ok(())
     }
 }

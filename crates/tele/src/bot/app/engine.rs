@@ -614,11 +614,8 @@ where
                         backoff.max_delay,
                         self.source_error_streak,
                     );
-                    let applied_delay = jittered_duration(
-                        delay,
-                        f64::from(backoff.jitter_ratio),
-                        backoff.max_delay,
-                    );
+                    let applied_delay =
+                        jittered_duration(delay, backoff.jitter_ratio, backoff.max_delay);
                     self.notify_metric(EngineMetric::SourceBackoff {
                         streak: self.source_error_streak,
                         delay: applied_delay,

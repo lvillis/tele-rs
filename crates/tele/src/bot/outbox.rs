@@ -219,13 +219,12 @@ pub struct BotOutbox {
 
 impl BotOutbox {
     /// Spawns the outbox worker on the current Tokio runtime.
-    pub fn spawn(client: Client, config: OutboxConfig) -> Result<Self> {
+    pub fn spawn(client: Client, mut config: OutboxConfig) -> Result<Self> {
         config.validate()?;
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| Error::Configuration {
             reason: "BotOutbox::spawn requires an active Tokio runtime".to_owned(),
         })?;
-        validate_outbox_persistence_path(config.persistence_path.as_deref())?;
-        validate_dead_letter_path(config.dead_letter_path.as_deref())?;
+        normalize_outbox_paths(&mut config)?;
         let persisted_queue = load_outbox_queue(&config)?;
         let queue_capacity = config.queue_capacity;
         let available_permits = queue_capacity - persisted_queue.len();
@@ -747,19 +746,15 @@ fn validate_dead_letter_entry(entry: &DeadLetterEntry) -> Result<()> {
     Ok(())
 }
 
-fn validate_outbox_persistence_path(path: Option<&Path>) -> Result<()> {
-    if let Some(path) = path {
-        validate_file_storage_target(path, "outbox snapshot")?;
+fn normalize_outbox_paths(config: &mut OutboxConfig) -> Result<()> {
+    if let Some(path) = config.persistence_path.as_deref() {
+        config.persistence_path = Some(normalize_file_storage_target(path, "outbox snapshot")?);
     }
-
-    Ok(())
-}
-
-fn validate_dead_letter_path(path: Option<&Path>) -> Result<()> {
-    if let Some(path) = path {
-        validate_file_storage_target(path, "dead-letter snapshot")?;
-        let snapshot = load_dead_letter_snapshot(path)?;
+    if let Some(path) = config.dead_letter_path.as_deref() {
+        let path = normalize_file_storage_target(path, "dead-letter snapshot")?;
+        let snapshot = load_dead_letter_snapshot(&path)?;
         validate_dead_letter_snapshot(&snapshot)?;
+        config.dead_letter_path = Some(path);
     }
 
     Ok(())
@@ -810,23 +805,14 @@ async fn append_dead_letter_async(
 }
 
 fn load_dead_letter_snapshot(path: &Path) -> Result<DeadLetterSnapshot> {
-    if !path.exists() {
+    let Some(raw) = read_optional_storage_file(path, "dead-letter snapshot", "dead-letter read")?
+    else {
         return Ok(DeadLetterSnapshot {
             version: default_dead_letter_snapshot_version(),
             entries: Vec::new(),
         });
-    }
+    };
 
-    let raw = fs::read(path).map_err(|source| {
-        storage_error(
-            "dead-letter read",
-            format!(
-                "failed to read dead-letter snapshot `{}`: {source}",
-                path.display()
-            ),
-            true,
-        )
-    })?;
     if raw.is_empty() {
         return Ok(DeadLetterSnapshot {
             version: default_dead_letter_snapshot_version(),
@@ -848,20 +834,10 @@ fn load_outbox_queue(config: &OutboxConfig) -> Result<Vec<PersistedOutboxCommand
         return Ok(Vec::new());
     };
 
-    if !path.exists() {
+    let Some(raw) = read_optional_storage_file(path, "outbox snapshot", "outbox read")? else {
         return Ok(Vec::new());
-    }
+    };
 
-    let raw = fs::read(path).map_err(|source| {
-        storage_error(
-            "outbox read",
-            format!(
-                "failed to read outbox snapshot `{}`: {source}",
-                path.display()
-            ),
-            true,
-        )
-    })?;
     if raw.is_empty() {
         return Ok(Vec::new());
     }
@@ -1002,6 +978,36 @@ mod tests {
 
         assert!(matches!(result, Err(Error::Storage { .. })));
         assert!(!queue_path.exists());
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_outbox_paths_canonicalizes_storage_targets() -> BoxTestResult {
+        let root = std::env::temp_dir().join(format!(
+            "tele-outbox-normalized-path-{}-{}",
+            std::process::id(),
+            unix_timestamp_millis_now()
+        ));
+        let nested = root.join("nested");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&nested)?;
+        let expected = root.canonicalize()?;
+        let mut config = OutboxConfig::default()
+            .with_persistence_path(nested.join("..").join("queue.json"))
+            .with_dead_letter_path(nested.join("..").join("dead-letter.json"));
+
+        normalize_outbox_paths(&mut config)?;
+
+        assert_eq!(
+            config.persistence_path.as_deref(),
+            Some(expected.join("queue.json").as_path())
+        );
+        assert_eq!(
+            config.dead_letter_path.as_deref(),
+            Some(expected.join("dead-letter.json").as_path())
+        );
 
         let _ = fs::remove_dir_all(&root);
         Ok(())

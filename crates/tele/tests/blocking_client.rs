@@ -5,7 +5,7 @@ use std::time::Duration;
 use tele::testing::{FakeTelegramServer, RequestExpectation};
 use tele::types::advanced::{AdvancedForwardMessagesRequest, AdvancedGetAvailableGiftsRequest};
 use tele::types::{
-    ChatAction, ChatAdministratorCapability, CreateInvoiceLinkRequest, DiceEmoji,
+    ChatAction, ChatAdministratorCapability, ChatId, CreateInvoiceLinkRequest, DiceEmoji,
     GetChatMemberCountRequest, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaGroupItem,
     InputPollMedia, LabeledPrice, MessageId, ParseMode, PollKind, SendMessageRequest,
     SuggestedPostParameters, UploadFile, UploadPart, WebAppData,
@@ -1293,6 +1293,46 @@ async fn blocking_moderation_notice_facade_reuses_text_builder() -> Result<(), D
     assert_eq!(sent.message_id.0, 56);
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[test]
+fn blocking_moderation_notice_for_message_preserves_delivery_context() -> Result<(), DynError> {
+    let client = BlockingClient::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let message: tele::types::Message = serde_json::from_value(serde_json::json!({
+        "message_id": 56,
+        "business_connection_id": "business-notice",
+        "date": 1710000002,
+        "chat": {"id": -10010, "type": "channel", "title": "updates"},
+        "direct_messages_topic": {
+            "topic_id": 77
+        },
+        "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+        "text": "spam"
+    }))?;
+
+    let request = client
+        .app()
+        .moderation()
+        .notice()
+        .for_message(&message, "Message removed")?
+        .into_request();
+
+    assert_eq!(request.chat_id, ChatId::Id(-10010));
+    assert_eq!(
+        request.business_connection_id.as_deref(),
+        Some("business-notice")
+    );
+    assert_eq!(request.direct_messages_topic_id, Some(77));
+    assert_eq!(
+        request
+            .reply_parameters
+            .as_ref()
+            .map(|parameters| parameters.message_id),
+        Some(MessageId(56))
+    );
     Ok(())
 }
 

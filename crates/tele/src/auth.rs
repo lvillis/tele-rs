@@ -9,6 +9,7 @@ use crate::Error;
 
 type HmacSha256 = Hmac<Sha256>;
 type Sha256Digest = [u8; 32];
+const SHA256_HEX_LEN: usize = 64;
 const WEB_APP_DATA_KEY: &[u8] = b"WebAppData";
 const WEB_APP_INIT_DATA_FUTURE_SKEW: Duration = Duration::from_secs(60);
 
@@ -110,12 +111,7 @@ pub fn verify_web_app_init_data(
     let secret_key = web_app_secret_key(bot_token);
     let expected_hash = hmac_sha256(secret_key, data_check_string.as_bytes());
 
-    let actual_hash = decode_hex(hash_hex.as_str())?;
-    if actual_hash.len() != std::mem::size_of::<Sha256Digest>() {
-        return Err(Error::InvalidRequest {
-            reason: "initData hash must decode to 32 bytes".to_owned(),
-        });
-    }
+    let actual_hash = decode_sha256_hex(hash_hex.as_str())?;
     if !expected_hash.ct_equal(actual_hash.as_slice()) {
         return Err(Error::Authentication {
             reason: "invalid initData signature".to_owned(),
@@ -183,25 +179,23 @@ fn hmac_sha256_bytes(key: impl AsRef<[u8]>, data: impl AsRef<[u8]>) -> Sha256Dig
     output
 }
 
-fn decode_hex(input: &str) -> Result<Vec<u8>, Error> {
-    if !input.len().is_multiple_of(2) {
+fn decode_sha256_hex(input: &str) -> Result<Sha256Digest, Error> {
+    if input.len() != SHA256_HEX_LEN {
         return Err(Error::InvalidRequest {
-            reason: "initData hash has invalid hex length".to_owned(),
+            reason: "initData hash must decode to 32 bytes".to_owned(),
         });
     }
 
-    let mut output = Vec::with_capacity(input.len() / 2);
+    let mut output = [0_u8; 32];
     let bytes = input.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        let high = decode_hex_nibble(bytes[index]).ok_or_else(|| Error::InvalidRequest {
+    for (index, chunk) in bytes.chunks_exact(2).enumerate() {
+        let high = decode_hex_nibble(chunk[0]).ok_or_else(|| Error::InvalidRequest {
             reason: "initData hash contains non-hex characters".to_owned(),
         })?;
-        let low = decode_hex_nibble(bytes[index + 1]).ok_or_else(|| Error::InvalidRequest {
+        let low = decode_hex_nibble(chunk[1]).ok_or_else(|| Error::InvalidRequest {
             reason: "initData hash contains non-hex characters".to_owned(),
         })?;
-        output.push((high << 4) | low);
-        index += 2;
+        output[index] = (high << 4) | low;
     }
 
     Ok(output)
@@ -433,6 +427,20 @@ mod tests {
         };
         assert!(matches!(error, Error::InvalidRequest { .. }));
         assert!(error.to_string().contains("32 bytes"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_non_hex_hash() -> TestResult {
+        let bot_token = "123456:bot-token";
+        let init_data = "auth_date=1700000000&query_id=q-1&hash=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+
+        let error = match verify_web_app_init_data(bot_token, init_data, None) {
+            Ok(_) => return Err("non-hex hash should fail".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::InvalidRequest { .. }));
+        assert!(error.to_string().contains("non-hex"));
         Ok(())
     }
 

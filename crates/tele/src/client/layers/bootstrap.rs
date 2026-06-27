@@ -12,7 +12,7 @@ pub struct BootstrapRetryPolicy {
     ///
     /// Provider supplied `Retry-After` values are honored separately and are not clamped by this.
     pub max_backoff: Duration,
-    pub jitter_ratio: f32,
+    pub jitter_ratio: f64,
     /// When true, exhausting retries downgrades sync/apply failures into warnings.
     pub continue_on_failure: bool,
 }
@@ -381,7 +381,7 @@ where
                         policy.base_backoff,
                         policy.max_backoff,
                         attempt,
-                        f64::from(policy.jitter_ratio),
+                        policy.jitter_ratio,
                     )
                 });
                 tokio::time::sleep(delay).await;
@@ -430,7 +430,7 @@ where
                         policy.base_backoff,
                         policy.max_backoff,
                         attempt,
-                        f64::from(policy.jitter_ratio),
+                        policy.jitter_ratio,
                     )
                 });
                 std::thread::sleep(delay);

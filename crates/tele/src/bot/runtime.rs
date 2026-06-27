@@ -168,7 +168,7 @@ pub trait UpdateSource: Send + 'static {
 pub struct SourceErrorBackoffConfig {
     pub base_delay: Duration,
     pub max_delay: Duration,
-    pub jitter_ratio: f32,
+    pub jitter_ratio: f64,
 }
 
 impl Default for SourceErrorBackoffConfig {
@@ -478,7 +478,8 @@ impl LongPollingSource {
         }
 
         let path = path.to_path_buf();
-        validate_file_storage_target_async(path.clone(), "polling offset snapshot").await?;
+        let path = normalize_file_storage_target_async(path, "polling offset snapshot").await?;
+        self.config.persist_offset_path = Some(path.clone());
         self.validated_offset_storage_path = Some(path);
         Ok(())
     }
@@ -487,12 +488,13 @@ impl LongPollingSource {
         let Some(next_offset) = self.pending_persisted_offset else {
             return Ok(());
         };
+
+        self.ensure_offset_storage_target_validated().await?;
         let Some(path) = self.config.persist_offset_path.clone() else {
             self.pending_persisted_offset = None;
             return Ok(());
         };
 
-        self.ensure_offset_storage_target_validated().await?;
         persist_polling_offset_async(path, Some(next_offset)).await?;
         self.pending_persisted_offset = None;
         Ok(())
@@ -619,20 +621,12 @@ fn default_polling_offset_snapshot_version() -> u8 {
 }
 
 fn load_persisted_polling_offset(path: &Path) -> Result<Option<i64>> {
-    if !path.exists() {
+    let Some(raw) =
+        read_optional_storage_file(path, "polling offset snapshot", "polling offset read")?
+    else {
         return Ok(None);
-    }
+    };
 
-    let raw = fs::read(path).map_err(|source| {
-        storage_error(
-            "polling offset read",
-            format!(
-                "failed to read polling offset snapshot `{}`: {source}",
-                path.display()
-            ),
-            true,
-        )
-    })?;
     if raw.is_empty() {
         return Ok(None);
     }
@@ -879,6 +873,50 @@ mod tests {
         assert_eq!(source.next_offset(), Some(77));
 
         let _ = fs::remove_file(&offset_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn offset_persistence_path_is_normalized_after_validation() -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let root = std::env::temp_dir().join(format!(
+            "tele-offset-normalized-path-{}-{timestamp}",
+            std::process::id()
+        ));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).map_err(|source| {
+            storage_error(
+                "test offset mkdir",
+                format!("failed to create offset test directory: {source}"),
+                true,
+            )
+        })?;
+        let path = nested.join("..").join("offset.json");
+        let expected = root.canonicalize().map_err(|source| {
+            storage_error(
+                "test offset canonicalize",
+                format!("failed to canonicalize offset test root: {source}"),
+                true,
+            )
+        })?;
+
+        let client = Client::builder("http://127.0.0.1:9")?
+            .bot_token("123:abc")?
+            .build()?;
+        let mut source = LongPollingSource::new(client).with_offset_persistence_path(path);
+        source.ensure_offset_loaded().await?;
+
+        assert_eq!(
+            source.config.persist_offset_path.as_deref(),
+            Some(expected.join("offset.json").as_path())
+        );
+        assert_eq!(
+            source.validated_offset_storage_path.as_deref(),
+            Some(expected.join("offset.json").as_path())
+        );
+        let _ = fs::remove_dir_all(root);
         Ok(())
     }
 

@@ -31,6 +31,68 @@ fn join_request_ids(update: &Update, method: &str) -> Result<(i64, UserId)> {
     Ok((request.chat_id(), request.user_id().into()))
 }
 
+trait NoticeMessageContextBuilder: Sized {
+    fn reply_to_message(self, message_id: MessageId) -> Self;
+    fn business_connection_id(self, business_connection_id: String) -> Self;
+    fn message_thread_id(self, message_thread_id: i64) -> Self;
+    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self;
+}
+
+#[cfg(feature = "_async")]
+impl NoticeMessageContextBuilder for TextSendBuilder {
+    fn reply_to_message(self, message_id: MessageId) -> Self {
+        TextSendBuilder::reply_to_message(self, message_id)
+    }
+
+    fn business_connection_id(self, business_connection_id: String) -> Self {
+        TextSendBuilder::business_connection_id(self, business_connection_id)
+    }
+
+    fn message_thread_id(self, message_thread_id: i64) -> Self {
+        TextSendBuilder::message_thread_id(self, message_thread_id)
+    }
+
+    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self {
+        TextSendBuilder::direct_messages_topic_id(self, direct_messages_topic_id)
+    }
+}
+
+#[cfg(feature = "_blocking")]
+impl NoticeMessageContextBuilder for BlockingTextSendBuilder {
+    fn reply_to_message(self, message_id: MessageId) -> Self {
+        BlockingTextSendBuilder::reply_to_message(self, message_id)
+    }
+
+    fn business_connection_id(self, business_connection_id: String) -> Self {
+        BlockingTextSendBuilder::business_connection_id(self, business_connection_id)
+    }
+
+    fn message_thread_id(self, message_thread_id: i64) -> Self {
+        BlockingTextSendBuilder::message_thread_id(self, message_thread_id)
+    }
+
+    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self {
+        BlockingTextSendBuilder::direct_messages_topic_id(self, direct_messages_topic_id)
+    }
+}
+
+fn apply_notice_message_context<B>(builder: B, message: &Message) -> B
+where
+    B: NoticeMessageContextBuilder,
+{
+    let mut builder = builder.reply_to_message(message.message_id);
+    if let Some(message_thread_id) = message.message_thread_id {
+        builder = builder.message_thread_id(message_thread_id);
+    }
+    if let Some(topic) = message.direct_messages_topic.as_ref() {
+        builder = builder.direct_messages_topic_id(topic.topic_id);
+    }
+    if let Some(business_connection_id) = message.business_connection_id.as_ref() {
+        builder = builder.business_connection_id(business_connection_id.clone());
+    }
+    builder
+}
+
 /// Optional fields for high-level `banChatMember` helpers.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -115,13 +177,10 @@ impl ModerationNoticeApi {
         message: &Message,
         text: impl Into<String>,
     ) -> Result<TextSendBuilder> {
-        let mut builder = self
-            .text(message.chat.id, text)?
-            .reply_to_message(message.message_id);
-        if let Some(message_thread_id) = message.message_thread_id {
-            builder = builder.message_thread_id(message_thread_id);
-        }
-        Ok(builder)
+        Ok(apply_notice_message_context(
+            self.text(message.chat.id, text)?,
+            message,
+        ))
     }
 }
 
@@ -333,13 +392,10 @@ impl BlockingModerationNoticeApi {
         message: &Message,
         text: impl Into<String>,
     ) -> Result<BlockingTextSendBuilder> {
-        let mut builder = self
-            .text(message.chat.id, text)?
-            .reply_to_message(message.message_id);
-        if let Some(message_thread_id) = message.message_thread_id {
-            builder = builder.message_thread_id(message_thread_id);
-        }
-        Ok(builder)
+        Ok(apply_notice_message_context(
+            self.text(message.chat.id, text)?,
+            message,
+        ))
     }
 }
 

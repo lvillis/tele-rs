@@ -1,4 +1,5 @@
 mod advanced;
+mod fs_util;
 mod spec;
 mod sync_spec;
 

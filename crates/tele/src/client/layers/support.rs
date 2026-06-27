@@ -1,5 +1,6 @@
 use super::bootstrap::WebAppQueryPayload;
 use super::*;
+use crate::types::message::MaybeInaccessibleMessage;
 
 const MISSING_REPLY_TARGET_REASON: &str = "update does not contain a chat id for reply";
 const UNSUPPORTED_GUEST_REPLY_REASON: &str = "guest message replies require answerGuestQuery; ordinary sendMessage cannot target a guest query";
@@ -89,21 +90,53 @@ pub(crate) fn update_message(update: &Update) -> Option<&Message> {
 pub(crate) struct ReplyContext {
     pub(crate) chat_id: i64,
     pub(crate) message_thread_id: Option<i64>,
+    pub(crate) direct_messages_topic_id: Option<i64>,
     pub(crate) reply_parameters: Option<ReplyParameters>,
     pub(crate) business_connection_id: Option<String>,
 }
 
-fn chat_reply_context(
-    chat_id: i64,
-    message_thread_id: Option<i64>,
-    message_id: Option<MessageId>,
-    business_connection_id: Option<String>,
-) -> ReplyContext {
-    ReplyContext {
-        chat_id,
-        message_thread_id,
-        reply_parameters: message_id.map(ReplyParameters::new),
-        business_connection_id,
+impl ReplyContext {
+    fn chat(chat_id: i64) -> Self {
+        Self {
+            chat_id,
+            message_thread_id: None,
+            direct_messages_topic_id: None,
+            reply_parameters: None,
+            business_connection_id: None,
+        }
+    }
+
+    fn from_message(message: &Message) -> Self {
+        Self::chat(message.chat.id).with_message_context(message)
+    }
+
+    fn from_maybe_inaccessible_message(message: &MaybeInaccessibleMessage) -> Self {
+        if let Some(message) = message.accessible() {
+            return Self::from_message(message);
+        }
+
+        Self::chat(message.chat().id).replying_to(message.message_id())
+    }
+
+    fn with_message_context(mut self, message: &Message) -> Self {
+        self.message_thread_id = message.message_thread_id;
+        self.direct_messages_topic_id = message
+            .direct_messages_topic
+            .as_ref()
+            .map(|topic| topic.topic_id);
+        self.reply_parameters = Some(ReplyParameters::new(message.message_id));
+        self.business_connection_id = message.business_connection_id.clone();
+        self
+    }
+
+    fn replying_to(mut self, message_id: MessageId) -> Self {
+        self.reply_parameters = Some(ReplyParameters::new(message_id));
+        self
+    }
+
+    fn with_business_connection_id(mut self, business_connection_id: String) -> Self {
+        self.business_connection_id = Some(business_connection_id);
+        self
     }
 }
 
@@ -113,16 +146,11 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
     }
 
     if let Some(request) = update.chat_join_request.as_ref() {
-        return Ok(chat_reply_context(request.user_chat_id, None, None, None));
+        return Ok(ReplyContext::chat(request.user_chat_id));
     }
 
     if let Some(message) = update_message(update) {
-        return Ok(chat_reply_context(
-            message.chat.id,
-            message.message_thread_id,
-            Some(message.message_id),
-            message.business_connection_id.clone(),
-        ));
+        return Ok(ReplyContext::from_message(message));
     }
 
     if let Some(message) = update
@@ -130,66 +158,41 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         .as_ref()
         .and_then(|query| query.message.as_deref())
     {
-        return Ok(chat_reply_context(
-            message.chat().id,
-            message
-                .accessible()
-                .and_then(|message| message.message_thread_id),
-            Some(message.message_id()),
-            message
-                .accessible()
-                .and_then(|message| message.business_connection_id.clone()),
-        ));
+        return Ok(ReplyContext::from_maybe_inaccessible_message(message));
     }
 
     if let Some(deleted) = update.deleted_business_messages.as_ref() {
-        return Ok(chat_reply_context(
-            deleted.chat.id,
-            None,
-            None,
-            Some(deleted.business_connection_id.clone()),
-        ));
+        return Ok(ReplyContext::chat(deleted.chat.id)
+            .with_business_connection_id(deleted.business_connection_id.clone()));
     }
 
     if let Some(connection) = update.business_connection.as_ref() {
-        return Ok(chat_reply_context(
-            connection.user_chat_id,
-            None,
-            None,
-            Some(connection.id.clone()),
-        ));
+        return Ok(ReplyContext::chat(connection.user_chat_id)
+            .with_business_connection_id(connection.id.clone()));
     }
 
     if let Some(reaction) = update.message_reaction.as_ref() {
-        return Ok(chat_reply_context(
-            reaction.chat.id,
-            None,
-            Some(reaction.message_id),
-            None,
-        ));
+        return Ok(ReplyContext::chat(reaction.chat.id).replying_to(reaction.message_id));
     }
 
     if let Some(reaction_count) = update.message_reaction_count.as_ref() {
-        return Ok(chat_reply_context(
-            reaction_count.chat.id,
-            None,
-            Some(reaction_count.message_id),
-            None,
-        ));
+        return Ok(
+            ReplyContext::chat(reaction_count.chat.id).replying_to(reaction_count.message_id)
+        );
     }
 
     if let Some(answer) = update.poll_answer.as_ref()
         && let Some(voter_chat) = answer.voter_chat.as_ref()
     {
-        return Ok(chat_reply_context(voter_chat.id, None, None, None));
+        return Ok(ReplyContext::chat(voter_chat.id));
     }
 
     if let Some(boost) = update.chat_boost.as_ref() {
-        return Ok(chat_reply_context(boost.chat.id, None, None, None));
+        return Ok(ReplyContext::chat(boost.chat.id));
     }
 
     if let Some(boost) = update.removed_chat_boost.as_ref() {
-        return Ok(chat_reply_context(boost.chat.id, None, None, None));
+        return Ok(ReplyContext::chat(boost.chat.id));
     }
 
     let chat_id = update
@@ -199,7 +202,7 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         .map(|member_update| member_update.chat.id)
         .ok_or_else(|| invalid_request(MISSING_REPLY_TARGET_REASON))?;
 
-    Ok(chat_reply_context(chat_id, None, None, None))
+    Ok(ReplyContext::chat(chat_id))
 }
 
 pub(crate) fn callback_query_id(update: &Update) -> Option<String> {

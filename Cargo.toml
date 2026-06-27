@@ -10,7 +10,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.22"
 edition = "2024"
-rust-version = "1.95.0"
+rust-version = "1.96.0"
 license = "MIT"
 repository = "https://github.com/lvillis/tele-rs"
 homepage = "https://github.com/lvillis/tele-rs"
@@ -21,7 +21,7 @@ bytes = { version = "1.11.1", default-features = false, features = ["std"] }
 futures-core = { version = "0.3.32", default-features = false }
 http = { version = "1.4.0", default-features = false, features = ["std"] }
 httpdate = { version = "1.0.3", default-features = false }
-reqx = { version = "0.1.39", default-features = false }
+reqx = { version = "0.1.41", default-features = false }
 reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "rustls", "gzip", "brotli", "deflate"] }
 tokio = { version = "1.52.1", default-features = false, features = ["macros", "rt", "time", "sync", "rt-multi-thread", "net"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
@@ -66,6 +66,3 @@ tag-name = "v{{version}}"
 tag-message = "chore(release): v{{version}}"
 pre-release-commit-message = "chore(release): v{{version}}"
 push-remote = "origin"
-
-[patch.crates-io]
-tele-macros = { path = "crates/tele-macros" }

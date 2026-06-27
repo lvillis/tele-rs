@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  RUST_TOOLCHAIN: 1.95.0
+  RUST_TOOLCHAIN: 1.96.0
   NEXTEST_VERSION: 0.9.136
 
 jobs:

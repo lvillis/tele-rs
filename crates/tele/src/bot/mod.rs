@@ -2,7 +2,7 @@ use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::future::Future;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
@@ -299,11 +299,85 @@ fn validate_file_storage_target(path: &Path, subject: &str) -> Result<()> {
     validate_storage_parent_writable(path, subject)
 }
 
+fn normalize_file_storage_target(path: &Path, subject: &str) -> Result<PathBuf> {
+    validate_file_storage_target(path, subject)?;
+    canonical_file_storage_path(path, subject)
+}
+
+fn read_optional_storage_file(
+    path: &Path,
+    subject: &str,
+    read_operation: &'static str,
+) -> Result<Option<Vec<u8>>> {
+    validate_file_storage_path(path, subject)?;
+
+    for _ in 0..16 {
+        let mut file = match open_current_regular_storage_file(path, subject, read_operation)? {
+            StorageFileOpen::File(file) => file,
+            StorageFileOpen::Missing => return Ok(None),
+            StorageFileOpen::Changed => continue,
+        };
+
+        let mut raw = Vec::new();
+        return file
+            .read_to_end(&mut raw)
+            .map(|_| Some(raw))
+            .map_err(|source| {
+                storage_error(
+                    read_operation,
+                    format!("failed to read {subject} `{}`: {source}", path.display()),
+                    true,
+                )
+            });
+    }
+
+    Err(storage_error(
+        read_operation,
+        format!(
+            "failed to read {subject} `{}`: storage file changed repeatedly",
+            path.display()
+        ),
+        true,
+    ))
+}
+
+fn canonical_file_storage_path(path: &Path, subject: &str) -> Result<PathBuf> {
+    validate_file_storage_path(path, subject)?;
+    let parent = storage_parent(path);
+    let canonical_parent = parent.canonicalize().map_err(|source| {
+        storage_error(
+            format!("{subject} path canonicalize"),
+            format!(
+                "failed to canonicalize directory for {subject} `{}`: {source}",
+                parent.display()
+            ),
+            true,
+        )
+    })?;
+    let Some(file_name) = path.file_name() else {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} `{}` must name a regular file", path.display()),
+            false,
+        ));
+    };
+
+    Ok(canonical_parent.join(file_name))
+}
+
 fn validate_file_storage_path(path: &Path, subject: &str) -> Result<()> {
     if path.as_os_str().is_empty() {
         return Err(storage_error(
             format!("{subject} path validate"),
             format!("{subject} path must not be empty"),
+            false,
+        ));
+    }
+
+    if has_directory_syntax_suffix(path) {
+        return Err(storage_error(
+            format!("{subject} path validate"),
+            format!("{subject} `{}` must name a regular file", path.display()),
             false,
         ));
     }
@@ -319,19 +393,41 @@ fn validate_file_storage_path(path: &Path, subject: &str) -> Result<()> {
     Ok(())
 }
 
+fn has_directory_syntax_suffix(path: &Path) -> bool {
+    let raw = path.as_os_str().to_string_lossy();
+
+    #[cfg(windows)]
+    {
+        raw.ends_with('/') || raw.ends_with('\\') || raw.ends_with("/.") || raw.ends_with("\\.")
+    }
+
+    #[cfg(not(windows))]
+    {
+        raw.ends_with('/') || raw.ends_with("/.")
+    }
+}
+
 fn validate_existing_file_storage_target(path: &Path, subject: &str) -> Result<()> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => {
-            return Err(storage_error(
-                format!("{subject} metadata"),
-                format!("failed to inspect {subject} `{}`: {source}", path.display()),
-                true,
-            ));
-        }
+    let Some(metadata) = storage_path_metadata(path, subject)? else {
+        return Ok(());
     };
 
+    validate_storage_metadata(path, subject, &metadata)
+}
+
+fn storage_path_metadata(path: &Path, subject: &str) -> Result<Option<fs::Metadata>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(storage_error(
+            format!("{subject} metadata"),
+            format!("failed to inspect {subject} `{}`: {source}", path.display()),
+            true,
+        )),
+    }
+}
+
+fn validate_storage_metadata(path: &Path, subject: &str, metadata: &fs::Metadata) -> Result<()> {
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
         return Err(storage_error(
@@ -349,6 +445,89 @@ fn validate_existing_file_storage_target(path: &Path, subject: &str) -> Result<(
     }
 
     Ok(())
+}
+
+enum StorageFileOpen {
+    File(fs::File),
+    Missing,
+    Changed,
+}
+
+fn open_current_regular_storage_file(
+    path: &Path,
+    subject: &str,
+    read_operation: &'static str,
+) -> Result<StorageFileOpen> {
+    let Some(initial_path_metadata) = storage_path_metadata(path, subject)? else {
+        return Ok(StorageFileOpen::Missing);
+    };
+    validate_storage_metadata(path, subject, &initial_path_metadata)?;
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(StorageFileOpen::Changed);
+        }
+        Err(source) => {
+            return Err(storage_error(
+                read_operation,
+                format!("failed to open {subject} `{}`: {source}", path.display()),
+                true,
+            ));
+        }
+    };
+
+    let file_metadata = file.metadata().map_err(|source| {
+        storage_error(
+            format!("{subject} metadata"),
+            format!(
+                "failed to inspect opened {subject} `{}`: {source}",
+                path.display()
+            ),
+            true,
+        )
+    })?;
+    validate_storage_metadata(path, subject, &file_metadata)?;
+
+    let Some(current_path_metadata) = storage_path_metadata(path, subject)? else {
+        return Ok(StorageFileOpen::Changed);
+    };
+    validate_storage_metadata(path, subject, &current_path_metadata)?;
+
+    if !same_file_identity(&current_path_metadata, &file_metadata) {
+        return Ok(StorageFileOpen::Changed);
+    }
+
+    Ok(StorageFileOpen::File(file))
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(windows)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    match (
+        left.volume_serial_number(),
+        left.file_index(),
+        right.volume_serial_number(),
+        right.file_index(),
+    ) {
+        (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
+            left_volume == right_volume && left_index == right_index
+        }
+        _ => true,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_identity(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    true
 }
 
 fn validate_storage_parent_writable(path: &Path, subject: &str) -> Result<()> {
@@ -421,8 +600,11 @@ fn validate_storage_parent_writable(path: &Path, subject: &str) -> Result<()> {
     ))
 }
 
-async fn validate_file_storage_target_async(path: PathBuf, subject: &'static str) -> Result<()> {
-    run_blocking_io(move || validate_file_storage_target(path.as_path(), subject)).await
+async fn normalize_file_storage_target_async(
+    path: PathBuf,
+    subject: &'static str,
+) -> Result<PathBuf> {
+    run_blocking_io(move || normalize_file_storage_target(path.as_path(), subject)).await
 }
 
 fn write_file_atomic(path: &Path, contents: &[u8], subject: &str) -> Result<()> {
@@ -575,6 +757,45 @@ mod storage_tests {
         ));
     }
 
+    #[test]
+    fn file_storage_target_rejects_directory_syntax() {
+        for path in [Path::new("missing-dir/"), Path::new("missing-dir/.")] {
+            let result = validate_file_storage_target(path, "test snapshot");
+
+            assert!(matches!(
+                result,
+                Err(Error::Storage {
+                    retryable: false,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn storage_read_returns_none_for_missing_snapshot() {
+        let path = temp_storage_root("storage-read-missing").join("snapshot.json");
+        let result = read_optional_storage_file(&path, "test snapshot", "test snapshot read");
+
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn storage_read_returns_regular_file_contents() -> BoxTestResult {
+        let root = temp_storage_root("storage-read-regular");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let path = root.join("snapshot.json");
+        fs::write(&path, b"snapshot")?;
+
+        let result = read_optional_storage_file(&path, "test snapshot", "test snapshot read")?;
+
+        assert_eq!(result.as_deref(), Some(b"snapshot".as_slice()));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn atomic_write_rejects_symbolic_link_without_replacing_it() -> BoxTestResult {
@@ -599,6 +820,54 @@ mod storage_tests {
         assert_eq!(fs::read(&target)?, b"old");
         assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
 
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_read_rejects_symbolic_link_without_following_it() -> BoxTestResult {
+        let root = temp_storage_root("storage-read-symlink");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let target = root.join("target.json");
+        let link = root.join("link.json");
+        fs::write(&target, b"secret")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        let result = read_optional_storage_file(&link, "test snapshot", "test snapshot read");
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                retryable: false,
+                ..
+            })
+        ));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_read_rejects_dangling_symbolic_link_as_invalid_path() -> BoxTestResult {
+        let root = temp_storage_root("storage-read-dangling-symlink");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root)?;
+
+        let link = root.join("link.json");
+        std::os::unix::fs::symlink(root.join("missing.json"), &link)?;
+
+        let result = read_optional_storage_file(&link, "test snapshot", "test snapshot read");
+
+        assert!(matches!(
+            result,
+            Err(Error::Storage {
+                retryable: false,
+                ..
+            })
+        ));
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }

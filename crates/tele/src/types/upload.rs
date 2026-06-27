@@ -17,12 +17,7 @@ impl UploadFile {
     /// Build from in-memory bytes.
     pub fn from_bytes(file_name: impl Into<String>, data: Vec<u8>) -> Result<Self> {
         let file_name = file_name.into();
-        if file_name.trim().is_empty() {
-            return Err(Error::InvalidRequest {
-                reason: "upload file_name cannot be empty".to_owned(),
-            });
-        }
-        validate_multipart_header_fragment("upload file_name", &file_name)?;
+        validate_upload_file_name(&file_name)?;
 
         Ok(Self {
             file_name,
@@ -34,11 +29,6 @@ impl UploadFile {
     /// Load file content from local filesystem.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let data = std::fs::read(path).map_err(|source| Error::ReadLocalFile {
-            path: path.display().to_string(),
-            source,
-        })?;
-
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -46,8 +36,18 @@ impl UploadFile {
                 reason: "path does not contain a valid UTF-8 file name".to_owned(),
             })?
             .to_owned();
+        validate_upload_file_name(&file_name)?;
 
-        Self::from_bytes(file_name, data)
+        let data = std::fs::read(path).map_err(|source| Error::ReadLocalFile {
+            path: path.display().to_string(),
+            source,
+        })?;
+
+        Ok(Self {
+            file_name,
+            content_type: None,
+            data: data.into(),
+        })
     }
 
     /// Attach a specific content-type for this file part.
@@ -128,6 +128,20 @@ impl UploadPart {
     }
 }
 
+fn validate_upload_file_name(file_name: &str) -> Result<()> {
+    if file_name.trim().is_empty() {
+        return Err(Error::InvalidRequest {
+            reason: "upload file_name cannot be empty".to_owned(),
+        });
+    }
+    if file_name == "." || file_name == ".." || file_name.contains(['/', '\\']) {
+        return Err(Error::InvalidRequest {
+            reason: "upload file_name must be a plain file name without path separators".to_owned(),
+        });
+    }
+    validate_multipart_header_fragment("upload file_name", file_name)
+}
+
 fn validate_multipart_header_fragment(label: &str, value: &str) -> Result<()> {
     if value.chars().any(char::is_control) {
         return Err(Error::InvalidRequest {
@@ -157,19 +171,35 @@ pub(crate) fn validate_upload_part_name(label: &str, value: &str) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use crate::Error;
+
     use super::{UploadFile, UploadPart};
 
     #[test]
-    fn rejects_header_injection_metadata() {
+    fn rejects_header_injection_metadata() -> std::result::Result<(), Box<dyn std::error::Error>> {
         assert!(UploadFile::from_bytes("a\r\nx: y", Vec::new()).is_err());
-        let file = UploadFile::from_bytes("a.txt", Vec::new());
-        assert!(file.is_ok());
-        let file = match file {
-            Ok(file) => file,
-            Err(_) => return,
-        };
+        let file = UploadFile::from_bytes("a.txt", Vec::new())?;
         assert!(file.clone().with_content_type("").is_err());
         assert!(file.with_content_type("text/plain\r\nx: y").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_upload_file_names_with_path_semantics() {
+        for file_name in [
+            "../secret.txt",
+            "nested/photo.jpg",
+            r"nested\photo.jpg",
+            ".",
+            "..",
+        ] {
+            assert!(matches!(
+                UploadFile::from_bytes(file_name, Vec::new()),
+                Err(Error::InvalidRequest { .. })
+            ));
+        }
     }
 
     #[test]
@@ -182,6 +212,18 @@ mod tests {
         assert!(UploadPart::new("", file.clone()).is_err());
         assert!(UploadPart::new("bad/name", file.clone()).is_err());
         assert!(UploadPart::new("bad\r\nname", file).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn from_path_rejects_missing_file_name_before_reading()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let error = match UploadFile::from_path(Path::new("")) {
+            Ok(file) => return Err(format!("expected invalid upload path, got {file:?}").into()),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, Error::InvalidRequest { .. }));
         Ok(())
     }
 }

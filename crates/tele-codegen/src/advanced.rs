@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::fs_util::write_text_if_changed;
 use crate::spec::{BotApiSpec, MethodSpec, ParamSpec};
 
 const SPEC_FILE: &str = "bot_api.json";
@@ -68,13 +69,21 @@ pub(crate) fn generate() -> Result<(), Box<dyn std::error::Error>> {
 
 pub(crate) fn check() -> Result<(), Box<dyn std::error::Error>> {
     let files = format_generated_files(&render_generated_files()?)?;
-    let changed = files
-        .iter()
-        .filter(|file| {
-            fs::read_to_string(&file.path).ok().as_deref() != Some(file.content.as_str())
-        })
-        .map(|file| file.path.as_path())
-        .collect::<Vec<_>>();
+    let mut changed = Vec::new();
+    for file in &files {
+        match fs::read_to_string(&file.path) {
+            Ok(existing) if existing == file.content => {}
+            Ok(_) => changed.push(file.path.as_path()),
+            Err(error) if error.kind() == ErrorKind::NotFound => changed.push(file.path.as_path()),
+            Err(error) => {
+                return Err(format!(
+                    "failed to read generated file `{}`: {error}",
+                    file.path.display()
+                )
+                .into());
+            }
+        }
+    }
 
     if !changed.is_empty() {
         let mut message = String::from("generated advanced API files are out of date:");
@@ -130,7 +139,7 @@ fn render_generated_files() -> Result<Vec<GeneratedFile>, Box<dyn std::error::Er
 
 fn write_generated_files(files: &[GeneratedFile]) -> Result<(), Box<dyn std::error::Error>> {
     for file in files {
-        write_if_changed(&file.path, &file.content)?;
+        write_text_if_changed(&file.path, &file.content)?;
     }
     Ok(())
 }
@@ -2132,14 +2141,6 @@ fn generate_api_methods(methods: &[&MethodSpec]) -> String {
     out
 }
 
-fn write_if_changed(path: &Path, content: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if fs::read_to_string(path).ok().as_deref() == Some(content) {
-        return Ok(());
-    }
-    fs::write(path, content)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3734,25 +3735,16 @@ mod tests {
     }
 
     #[test]
-    fn bundled_spec_is_self_describing() {
+    fn bundled_spec_is_self_describing() -> Result<(), Box<dyn std::error::Error>> {
         let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("spec")
             .join(SPEC_FILE);
-        let bytes = fs::read(spec_path);
-        assert!(bytes.is_ok());
-        let bytes = match bytes {
-            Ok(bytes) => bytes,
-            Err(_) => return,
-        };
+        let bytes = fs::read(spec_path)?;
 
-        let spec = serde_json::from_slice::<BotApiSpec>(&bytes);
-        assert!(spec.is_ok());
-        let spec = match spec {
-            Ok(spec) => spec,
-            Err(_) => return,
-        };
+        let spec = serde_json::from_slice::<BotApiSpec>(&bytes)?;
 
         assert!(spec.validate().is_ok());
         assert!(spec.all_methods.len() >= spec.advanced_methods.len());
+        Ok(())
     }
 }

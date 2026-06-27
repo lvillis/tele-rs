@@ -12,21 +12,40 @@ trait ReplyContextRequest {
     fn apply_reply_context(&mut self, context: &ReplyContext);
 }
 
+macro_rules! apply_basic_reply_context {
+    ($request:ident, $context:ident) => {
+        $request.message_thread_id = $context.message_thread_id;
+        $request.reply_parameters = $context.reply_parameters.clone();
+        $request.business_connection_id = $context.business_connection_id.clone();
+    };
+}
+
 macro_rules! impl_reply_context_request {
     ($($ty:ty),* $(,)?) => {
         $(
             impl ReplyContextRequest for $ty {
                 fn apply_reply_context(&mut self, context: &ReplyContext) {
-                    self.message_thread_id = context.message_thread_id;
-                    self.reply_parameters = context.reply_parameters.clone();
-                    self.business_connection_id = context.business_connection_id.clone();
+                    apply_basic_reply_context!(self, context);
                 }
             }
         )*
     };
 }
 
-impl_reply_context_request!(
+macro_rules! impl_direct_messages_reply_context_request {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl ReplyContextRequest for $ty {
+                fn apply_reply_context(&mut self, context: &ReplyContext) {
+                    apply_basic_reply_context!(self, context);
+                    self.direct_messages_topic_id = context.direct_messages_topic_id;
+                }
+            }
+        )*
+    };
+}
+
+impl_direct_messages_reply_context_request!(
     SendMessageRequest,
     SendPhotoRequest,
     SendDocumentRequest,
@@ -40,9 +59,10 @@ impl_reply_context_request!(
     SendLocationRequest,
     SendVenueRequest,
     SendContactRequest,
-    SendPollRequest,
     SendDiceRequest,
 );
+
+impl_reply_context_request!(SendPollRequest);
 
 fn build_reply_request<R>(update: &Update, build: impl FnOnce(i64) -> R) -> Result<R>
 where

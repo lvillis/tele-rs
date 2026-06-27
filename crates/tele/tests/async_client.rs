@@ -2117,6 +2117,77 @@ fn app_reply_text_preserves_source_message_thread() -> Result<(), DynError> {
     Ok(())
 }
 
+#[test]
+fn app_reply_text_preserves_source_direct_messages_topic() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 4402,
+        "message": {
+            "message_id": 56,
+            "date": 1710000001,
+            "chat": {"id": -10010, "type": "channel", "title": "updates"},
+            "direct_messages_topic": {
+                "topic_id": 99
+            },
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "text": "/start"
+        }
+    }))?;
+
+    let request = client.app().reply(&update, "quoted")?.into_request();
+
+    assert_eq!(request.chat_id, ChatId::Id(-10010));
+    assert_eq!(request.direct_messages_topic_id, Some(99));
+    assert_eq!(
+        request
+            .reply_parameters
+            .as_ref()
+            .map(|parameters| parameters.message_id),
+        Some(MessageId(56))
+    );
+    Ok(())
+}
+
+#[test]
+fn app_reply_text_preserves_accessible_callback_direct_messages_topic() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({
+        "update_id": 4403,
+        "callback_query": {
+            "id": "cb-direct-topic",
+            "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+            "message": {
+                "message_id": 57,
+                "date": 1710000002,
+                "chat": {"id": -10010, "type": "channel", "title": "updates"},
+                "direct_messages_topic": {
+                    "topic_id": 100
+                },
+                "text": "choose"
+            },
+            "chat_instance": "ci",
+            "data": "payload"
+        }
+    }))?;
+
+    let request = client.app().reply(&update, "quoted")?.into_request();
+
+    assert_eq!(request.chat_id, ChatId::Id(-10010));
+    assert_eq!(request.direct_messages_topic_id, Some(100));
+    assert_eq!(
+        request
+            .reply_parameters
+            .as_ref()
+            .map(|parameters| parameters.message_id),
+        Some(MessageId(57))
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn app_reply_text_targets_inaccessible_callback_message() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"message_id":9,"date":1710000002,"chat":{"id":-10010,"type":"supergroup","title":"mods"},"text":"quoted"}}"#;
@@ -3056,6 +3127,46 @@ async fn moderation_notice_facade_reuses_text_builder() -> Result<(), DynError> 
     assert_eq!(sent.message_id.0, 56);
 
     join_server(server)?;
+    Ok(())
+}
+
+#[test]
+fn moderation_notice_for_message_preserves_delivery_context() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let message: tele::types::Message = serde_json::from_value(serde_json::json!({
+        "message_id": 56,
+        "business_connection_id": "business-notice",
+        "date": 1710000002,
+        "chat": {"id": -10010, "type": "channel", "title": "updates"},
+        "direct_messages_topic": {
+            "topic_id": 77
+        },
+        "from": {"id": 701, "is_bot": false, "first_name": "candidate"},
+        "text": "spam"
+    }))?;
+
+    let request = client
+        .app()
+        .moderation()
+        .notice()
+        .for_message(&message, "Message removed")?
+        .into_request();
+
+    assert_eq!(request.chat_id, ChatId::Id(-10010));
+    assert_eq!(
+        request.business_connection_id.as_deref(),
+        Some("business-notice")
+    );
+    assert_eq!(request.direct_messages_topic_id, Some(77));
+    assert_eq!(
+        request
+            .reply_parameters
+            .as_ref()
+            .map(|parameters| parameters.message_id),
+        Some(MessageId(56))
+    );
     Ok(())
 }
 

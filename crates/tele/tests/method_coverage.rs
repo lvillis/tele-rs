@@ -12,13 +12,25 @@ struct MethodCoverageSpec {
     all_methods: Vec<String>,
 }
 
-fn parse_expected_methods(text: &str, path: &Path) -> Option<BTreeSet<String>> {
+fn parse_expected_methods(
+    text: &str,
+    path: &Path,
+) -> Result<Option<BTreeSet<String>>, Box<dyn std::error::Error>> {
     if path.extension().is_some_and(|ext| ext == "json") {
-        let spec: MethodCoverageSpec = serde_json::from_str(text).ok()?;
+        let spec: MethodCoverageSpec = serde_json::from_str(text).map_err(|source| {
+            format!(
+                "failed to parse method coverage spec `{}`: {source}",
+                path.display()
+            )
+        })?;
         if spec.all_methods.is_empty() {
-            return None;
+            return Err(format!(
+                "method coverage spec `{}` must contain at least one method",
+                path.display()
+            )
+            .into());
         }
-        return Some(spec.all_methods.into_iter().collect());
+        return Ok(Some(spec.all_methods.into_iter().collect()));
     }
 
     let methods = text
@@ -28,25 +40,51 @@ fn parse_expected_methods(text: &str, path: &Path) -> Option<BTreeSet<String>> {
         .map(ToOwned::to_owned)
         .collect::<BTreeSet<_>>();
 
-    (!methods.is_empty()).then_some(methods)
+    Ok((!methods.is_empty()).then_some(methods))
 }
 
-fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
+fn load_expected_methods(
+    path: &Path,
+) -> Result<Option<BTreeSet<String>>, Box<dyn std::error::Error>> {
+    match fs::read_to_string(path) {
+        Ok(text) => parse_expected_methods(&text, path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "failed to read method coverage spec `{}`: {error}",
+            path.display()
+        )
+        .into()),
+    }
+}
 
-    for entry in entries.flatten() {
+fn load_required_expected_methods(
+    path: &Path,
+) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+    load_expected_methods(path)?.ok_or_else(|| {
+        format!(
+            "method coverage spec `{}` must exist and contain at least one method",
+            path.display()
+        )
+        .into()
+    })
+}
+
+fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let entries = fs::read_dir(dir)?;
+
+    for entry in entries {
+        let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_rust_files(&path, out);
+            collect_rust_files(&path, out)?;
             continue;
         }
         if path.extension().is_some_and(|ext| ext == "rs") {
             out.push(path);
         }
     }
+
+    Ok(())
 }
 
 #[test]
@@ -58,21 +96,11 @@ fn telegram_bot_api_methods_are_fully_covered() -> Result<(), Box<dyn std::error
         .map(Path::to_path_buf)
         .unwrap_or_else(|| crate_root.clone());
 
-    let mut candidate_paths = Vec::new();
-    if let Ok(path) = env::var("TELE_METHOD_COVERAGE_SPEC_PATH") {
-        candidate_paths.push(PathBuf::from(path));
-    }
-    candidate_paths.push(workspace_root.join("crates/tele-codegen/spec/bot_api.json"));
-
-    let mut expected_methods = None;
-    for path in &candidate_paths {
-        if let Ok(text) = fs::read_to_string(path)
-            && let Some(methods) = parse_expected_methods(&text, path)
-        {
-            expected_methods = Some(methods);
-            break;
-        }
-    }
+    let default_spec_path = workspace_root.join("crates/tele-codegen/spec/bot_api.json");
+    let expected_methods = match env::var("TELE_METHOD_COVERAGE_SPEC_PATH") {
+        Ok(path) => Some(load_required_expected_methods(&PathBuf::from(path))?),
+        Err(_) => load_expected_methods(&default_spec_path)?,
+    };
 
     let expected_methods = match expected_methods {
         Some(methods) => methods,
@@ -81,16 +109,21 @@ fn telegram_bot_api_methods_are_fully_covered() -> Result<(), Box<dyn std::error
                 !EMBEDDED_METHOD_SPEC.trim().is_empty(),
                 "embedded method spec fixture is empty"
             );
-            parse_expected_methods(EMBEDDED_METHOD_SPEC, Path::new("bot_api_all_methods.txt"))
-                .ok_or_else(|| {
-                    std::io::Error::other("embedded method spec fixture must contain methods")
-                })?
+            let Some(methods) =
+                parse_expected_methods(EMBEDDED_METHOD_SPEC, Path::new("bot_api_all_methods.txt"))?
+            else {
+                return Err(std::io::Error::other(
+                    "embedded method spec fixture must contain methods",
+                )
+                .into());
+            };
+            methods
         }
     };
 
     let api_dir = crate_root.join("src/api");
     let mut api_files = Vec::new();
-    collect_rust_files(&api_dir, &mut api_files);
+    collect_rust_files(&api_dir, &mut api_files)?;
 
     let mut api_sources = Vec::new();
     let mut unreadable_api_files = Vec::new();
@@ -124,4 +157,27 @@ fn telegram_bot_api_methods_are_fully_covered() -> Result<(), Box<dyn std::error
     );
 
     Ok(())
+}
+
+#[test]
+fn json_method_spec_parse_errors_are_not_silent() {
+    let result = parse_expected_methods("{", Path::new("broken.json"));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn json_method_spec_requires_methods() {
+    let result = parse_expected_methods(r#"{"all_methods":[]}"#, Path::new("empty.json"));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn required_method_spec_missing_is_error() {
+    let result = load_required_expected_methods(Path::new(
+        "fixtures/definitely-missing-method-coverage-spec.txt",
+    ));
+
+    assert!(result.is_err());
 }

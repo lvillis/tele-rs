@@ -18,12 +18,13 @@ use tele::bot::testing::BotHarness;
 use tele::bot::{
     BotApp, BotContext, BotEngine, BotOutbox, BusinessConnectionInput,
     BusinessMessagesDeletedInput, CURRENT_ACTOR_CHAT_MEMBER, CURRENT_BOT_CHAT_MEMBER,
-    CallbackInput, CallbackQueryInput, ChatBoostInput, ChatJoinRequestInput,
-    ChatMemberUpdatedInput, ChatSession, CommandArgs, CommandData, DispatchMetricOutcome,
-    DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy, HandlerError,
-    InMemorySessionStore, InlineQueryInput, JsonFileSessionStore, LongPollingSource,
-    ManagedBotInput, MessageReactionInput, MyChatMemberUpdatedInput, OutboxConfig, PollAnswerInput,
-    PollingConfig, RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig,
+    CallbackInput, CallbackQueryInput, ChatBoostInput, ChatBoostRemovedInput, ChatJoinRequestInput,
+    ChatMemberUpdatedInput, ChatSession, ChosenInlineResultInput, CommandArgs, CommandData,
+    DispatchMetricOutcome, DispatchOutcome, EngineConfig, EngineEvent, EngineMetric, ErrorPolicy,
+    HandlerError, InMemorySessionStore, InlineQueryInput, JsonFileSessionStore, LongPollingSource,
+    ManagedBotInput, MessageReactionCountInput, MessageReactionInput, MyChatMemberUpdatedInput,
+    OutboxConfig, PaidMediaPurchasedInput, PollAnswerInput, PollInput, PollingConfig,
+    PreCheckoutQueryInput, RequestStateKey, Router, ShippingQueryInput, SourceErrorBackoffConfig,
     StateTransition, TextInput, UpdateExt, UpdateExtractor, UpdateSource, WebAppInput,
     WebhookRunner, WriteAccessAllowedInput, apply_chat_state_transition, channel_source,
     clear_chat_state, extract_callback_data, extract_callback_json, extract_chat_join_request,
@@ -328,7 +329,13 @@ async fn join_server(handle: ServerHandle) -> Result<(), DynError> {
 }
 
 fn parse_update(input: serde_json::Value) -> Option<Update> {
-    serde_json::from_value(input).ok()
+    let result = serde_json::from_value(input);
+    assert!(
+        result.is_ok(),
+        "test update fixture must deserialize: {:?}",
+        result.as_ref().err()
+    );
+    result.ok()
 }
 
 fn reject_blocked_text(text: &TextInput, _update: &Update) -> tele::bot::HandlerResult {
@@ -1182,13 +1189,13 @@ async fn typed_callback_button_and_route_round_trip() -> Result<(), DynError> {
         button.decode_callback::<DemoCallbackPayload>()?,
         Some(payload.clone())
     );
+    let callback_data = match button.callback_data() {
+        Some(data) => data.to_owned(),
+        None => return Err("typed callback button must contain callback_data".into()),
+    };
 
-    let Some(update) = parse_update(callback_update(
-        205,
-        1,
-        button.callback_data().unwrap_or_default(),
-    )) else {
-        return Ok(());
+    let Some(update) = parse_update(callback_update(205, 1, &callback_data)) else {
+        return Err("typed callback update fixture must deserialize".into());
     };
     assert_eq!(
         extract_typed_callback::<DemoCallbackPayload>(&update),
@@ -1233,21 +1240,22 @@ async fn compact_callback_button_and_route_round_trip() -> Result<(), DynError> 
     };
     let json_button = InlineKeyboardButton::typed_callback("Confirm", &payload)?;
     let compact_button = InlineKeyboardButton::compact_callback("Confirm", &payload)?;
-    assert!(
-        compact_button.callback_data().unwrap_or_default().len()
-            < json_button.callback_data().unwrap_or_default().len()
-    );
+    let compact_callback_data = match compact_button.callback_data() {
+        Some(data) => data.to_owned(),
+        None => return Err("compact callback button must contain callback_data".into()),
+    };
+    let json_callback_data = match json_button.callback_data() {
+        Some(data) => data.to_owned(),
+        None => return Err("typed callback button must contain callback_data".into()),
+    };
+    assert!(compact_callback_data.len() < json_callback_data.len());
     assert_eq!(
         compact_button.decode_compact_callback::<DemoCallbackPayload>()?,
         Some(payload.clone())
     );
 
-    let Some(update) = parse_update(callback_update(
-        206,
-        1,
-        compact_button.callback_data().unwrap_or_default(),
-    )) else {
-        return Ok(());
+    let Some(update) = parse_update(callback_update(206, 1, &compact_callback_data)) else {
+        return Err("compact callback update fixture must deserialize".into());
     };
     assert_eq!(
         extract_compact_callback::<DemoCallbackPayload>(&update),
@@ -1864,7 +1872,7 @@ async fn engine_config_rejects_invalid_runtime_values() -> Result<(), DynError> 
         source_error_backoff: Some(SourceErrorBackoffConfig {
             base_delay: Duration::from_secs(2),
             max_delay: Duration::from_secs(1),
-            jitter_ratio: f32::NAN,
+            jitter_ratio: f64::NAN,
         }),
         ..EngineConfig::default()
     };
@@ -4009,6 +4017,25 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
     }
     {
         let hits = Arc::clone(&hits);
+        router.message_reaction_count_route().handle(
+            move |_context: BotContext,
+                  _update: Update,
+                  reaction_count: MessageReactionCountInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if reaction_count.0.chat.id == -3001
+                        && reaction_count.0.message_id.0 == 10
+                        && reaction_count.0.reactions.len() == 1
+                    {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
         router.shipping_query_route().handle(
             move |_context: BotContext, _update: Update, query: ShippingQueryInput| {
                 let hits = Arc::clone(&hits);
@@ -4016,6 +4043,64 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
                     if query.0.id == "shipping-route"
                         && query.0.shipping_address.country_code == "US"
                     {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.pre_checkout_query_route().handle(
+            move |_context: BotContext, _update: Update, query: PreCheckoutQueryInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if query.0.id == "checkout-route" && query.0.total_amount == 145 {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.purchased_paid_media_route().handle(
+            move |_context: BotContext, _update: Update, purchase: PaidMediaPurchasedInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if purchase.0.paid_media_payload == "paid-media-route"
+                        && purchase.0.from.id.0 == 70
+                    {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.chosen_inline_result_route().handle(
+            move |_context: BotContext, _update: Update, result: ChosenInlineResultInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if result.0.result_id == "chosen-route" && result.0.query == "search" {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.poll_route().handle(
+            move |_context: BotContext, _update: Update, poll: PollInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if poll.0.id == "poll-route" && poll.0.total_voter_count == 1 {
                         hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -4044,6 +4129,20 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
                 let hits = Arc::clone(&hits);
                 async move {
                     if boost.0.chat.id == -3002 && boost.0.boost.boost_id == "boost-route" {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+    {
+        let hits = Arc::clone(&hits);
+        router.removed_chat_boost_route().handle(
+            move |_context: BotContext, _update: Update, boost: ChatBoostRemovedInput| {
+                let hits = Arc::clone(&hits);
+                async move {
+                    if boost.0.chat.id == -3002 && boost.0.boost_id == "boost-route" {
                         hits.fetch_add(1, Ordering::SeqCst);
                     }
                     Ok(())
@@ -4127,6 +4226,18 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
             }
         }),
         serde_json::json!({
+            "update_id": 4019,
+            "message_reaction_count": {
+                "chat": {"id": -3001, "type": "supergroup", "title": "mods"},
+                "message_id": 10,
+                "date": 1700000419,
+                "reactions": [{
+                    "type": {"type": "emoji", "emoji": "👍"},
+                    "total_count": 3
+                }]
+            }
+        }),
+        serde_json::json!({
             "update_id": 4013,
             "shipping_query": {
                 "id": "shipping-route",
@@ -4140,6 +4251,44 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
                     "street_line2": "Suite 1",
                     "post_code": "94105"
                 }
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4020,
+            "pre_checkout_query": {
+                "id": "checkout-route",
+                "from": {"id": 70, "is_bot": false, "first_name": "buyer"},
+                "currency": "USD",
+                "total_amount": 145,
+                "invoice_payload": "payload"
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4021,
+            "purchased_paid_media": {
+                "from": {"id": 70, "is_bot": false, "first_name": "buyer"},
+                "paid_media_payload": "paid-media-route"
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4022,
+            "chosen_inline_result": {
+                "result_id": "chosen-route",
+                "from": {"id": 70, "is_bot": false, "first_name": "chooser"},
+                "query": "search"
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4023,
+            "poll": {
+                "id": "poll-route",
+                "question": "q?",
+                "options": [{"text": "a", "voter_count": 1}],
+                "total_voter_count": 1,
+                "is_closed": false,
+                "is_anonymous": false,
+                "type": "regular",
+                "allows_multiple_answers": false
             }
         }),
         serde_json::json!({
@@ -4162,6 +4311,18 @@ async fn modern_update_routes_dispatch_typed_inputs() -> Result<(), DynError> {
                         "source": "premium",
                         "user": {"id": 70, "is_bot": false, "first_name": "booster"}
                     }
+                }
+            }
+        }),
+        serde_json::json!({
+            "update_id": 4024,
+            "removed_chat_boost": {
+                "chat": {"id": -3002, "type": "supergroup", "title": "mods"},
+                "boost_id": "boost-route",
+                "remove_date": 1700000424,
+                "source": {
+                    "source": "premium",
+                    "user": {"id": 70, "is_bot": false, "first_name": "booster"}
                 }
             }
         }),
@@ -5042,8 +5203,7 @@ async fn json_file_session_store_rejects_invalid_path_on_open() -> Result<(), Dy
 }
 
 #[tokio::test]
-async fn json_file_session_store_keeps_memory_unchanged_when_persist_fails() -> Result<(), DynError>
-{
+async fn json_file_session_store_does_not_mask_unreadable_snapshot() -> Result<(), DynError> {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path = std::env::temp_dir().join(format!("tele-session-fail-{timestamp}.json"));
 
@@ -5060,8 +5220,8 @@ async fn json_file_session_store_keeps_memory_unchanged_when_persist_fails() -> 
     let result = save_chat_state(&store, &update, "step-2".to_owned()).await;
     assert!(result.is_err());
 
-    let loaded = load_chat_state(&store, &update).await?;
-    assert_eq!(loaded.as_deref(), Some("step-1"));
+    let loaded = load_chat_state(&store, &update).await;
+    assert!(matches!(loaded, Err(Error::Storage { .. })));
 
     let _ = fs::remove_dir_all(path);
     Ok(())

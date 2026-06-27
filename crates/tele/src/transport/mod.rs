@@ -750,9 +750,19 @@ impl Stream for MultipartBodyStream {
     }
 }
 
-fn push_chunk(chunks: &mut Vec<MultipartChunk>, content_length: &mut usize, chunk: MultipartChunk) {
-    *content_length += chunk.len();
+fn push_chunk(
+    chunks: &mut Vec<MultipartChunk>,
+    content_length: &mut usize,
+    chunk: MultipartChunk,
+) -> Result<(), Error> {
+    *content_length =
+        content_length
+            .checked_add(chunk.len())
+            .ok_or_else(|| Error::InvalidRequest {
+                reason: "multipart payload content length exceeds platform limits".to_owned(),
+            })?;
     chunks.push(chunk);
+    Ok(())
 }
 
 pub(crate) fn build_multipart_payload(
@@ -784,7 +794,7 @@ pub(crate) fn build_multipart_payload_many(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Owned(format!("--{boundary}\r\n").into_bytes()),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
@@ -795,17 +805,17 @@ pub(crate) fn build_multipart_payload_many(
                 )
                 .into_bytes(),
             ),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Owned(value.as_bytes().to_vec()),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Owned(b"\r\n".to_vec()),
-        );
+        )?;
     }
 
     for (file_field_name, file) in files {
@@ -813,7 +823,7 @@ pub(crate) fn build_multipart_payload_many(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Owned(format!("--{boundary}\r\n").into_bytes()),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
@@ -825,7 +835,7 @@ pub(crate) fn build_multipart_payload_many(
                 )
                 .into_bytes(),
             ),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
@@ -836,24 +846,24 @@ pub(crate) fn build_multipart_payload_many(
                 )
                 .into_bytes(),
             ),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Shared(file.data_arc()),
-        );
+        )?;
         push_chunk(
             &mut chunks,
             &mut content_length,
             MultipartChunk::Owned(b"\r\n".to_vec()),
-        );
+        )?;
     }
 
     push_chunk(
         &mut chunks,
         &mut content_length,
         MultipartChunk::Owned(format!("--{boundary}--\r\n").into_bytes()),
-    );
+    )?;
 
     Ok(MultipartPayload {
         chunks,
@@ -967,9 +977,9 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::{
-        build_multipart_payload, build_multipart_payload_many, ceil_duration_seconds,
-        multipart_boundary_conflicts, parse_telegram_response, retry_after_seconds_from_headers_at,
-        serialize_multipart_fields,
+        MultipartChunk, build_multipart_payload, build_multipart_payload_many,
+        ceil_duration_seconds, multipart_boundary_conflicts, parse_telegram_response, push_chunk,
+        retry_after_seconds_from_headers_at, serialize_multipart_fields,
     };
     use crate::Error;
     use crate::types::upload::UploadFile;
@@ -984,17 +994,27 @@ mod tests {
         file: String,
     }
 
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn expect_parse_error(
+        result: Result<Value, Error>,
+        context: &str,
+    ) -> std::result::Result<Error, Box<dyn std::error::Error>> {
+        match result {
+            Err(error) => Ok(error),
+            Ok(value) => Err(format!("{context}: expected error, got {value:?}").into()),
+        }
+    }
+
     #[test]
-    fn serializes_multipart_fields_skipping_file_field() {
+    fn serializes_multipart_fields_skipping_file_field() -> TestResult {
         let payload = Payload {
             chat_id: 1,
             text: "hello".to_owned(),
             file: "ignored".to_owned(),
         };
 
-        let fields_result = serialize_multipart_fields(&payload, &["file"]);
-        assert!(fields_result.is_ok());
-        let fields = fields_result.unwrap_or_default();
+        let fields = serialize_multipart_fields(&payload, &["file"])?;
         assert_eq!(fields.len(), 2);
         assert!(
             fields
@@ -1006,10 +1026,11 @@ mod tests {
                 .iter()
                 .any(|(key, value)| key == "text" && value == "hello")
         );
+        Ok(())
     }
 
     #[test]
-    fn api_error_uses_http_retry_after_header_when_parameters_are_absent() {
+    fn api_error_uses_http_retry_after_header_when_parameters_are_absent() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
         let body = br#"{"ok":false,"error_code":429,"description":"Too Many Requests"}"#;
@@ -1023,20 +1044,18 @@ mod tests {
             256,
         );
         assert!(result.is_err());
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "429 API response")?;
 
         assert!(matches!(error, Error::Api { .. }));
         if let Error::Api { parameters, .. } = &error {
             assert!(parameters.is_none());
         }
         assert_eq!(error.retry_after(), Some(Duration::from_secs(7)));
+        Ok(())
     }
 
     #[test]
-    fn api_error_retry_after_header_without_429_is_not_rate_limited() {
+    fn api_error_retry_after_header_without_429_is_not_rate_limited() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
         let body = br#"{"ok":false,"error_code":503,"description":"Service Unavailable"}"#;
@@ -1049,10 +1068,7 @@ mod tests {
             true,
             256,
         );
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "503 API response")?;
 
         assert!(matches!(error, Error::Api { .. }));
         assert!(!error.is_rate_limited());
@@ -1061,10 +1077,11 @@ mod tests {
         if let Error::Api { parameters, .. } = error {
             assert!(parameters.is_none());
         }
+        Ok(())
     }
 
     #[test]
-    fn non_json_error_response_is_transport_error() {
+    fn non_json_error_response_is_transport_error() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
         let body = b"<html>too many requests</html>";
@@ -1077,20 +1094,17 @@ mod tests {
             true,
             256,
         );
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "non-JSON 429 response")?;
 
         assert!(matches!(error, Error::Transport { .. }));
         assert!(error.is_rate_limited());
         assert!(error.is_retryable());
         assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+        Ok(())
     }
 
     #[test]
-    fn ok_true_with_non_success_status_is_transport_error()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
+    fn ok_true_with_non_success_status_is_transport_error() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
         let body = br#"{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"Bot"}}"#;
@@ -1103,14 +1117,7 @@ mod tests {
             true,
             256,
         );
-        let error = match result {
-            Err(error) => error,
-            Ok(value) => {
-                return Err(
-                    format!("expected non-success HTTP status to fail, got {value:?}").into(),
-                );
-            }
-        };
+        let error = expect_parse_error(result, "non-success HTTP status response")?;
 
         assert!(matches!(error, Error::Transport { .. }));
         assert!(error.is_retryable());
@@ -1120,7 +1127,7 @@ mod tests {
     }
 
     #[test]
-    fn non_json_retry_after_without_429_is_transport_error() {
+    fn non_json_retry_after_without_429_is_transport_error() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("4"));
         let body = b"<html>service unavailable</html>";
@@ -1133,34 +1140,30 @@ mod tests {
             true,
             256,
         );
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "non-JSON retry-after response")?;
 
         assert!(matches!(error, Error::Transport { .. }));
         assert!(!error.is_rate_limited());
         assert!(error.is_retryable());
         assert_eq!(error.retry_after(), Some(Duration::from_secs(4)));
+        Ok(())
     }
 
     #[test]
-    fn non_json_success_response_remains_decode_error() {
+    fn non_json_success_response_remains_decode_error() -> TestResult {
         let headers = HeaderMap::new();
         let body = b"<html>not telegram json</html>";
 
         let result =
             parse_telegram_response::<Value>("getMe", StatusCode::OK, &headers, body, true, 256);
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "non-JSON success response")?;
 
         assert!(matches!(error, Error::DeserializeResponse { .. }));
+        Ok(())
     }
 
     #[test]
-    fn api_error_parameters_retry_after_wins_over_http_header() {
+    fn api_error_parameters_retry_after_wins_over_http_header() -> TestResult {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("7"));
         let body = br#"{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":3}}"#;
@@ -1174,43 +1177,37 @@ mod tests {
             256,
         );
         assert!(result.is_err());
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => return,
-        };
+        let error = expect_parse_error(result, "API retry_after response")?;
 
         assert!(matches!(error, Error::Api { .. }));
         assert_eq!(error.retry_after(), Some(Duration::from_secs(3)));
+        Ok(())
     }
 
     #[test]
-    fn retry_after_header_accepts_http_date() {
+    fn retry_after_header_accepts_http_date() -> TestResult {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let retry_at = now + Duration::from_secs(9);
         let retry_after = httpdate::fmt_http_date(retry_at);
         let mut headers = HeaderMap::new();
-        let header_value = match HeaderValue::from_str(&retry_after) {
-            Ok(value) => value,
-            Err(_) => return,
-        };
+        let header_value = HeaderValue::from_str(&retry_after)?;
         headers.insert(RETRY_AFTER, header_value);
 
         assert_eq!(retry_after_seconds_from_headers_at(&headers, now), Some(9));
+        Ok(())
     }
 
     #[test]
-    fn retry_after_header_past_http_date_retries_immediately() {
+    fn retry_after_header_past_http_date_retries_immediately() -> TestResult {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let retry_at = now - Duration::from_secs(9);
         let retry_after = httpdate::fmt_http_date(retry_at);
         let mut headers = HeaderMap::new();
-        let header_value = match HeaderValue::from_str(&retry_after) {
-            Ok(value) => value,
-            Err(_) => return,
-        };
+        let header_value = HeaderValue::from_str(&retry_after)?;
         headers.insert(RETRY_AFTER, header_value);
 
         assert_eq!(retry_after_seconds_from_headers_at(&headers, now), Some(0));
+        Ok(())
     }
 
     #[test]
@@ -1221,27 +1218,16 @@ mod tests {
     }
 
     #[test]
-    fn builds_multipart_body_with_binary_file() {
-        let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
-        assert!(file_result.is_ok());
-        let file = match file_result {
-            Ok(value) => value,
-            Err(_) => return,
-        };
-        let payload_result =
-            build_multipart_payload(&[("chat_id".to_owned(), "1".to_owned())], "photo", &file);
-        assert!(payload_result.is_ok());
-        let payload = match payload_result {
-            Ok(value) => value,
-            Err(_) => return,
-        };
+    fn builds_multipart_body_with_binary_file() -> TestResult {
+        let file = UploadFile::from_bytes("hello.txt", b"abc123".to_vec())?;
+        let payload =
+            build_multipart_payload(&[("chat_id".to_owned(), "1".to_owned())], "photo", &file)?;
         let content_length = payload.content_length();
         let content_type = payload.content_type().to_owned();
 
         let mut reader = payload.into_reader();
         let mut body = Vec::new();
-        let read_result = reader.read_to_end(&mut body);
-        assert!(read_result.is_ok());
+        reader.read_to_end(&mut body)?;
 
         let text = String::from_utf8_lossy(&body);
         assert!(content_type.starts_with("multipart/form-data; boundary="));
@@ -1249,10 +1235,26 @@ mod tests {
         assert!(text.contains("name=\"chat_id\""));
         assert!(text.contains("name=\"photo\"; filename=\"hello.txt\""));
         assert!(text.contains("abc123"));
+        Ok(())
     }
 
     #[test]
-    fn builds_multipart_body_with_multiple_files() -> Result<(), Box<dyn std::error::Error>> {
+    fn multipart_content_length_overflow_is_validation_error() {
+        let mut chunks = Vec::new();
+        let mut content_length = usize::MAX;
+        let result = push_chunk(
+            &mut chunks,
+            &mut content_length,
+            MultipartChunk::Owned(vec![0]),
+        );
+
+        assert!(matches!(result, Err(Error::InvalidRequest { .. })));
+        assert!(chunks.is_empty());
+        assert_eq!(content_length, usize::MAX);
+    }
+
+    #[test]
+    fn builds_multipart_body_with_multiple_files() -> TestResult {
         let photo = UploadFile::from_bytes("photo.jpg", b"photo-data".to_vec())?;
         let video = UploadFile::from_bytes("video.mp4", b"video-data".to_vec())?;
         let payload = build_multipart_payload_many(
@@ -1281,13 +1283,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multipart_control_chars_in_header_values() {
-        let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
-        assert!(file_result.is_ok());
-        let file = match file_result {
-            Ok(value) => value,
-            Err(_) => return,
-        };
+    fn rejects_multipart_control_chars_in_header_values() -> TestResult {
+        let file = UploadFile::from_bytes("hello.txt", b"abc123".to_vec())?;
 
         assert!(
             build_multipart_payload(
@@ -1305,16 +1302,12 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]
-    fn rejects_ambiguous_multipart_file_field_names() {
-        let file_result = UploadFile::from_bytes("hello.txt", b"abc123".to_vec());
-        assert!(file_result.is_ok());
-        let file = match file_result {
-            Ok(value) => value,
-            Err(_) => return,
-        };
+    fn rejects_ambiguous_multipart_file_field_names() -> TestResult {
+        let file = UploadFile::from_bytes("hello.txt", b"abc123".to_vec())?;
 
         assert!(
             build_multipart_payload_many(
@@ -1351,11 +1344,11 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
     }
 
     #[test]
-    fn detects_multipart_boundary_collisions_with_payload() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn detects_multipart_boundary_collisions_with_payload() -> TestResult {
         let safe_file = UploadFile::from_bytes("hello.txt", b"abc123".to_vec())?;
         assert!(!multipart_boundary_conflicts(
             "needle",

@@ -8,11 +8,44 @@ pub enum StateTransition<S> {
     Clear,
 }
 
+/// Identity used by [`ChatSession`] to share per-chat transition locks.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionLockScope(usize);
+
+impl SessionLockScope {
+    /// Builds a scope from the address of a stable in-process value.
+    pub fn from_ref<T>(value: &T) -> Self
+    where
+        T: Sized,
+    {
+        Self((value as *const T).cast::<()>() as usize)
+    }
+
+    /// Builds a scope from the allocation identity of a shared [`Arc`].
+    pub fn from_arc<T>(value: &Arc<T>) -> Self
+    where
+        T: Sized,
+    {
+        Self(Arc::as_ptr(value).cast::<()>() as usize)
+    }
+}
+
 /// Abstract async session-state store.
 pub trait SessionStore<S>: Send + Sync + 'static
 where
     S: Clone + Send + Sync + 'static,
 {
+    /// Returns the scope used to serialize chat-scoped load-modify-save transitions.
+    ///
+    /// Stores that can identify shared backing state across clones or independently-created
+    /// handles should override this and return a stable identity for that shared state.
+    fn session_lock_scope(&self) -> SessionLockScope
+    where
+        Self: Sized,
+    {
+        SessionLockScope::from_ref(self)
+    }
+
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>>;
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()>;
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()>;
@@ -61,6 +94,10 @@ impl<S> SessionStore<S> for InMemorySessionStore<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    fn session_lock_scope(&self) -> SessionLockScope {
+        SessionLockScope::from_arc(&self.inner)
+    }
+
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
         Box::pin(async move {
             let guard = self.inner.read().await;
@@ -91,8 +128,12 @@ where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     path: PathBuf,
-    inner: Arc<RwLock<HashMap<i64, S>>>,
-    persist_lock: Arc<Mutex<()>>,
+    locks: Arc<JsonFileSessionLocks>,
+    _state: std::marker::PhantomData<S>,
+}
+
+struct JsonFileSessionLocks {
+    persist: Mutex<()>,
 }
 
 impl<S> Clone for JsonFileSessionStore<S>
@@ -102,8 +143,8 @@ where
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
-            inner: Arc::clone(&self.inner),
-            persist_lock: Arc::clone(&self.persist_lock),
+            locks: Arc::clone(&self.locks),
+            _state: std::marker::PhantomData,
         }
     }
 }
@@ -113,13 +154,13 @@ where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        validate_file_storage_target(&path, "session store")?;
-        let initial = load_session_snapshot::<S>(&path)?;
+        let path = normalize_file_storage_target(path.as_ref(), "session store")?;
+        let locks = json_file_session_locks(&path)?;
+        load_session_snapshot::<S>(&path)?;
         Ok(Self {
             path,
-            inner: Arc::new(RwLock::new(initial)),
-            persist_lock: Arc::new(Mutex::new(())),
+            locks,
+            _state: std::marker::PhantomData,
         })
     }
 
@@ -132,62 +173,97 @@ impl<S> SessionStore<S> for JsonFileSessionStore<S>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
+    fn session_lock_scope(&self) -> SessionLockScope {
+        SessionLockScope::from_arc(&self.locks)
+    }
+
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
         Box::pin(async move {
-            let guard = self.inner.read().await;
-            Ok(guard.get(&chat_id).cloned())
+            let _persist_guard = self.locks.persist.lock().await;
+            let snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
+            Ok(snapshot.get(&chat_id).cloned())
         })
     }
 
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
         Box::pin(async move {
-            let _persist_guard = self.persist_lock.lock().await;
-            let mut snapshot = {
-                let guard = self.inner.read().await;
-                guard.clone()
-            };
+            let _persist_guard = self.locks.persist.lock().await;
+            let mut snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
             snapshot.insert(chat_id, state);
-            persist_session_snapshot_async(self.path.clone(), snapshot.clone()).await?;
-            let mut guard = self.inner.write().await;
-            *guard = snapshot;
+            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
             Ok(())
         })
     }
 
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
         Box::pin(async move {
-            let _persist_guard = self.persist_lock.lock().await;
-            let mut snapshot = {
-                let guard = self.inner.read().await;
-                guard.clone()
-            };
+            let _persist_guard = self.locks.persist.lock().await;
+            let mut snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
             snapshot.remove(&chat_id);
-            persist_session_snapshot_async(self.path.clone(), snapshot.clone()).await?;
-            let mut guard = self.inner.write().await;
-            *guard = snapshot;
+            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
             Ok(())
         })
     }
+}
+
+type JsonFileSessionLockRegistry =
+    std::sync::Mutex<HashMap<PathBuf, std::sync::Weak<JsonFileSessionLocks>>>;
+
+fn json_file_session_lock_registry() -> &'static JsonFileSessionLockRegistry {
+    static REGISTRY: std::sync::OnceLock<JsonFileSessionLockRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn json_file_session_locks(path: &Path) -> Result<Arc<JsonFileSessionLocks>> {
+    let key = canonical_file_storage_path(path, "session store")?;
+    let mut registry = json_file_session_lock_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(locks) = registry.get(&key).and_then(std::sync::Weak::upgrade) {
+        return Ok(locks);
+    }
+
+    registry.retain(|_, locks| locks.strong_count() > 0);
+    let locks = Arc::new(JsonFileSessionLocks {
+        persist: Mutex::new(()),
+    });
+    registry.insert(key, Arc::downgrade(&locks));
+    Ok(locks)
+}
+
+#[cfg(any(feature = "redis-session", feature = "postgres-session"))]
+type UnitSessionLockRegistry<K> = std::sync::Mutex<HashMap<K, std::sync::Weak<()>>>;
+
+#[cfg(any(feature = "redis-session", feature = "postgres-session"))]
+fn shared_unit_session_lock_scope<K>(
+    registry: &'static UnitSessionLockRegistry<K>,
+    key: K,
+) -> Arc<()>
+where
+    K: Eq + std::hash::Hash,
+{
+    let mut registry = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(scope) = registry.get(&key).and_then(std::sync::Weak::upgrade) {
+        return scope;
+    }
+
+    registry.retain(|_, scope| scope.strong_count() > 0);
+    let scope = Arc::new(());
+    registry.insert(key, Arc::downgrade(&scope));
+    scope
 }
 
 fn load_session_snapshot<S>(path: &Path) -> Result<HashMap<i64, S>>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
-    if !path.exists() {
+    let Some(raw) = read_optional_storage_file(path, "session store", "json session read")? else {
         return Ok(HashMap::new());
-    }
-
-    let raw = fs::read(path).map_err(|source| {
-        storage_error(
-            "json session read",
-            format!(
-                "failed to read session store `{}`: {source}",
-                path.display()
-            ),
-            true,
-        )
-    })?;
+    };
 
     if raw.is_empty() {
         return Ok(HashMap::new());
@@ -203,6 +279,13 @@ where
             false,
         )
     })
+}
+
+async fn load_session_snapshot_async<S>(path: PathBuf) -> Result<HashMap<i64, S>>
+where
+    S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+{
+    run_blocking_io(move || load_session_snapshot(path.as_path())).await
 }
 
 fn persist_session_snapshot<S>(path: &Path, snapshot: &HashMap<i64, S>) -> Result<()>
@@ -230,6 +313,7 @@ where
 {
     client: redis::Client,
     namespace: String,
+    lock_scope: Arc<()>,
     _state: std::marker::PhantomData<S>,
 }
 
@@ -242,6 +326,7 @@ where
         Self {
             client: self.client.clone(),
             namespace: self.namespace.clone(),
+            lock_scope: Arc::clone(&self.lock_scope),
             _state: std::marker::PhantomData,
         }
     }
@@ -262,10 +347,12 @@ where
                 crate::util::redact_url_credentials(redis_url)
             ))
         })?;
+        let lock_scope = redis_session_lock_scope(client.get_connection_info(), &namespace);
 
         Ok(Self {
             client,
             namespace,
+            lock_scope,
             _state: std::marker::PhantomData,
         })
     }
@@ -283,6 +370,48 @@ where
             .get_multiplexed_async_connection()
             .await
             .map_err(|source| storage_error("redis connect", source.to_string(), true))
+    }
+}
+
+#[cfg(feature = "redis-session")]
+#[derive(Eq, Hash, PartialEq)]
+struct RedisSessionLockKey {
+    addr: Box<str>,
+    db: i64,
+    namespace: Box<str>,
+}
+
+#[cfg(feature = "redis-session")]
+fn redis_session_lock_registry() -> &'static UnitSessionLockRegistry<RedisSessionLockKey> {
+    static REGISTRY: std::sync::OnceLock<UnitSessionLockRegistry<RedisSessionLockKey>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "redis-session")]
+fn redis_session_lock_scope(connection_info: &redis::ConnectionInfo, namespace: &str) -> Arc<()> {
+    shared_unit_session_lock_scope(
+        redis_session_lock_registry(),
+        RedisSessionLockKey {
+            addr: redis_connection_addr_key(connection_info.addr()).into(),
+            db: connection_info.redis_settings().db(),
+            namespace: namespace.into(),
+        },
+    )
+}
+
+#[cfg(feature = "redis-session")]
+fn redis_connection_addr_key(addr: &redis::ConnectionAddr) -> String {
+    match addr {
+        redis::ConnectionAddr::Tcp(host, port) => format!("tcp://{host}:{port}"),
+        redis::ConnectionAddr::TcpTls {
+            host,
+            port,
+            insecure,
+            ..
+        } => format!("rediss://{host}:{port}?insecure={insecure}"),
+        redis::ConnectionAddr::Unix(path) => format!("unix://{}", path.display()),
+        _ => addr.to_string(),
     }
 }
 
@@ -307,6 +436,10 @@ impl<S> SessionStore<S> for RedisSessionStore<S>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
+    fn session_lock_scope(&self) -> SessionLockScope {
+        SessionLockScope::from_arc(&self.lock_scope)
+    }
+
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
         Box::pin(async move {
             let key = self.session_key(chat_id);
@@ -376,6 +509,7 @@ where
 {
     pool: sqlx::PgPool,
     table: String,
+    lock_scope: Arc<()>,
     _state: std::marker::PhantomData<S>,
 }
 
@@ -388,6 +522,7 @@ where
         Self {
             pool: self.pool.clone(),
             table: self.table.clone(),
+            lock_scope: Arc::clone(&self.lock_scope),
             _state: std::marker::PhantomData,
         }
     }
@@ -401,9 +536,18 @@ where
     pub async fn connect(database_url: &str, table: impl Into<String>) -> Result<Self> {
         let table = table.into();
         validate_sql_identifier(&table)?;
+        let options = database_url
+            .parse::<sqlx::postgres::PgConnectOptions>()
+            .map_err(|source| {
+                configuration_error(format!(
+                    "invalid postgres database URL `{}`: {source}",
+                    crate::util::redact_url_credentials(database_url)
+                ))
+            })?;
+        let lock_scope = postgres_session_lock_scope(&options, &table);
 
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect(database_url)
+            .connect_with(options)
             .await
             .map_err(|source| {
                 storage_error(
@@ -416,13 +560,20 @@ where
                 )
             })?;
 
-        Self::with_pool(pool, table).await
+        Self::with_validated_pool(pool, table, lock_scope).await
     }
 
     pub async fn with_pool(pool: sqlx::PgPool, table: impl Into<String>) -> Result<Self> {
         let table = table.into();
         validate_sql_identifier(&table)?;
+        Self::with_validated_pool(pool, table, Arc::new(())).await
+    }
 
+    async fn with_validated_pool(
+        pool: sqlx::PgPool,
+        table: String,
+        lock_scope: Arc<()>,
+    ) -> Result<Self> {
         let table_sql = quote_sql_identifier(&table);
         let create = format!(
             "CREATE TABLE IF NOT EXISTS {table_sql} (chat_id BIGINT PRIMARY KEY, state JSONB NOT NULL)"
@@ -441,6 +592,7 @@ where
         Ok(Self {
             pool,
             table,
+            lock_scope,
             _state: std::marker::PhantomData,
         })
     }
@@ -459,6 +611,10 @@ impl<S> SessionStore<S> for PostgresSessionStore<S>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
+    fn session_lock_scope(&self) -> SessionLockScope {
+        SessionLockScope::from_arc(&self.lock_scope)
+    }
+
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
         Box::pin(async move {
             use sqlx::Row as _;
@@ -536,6 +692,49 @@ where
                 })?;
             Ok(())
         })
+    }
+}
+
+#[cfg(feature = "postgres-session")]
+#[derive(Eq, Hash, PartialEq)]
+struct PostgresSessionLockKey {
+    endpoint: Box<str>,
+    username: Box<str>,
+    database: Box<str>,
+    session_options: Box<str>,
+    table: Box<str>,
+}
+
+#[cfg(feature = "postgres-session")]
+fn postgres_session_lock_registry() -> &'static UnitSessionLockRegistry<PostgresSessionLockKey> {
+    static REGISTRY: std::sync::OnceLock<UnitSessionLockRegistry<PostgresSessionLockKey>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "postgres-session")]
+fn postgres_session_lock_scope(options: &sqlx::postgres::PgConnectOptions, table: &str) -> Arc<()> {
+    let database = options
+        .get_database()
+        .unwrap_or_else(|| options.get_username());
+    shared_unit_session_lock_scope(
+        postgres_session_lock_registry(),
+        PostgresSessionLockKey {
+            endpoint: postgres_connection_endpoint_key(options).into(),
+            username: options.get_username().into(),
+            database: database.into(),
+            session_options: options.get_options().unwrap_or_default().into(),
+            table: table.into(),
+        },
+    )
+}
+
+#[cfg(feature = "postgres-session")]
+fn postgres_connection_endpoint_key(options: &sqlx::postgres::PgConnectOptions) -> String {
+    if let Some(socket) = options.get_socket() {
+        format!("unix://{}:{}", socket.display(), options.get_port())
+    } else {
+        format!("tcp://{}:{}", options.get_host(), options.get_port())
     }
 }
 
@@ -658,20 +857,20 @@ struct ChatSessionLocks {
 
 type ChatSessionLockMap = std::sync::Mutex<HashMap<i64, Arc<Mutex<()>>>>;
 type ChatSessionLockRegistry =
-    std::sync::Mutex<HashMap<usize, std::sync::Weak<ChatSessionLockMap>>>;
+    std::sync::Mutex<HashMap<SessionLockScope, std::sync::Weak<ChatSessionLockMap>>>;
 
 fn chat_session_lock_registry() -> &'static ChatSessionLockRegistry {
     static REGISTRY: std::sync::OnceLock<ChatSessionLockRegistry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-fn chat_session_store_key<Store>(store: &Arc<Store>) -> usize {
-    Arc::as_ptr(store) as *const () as usize
-}
-
 impl ChatSessionLocks {
-    fn for_store<Store>(store: &Arc<Store>) -> Self {
-        let key = chat_session_store_key(store);
+    fn for_store<S, Store>(store: &Arc<Store>) -> Self
+    where
+        S: Clone + Send + Sync + 'static,
+        Store: SessionStore<S>,
+    {
+        let key = store.session_lock_scope();
         let mut registry = chat_session_lock_registry()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -764,7 +963,7 @@ where
 {
     pub fn new(store: Store) -> Self {
         let store = Arc::new(store);
-        let locks = ChatSessionLocks::for_store(&store);
+        let locks = ChatSessionLocks::for_store::<S, Store>(&store);
         Self {
             store,
             locks,
@@ -773,7 +972,7 @@ where
     }
 
     pub fn from_shared(store: Arc<Store>) -> Self {
-        let locks = ChatSessionLocks::for_store(&store);
+        let locks = ChatSessionLocks::for_store::<S, Store>(&store);
         Self {
             store,
             locks,
@@ -842,6 +1041,20 @@ where
 mod chat_session_tests {
     use super::*;
 
+    fn unique_session_path(prefix: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!("{prefix}-{timestamp}.json"))
+    }
+
+    fn unique_session_root(prefix: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!("{prefix}-{}-{timestamp}", std::process::id()))
+    }
+
     #[derive(Clone)]
     struct FailingLoadStore;
 
@@ -896,6 +1109,160 @@ mod chat_session_tests {
         Ok(())
     }
 
+    #[test]
+    fn chat_session_new_reuses_lock_scope_for_cloned_memory_store() {
+        let store = InMemorySessionStore::<String>::new();
+        let session_a = ChatSession::new(store.clone());
+        let session_b = ChatSession::new(store);
+
+        assert!(Arc::ptr_eq(&session_a.locks.inner, &session_b.locks.inner));
+    }
+
+    #[test]
+    fn chat_session_new_reuses_lock_scope_for_same_json_file_path() -> Result<()> {
+        let path = unique_session_path("tele-session-lock-scope");
+        let store_a = JsonFileSessionStore::<String>::open(&path)?;
+        let store_b = JsonFileSessionStore::<String>::open(&path)?;
+        let session_a = ChatSession::new(store_a);
+        let session_b = ChatSession::new(store_b);
+
+        assert!(Arc::ptr_eq(&session_a.locks.inner, &session_b.locks.inner));
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[cfg(feature = "redis-session")]
+    #[test]
+    fn chat_session_new_reuses_lock_scope_for_same_redis_backend() -> Result<()> {
+        let store_a =
+            RedisSessionStore::<String>::new("redis://writer:secret@127.0.0.1:6379/0", "tele")?;
+        let store_b =
+            RedisSessionStore::<String>::new("redis://reader:other@127.0.0.1:6379/0", "tele")?;
+        let session_a = ChatSession::new(store_a);
+        let session_b = ChatSession::new(store_b);
+
+        assert!(Arc::ptr_eq(&session_a.locks.inner, &session_b.locks.inner));
+
+        let other = RedisSessionStore::<String>::new("redis://127.0.0.1:6379/0", "other")?;
+        let other_session = ChatSession::new(other);
+        assert!(!Arc::ptr_eq(
+            &session_a.locks.inner,
+            &other_session.locks.inner
+        ));
+        Ok(())
+    }
+
+    #[cfg(feature = "postgres-session")]
+    #[test]
+    fn postgres_session_lock_scope_reuses_same_connect_target() -> Result<()> {
+        let options_a = "postgres://tele:secret@localhost/tele"
+            .parse::<sqlx::postgres::PgConnectOptions>()
+            .map_err(|source| configuration_error(format!("failed to parse test URL: {source}")))?;
+        let options_b = "postgres://tele:other@localhost/tele"
+            .parse::<sqlx::postgres::PgConnectOptions>()
+            .map_err(|source| configuration_error(format!("failed to parse test URL: {source}")))?;
+        let scope_a = postgres_session_lock_scope(&options_a, "tele_sessions");
+        let scope_b = postgres_session_lock_scope(&options_b, "tele_sessions");
+        let other = postgres_session_lock_scope(&options_b, "other_sessions");
+
+        assert!(Arc::ptr_eq(&scope_a, &scope_b));
+        assert!(!Arc::ptr_eq(&scope_a, &other));
+        Ok(())
+    }
+
+    #[test]
+    fn json_file_session_store_normalizes_storage_path_on_open() -> Result<()> {
+        let root = unique_session_root("tele-session-normalized-path");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).map_err(|source| {
+            storage_error(
+                "test session mkdir",
+                format!("failed to create session test directory: {source}"),
+                true,
+            )
+        })?;
+        let path = nested.join("..").join("session.json");
+        let expected = root.canonicalize().map_err(|source| {
+            storage_error(
+                "test session canonicalize",
+                format!("failed to canonicalize session test root: {source}"),
+                true,
+            )
+        })?;
+
+        let store = JsonFileSessionStore::<String>::open(&path)?;
+
+        assert_eq!(store.path(), expected.join("session.json").as_path());
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn json_file_session_store_reads_latest_snapshot_across_instances() -> Result<()> {
+        let path = unique_session_path("tele-session-shared-file");
+        let store_a = JsonFileSessionStore::<String>::open(&path)?;
+        let store_b = JsonFileSessionStore::<String>::open(&path)?;
+
+        store_a.save(1, "alpha".to_owned()).await?;
+        assert_eq!(store_b.load(1).await?, Some("alpha".to_owned()));
+
+        store_b.save(2, "beta".to_owned()).await?;
+        assert_eq!(store_a.load(2).await?, Some("beta".to_owned()));
+
+        let snapshot = load_session_snapshot::<String>(&path)?;
+        assert_eq!(snapshot.get(&1).map(String::as_str), Some("alpha"));
+        assert_eq!(snapshot.get(&2).map(String::as_str), Some("beta"));
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn json_file_session_store_rejects_runtime_symlink_replacement() -> Result<()> {
+        let path = unique_session_path("tele-session-runtime-symlink");
+        let target = path.with_extension("target.json");
+        let store = JsonFileSessionStore::<String>::open(&path)?;
+        store.save(1, "committed".to_owned()).await?;
+
+        fs::remove_file(&path).map_err(|source| {
+            storage_error(
+                "test session cleanup",
+                format!(
+                    "failed to remove session file `{}`: {source}",
+                    path.display()
+                ),
+                true,
+            )
+        })?;
+        fs::write(&target, br#"{"1":"hijacked"}"#).map_err(|source| {
+            storage_error(
+                "test session target write",
+                format!(
+                    "failed to write symlink target `{}`: {source}",
+                    target.display()
+                ),
+                true,
+            )
+        })?;
+        std::os::unix::fs::symlink(&target, &path).map_err(|source| {
+            storage_error(
+                "test session symlink",
+                format!(
+                    "failed to create session symlink `{}`: {source}",
+                    path.display()
+                ),
+                true,
+            )
+        })?;
+
+        let loaded = store.load(1).await;
+
+        assert!(matches!(loaded, Err(Error::Storage { .. })));
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(target);
+        Ok(())
+    }
+
     #[derive(Clone, serde::Deserialize)]
     struct FailingSerializeState;
 
@@ -913,10 +1280,7 @@ mod chat_session_tests {
 
     #[tokio::test]
     async fn json_file_session_store_reports_state_encode_failure_as_storage() -> Result<()> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0_u128, |duration| duration.as_nanos());
-        let path = std::env::temp_dir().join(format!("tele-session-encode-{timestamp}.json"));
+        let path = unique_session_path("tele-session-encode");
         let store = JsonFileSessionStore::<FailingSerializeState>::open(&path)?;
 
         let result = store.save(1, FailingSerializeState).await;
