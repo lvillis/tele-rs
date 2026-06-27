@@ -89,6 +89,53 @@ fn join_server(server: TestServer) -> Result<(), DynError> {
 }
 
 #[tokio::test]
+async fn blocking_default_user_agent_does_not_expose_library_name() -> Result<(), DynError> {
+    let response =
+        r#"{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"bot","username":"bot"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getMe",
+        200,
+        response,
+        &["user-agent: TelegramBot\r\n"],
+    )?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+
+    let _ = client.bot().get_me()?;
+    let requests = handle.finish()?;
+    let request = requests.first().ok_or("missing recorded request")?;
+    assert!(!request.contains_case_insensitive("user-agent: tele\r\n"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocking_user_agent_override_replaces_generic_default() -> Result<(), DynError> {
+    let response =
+        r#"{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"bot","username":"bot"}}"#;
+    let (base_url, handle) = spawn_server_with_checks(
+        "/bot123:abc/getMe",
+        200,
+        response,
+        &["user-agent: my-bot/1.0\r\n"],
+    )?;
+
+    let client = BlockingClient::builder(base_url)?
+        .bot_token("123:abc")?
+        .user_agent("my-bot/1.0")?
+        .build_blocking()?;
+
+    let _ = client.bot().get_me()?;
+    let requests = handle.finish()?;
+    let request = requests.first().ok_or("missing recorded request")?;
+    assert!(!request.contains_case_insensitive("user-agent: TelegramBot\r\n"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocking_get_me_success() -> Result<(), DynError> {
     let response = r#"{"ok":true,"result":{"id":7,"is_bot":true,"first_name":"tele","username":"blocking_bot"}}"#;
     let (base_url, handle) = spawn_server("/bot123:abc/getMe", 200, response)?;

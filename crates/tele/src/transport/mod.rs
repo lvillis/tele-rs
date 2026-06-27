@@ -16,7 +16,7 @@ use std::io::Read;
 use bytes::Bytes;
 #[cfg(feature = "_async")]
 use futures_core::Stream;
-use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
+use http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, RETRY_AFTER, USER_AGENT};
 use http::{HeaderMap, StatusCode};
 use reqx::advanced::RateLimitPolicy;
 use reqx::prelude::{RedirectPolicy, RetryPolicy, StatusPolicy};
@@ -34,6 +34,7 @@ use crate::util::{
 };
 
 static LOCAL_REQUEST_ID_SEQ: AtomicU64 = AtomicU64::new(1);
+const DEFAULT_USER_AGENT: &str = "TelegramBot";
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TransportRequestConfig<'a> {
@@ -478,6 +479,10 @@ where
     if let Some(proxy_authorization) = defaults.proxy_authorization.clone() {
         builder = builder.proxy_authorization(proxy_authorization);
     }
+
+    builder = builder
+        .try_default_header(USER_AGENT.as_str(), DEFAULT_USER_AGENT)
+        .map_err(map_reqx_builder_error)?;
 
     for rule in &defaults.no_proxy_rules {
         builder = builder
