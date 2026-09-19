@@ -19,11 +19,15 @@ pub struct BotCommand {
     pub description: String,
     #[serde(flatten, skip_serializing)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_ephemeral: Option<bool>,
 }
 
 impl PartialEq for BotCommand {
     fn eq(&self, other: &Self) -> bool {
-        self.command == other.command && self.description == other.description
+        self.command == other.command
+            && self.description == other.description
+            && self.is_ephemeral.unwrap_or(false) == other.is_ephemeral.unwrap_or(false)
     }
 }
 
@@ -38,6 +42,7 @@ impl BotCommand {
         validate_bot_command_description(&description)?;
 
         Ok(Self {
+            is_ephemeral: None,
             command,
             description,
             extra: BTreeMap::new(),

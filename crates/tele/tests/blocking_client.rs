@@ -1377,7 +1377,7 @@ fn blocking_moderation_notice_for_message_preserves_delivery_context() -> Result
         request
             .reply_parameters
             .as_ref()
-            .map(|parameters| parameters.message_id),
+            .and_then(|parameters| parameters.message_id),
         Some(MessageId(56))
     );
     Ok(())
@@ -1474,5 +1474,38 @@ async fn blocking_build_configuration_error_is_not_mapped_as_transport() -> Resu
     assert!(matches!(error, Error::Configuration { .. }));
     assert_eq!(error.classification(), ErrorClass::Configuration);
     assert!(!error.is_retryable());
+    Ok(())
+}
+
+#[test]
+fn blocking_moderation_rejects_unknown_and_chat_senders() -> Result<(), DynError> {
+    let client = BlockingClient::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build_blocking()?;
+    let moderation = client.app().moderation();
+    for sender_chat in [
+        serde_json::json!({"id": -200, "type": "channel"}),
+        serde_json::json!({"id": -100, "type": "supergroup"}),
+        serde_json::Value::Null,
+    ] {
+        let mut message: tele::types::Message = serde_json::from_value(serde_json::json!({
+            "message_id": 1, "date": 1,
+            "chat": {"id": -100, "type": "supergroup"},
+            "from": {"id": 1087968824, "is_bot": true, "first_name": "compatibility"},
+            "sender_chat": sender_chat
+        }))?;
+        if message.sender_chat.is_none() {
+            message.from = None;
+        }
+        for result in [
+            moderation.ban_author(&message),
+            moderation.ban_author_with(&message, BanMemberOptions::new()),
+            moderation.mute_author(&message),
+            moderation.mute_author_with(&message, RestrictMemberOptions::new()),
+        ] {
+            assert!(matches!(result, Err(tele::Error::InvalidRequest { reason })
+                if reason.contains("requires a user sender")));
+        }
+    }
     Ok(())
 }

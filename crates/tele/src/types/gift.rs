@@ -233,6 +233,12 @@ pub struct UniqueGiftInfo {
     pub next_transfer_date: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entities: Option<Vec<crate::types::message::MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_private: Option<bool>,
 }
 
 /// Regular gift owned by a user or a chat.

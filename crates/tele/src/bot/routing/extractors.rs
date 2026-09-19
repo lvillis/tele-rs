@@ -773,11 +773,21 @@ pub fn extract_chat(update: &Update) -> Option<&Chat> {
         return Some(&boost.chat);
     }
 
+    if let Some(stopped) = &update.stopped_message_generation {
+        return Some(&stopped.chat);
+    }
     extract_chat_join_request(update).map(|request| &request.chat)
 }
 
-/// Returns the actor that caused this update when available.
+/// Returns the user actor that caused this update when available.
+///
+/// Messages sent on behalf of a chat have no user actor, even when their raw
+/// `from` field contains a compatibility user. Callback actors remain the user
+/// who clicked the button, independently of the attached message's sender.
 pub fn extract_actor(update: &Update) -> Option<&User> {
+    if let Some(subscription) = &update.subscription {
+        return Some(&subscription.user);
+    }
     if let Some(connection) = update.business_connection.as_ref() {
         return Some(&connection.user);
     }
@@ -827,25 +837,25 @@ pub fn extract_actor(update: &Update) -> Option<&User> {
         return Some(user);
     }
     if let Some(message) = update.message.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.edited_message.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.channel_post.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.edited_channel_post.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.business_message.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.edited_business_message.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(message) = update.guest_message.as_deref() {
-        return message.from_user();
+        return message.sender_user();
     }
     if let Some(request) = update.chat_join_request.as_ref() {
         return Some(&request.from);
@@ -1106,6 +1116,7 @@ pub fn command_definitions<C: BotCommands>() -> Vec<crate::types::command::BotCo
     C::descriptions()
         .iter()
         .map(|description| crate::types::command::BotCommand {
+            is_ephemeral: None,
             command: description.command.to_owned(),
             description: description.description.to_owned(),
             extra: std::collections::BTreeMap::new(),

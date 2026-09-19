@@ -1,5 +1,5 @@
 {
-  "version": "Bot API 9.6",
+  "version": "Bot API 10.3",
   "generated_from": "https://core.telegram.org/bots/api",
   "all_methods": [
     "getUpdates",
@@ -15,6 +15,7 @@
     "copyMessage",
     "copyMessages",
     "sendPhoto",
+    "sendLivePhoto",
     "sendAudio",
     "sendDocument",
     "sendVideo",
@@ -53,6 +54,8 @@
     "revokeChatInviteLink",
     "approveChatJoinRequest",
     "declineChatJoinRequest",
+    "answerChatJoinRequestQuery",
+    "sendChatJoinRequestWebApp",
     "setChatPhoto",
     "deleteChatPhoto",
     "setChatTitle",
@@ -65,6 +68,7 @@
     "getChatAdministrators",
     "getChatMemberCount",
     "getChatMember",
+    "getUserPersonalChatMessages",
     "setChatStickerSet",
     "deleteChatStickerSet",
     "getForumTopicIconStickers",
@@ -81,10 +85,13 @@
     "unhideGeneralForumTopic",
     "unpinAllGeneralForumTopicMessages",
     "answerCallbackQuery",
+    "answerGuestQuery",
     "getUserChatBoosts",
     "getBusinessConnection",
     "getManagedBotToken",
     "replaceManagedBotToken",
+    "getManagedBotAccessSettings",
+    "setManagedBotAccessSettings",
     "setMyCommands",
     "deleteMyCommands",
     "getMyCommands",
@@ -138,10 +145,17 @@
     "editMessageChecklist",
     "editMessageReplyMarkup",
     "stopPoll",
+    "editEphemeralMessageText",
+    "editEphemeralMessageMedia",
+    "editEphemeralMessageCaption",
+    "editEphemeralMessageReplyMarkup",
     "approveSuggestedPost",
     "declineSuggestedPost",
     "deleteMessage",
     "deleteMessages",
+    "deleteEphemeralMessage",
+    "deleteMessageReaction",
+    "deleteAllMessageReactions",
     "sendSticker",
     "getStickerSet",
     "getCustomEmojiStickers",
@@ -158,6 +172,8 @@
     "setStickerSetThumbnail",
     "setCustomEmojiStickerSetThumbnail",
     "deleteStickerSet",
+    "sendRichMessage",
+    "sendRichMessageDraft",
     "answerInlineQuery",
     "sendInvoice",
     "createInvoiceLink",
@@ -182,7 +198,7 @@
     {
       "fn_name": "forward_messages",
       "method": "forwardMessages",
-      "return_desc": "",
+      "return_desc": "an Array of MessageId of the sent messages",
       "params": [
         {
           "name": "chat_id",
@@ -236,9 +252,9 @@
       ]
     },
     {
-      "fn_name": "send_video_note",
-      "method": "sendVideoNote",
-      "return_desc": "",
+      "fn_name": "send_live_photo",
+      "method": "sendLivePhoto",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -267,6 +283,153 @@
           "required": false,
           "type_raw": "Integer",
           "type_rust": "i64"
+        },
+        {
+          "name": "ephemeral_message_parameters",
+          "field_name": "ephemeral_message_parameters",
+          "required": false,
+          "type_raw": "EphemeralMessageParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "live_photo",
+          "field_name": "live_photo",
+          "required": true,
+          "type_raw": "InputFile or String",
+          "type_rust": "String"
+        },
+        {
+          "name": "photo",
+          "field_name": "photo",
+          "required": true,
+          "type_raw": "InputFile or String",
+          "type_rust": "String"
+        },
+        {
+          "name": "caption",
+          "field_name": "caption",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "parse_mode",
+          "field_name": "parse_mode",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "caption_entities",
+          "field_name": "caption_entities",
+          "required": false,
+          "type_raw": "Array of MessageEntity",
+          "type_rust": "Value"
+        },
+        {
+          "name": "show_caption_above_media",
+          "field_name": "show_caption_above_media",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "has_spoiler",
+          "field_name": "has_spoiler",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "disable_notification",
+          "field_name": "disable_notification",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "protect_content",
+          "field_name": "protect_content",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "allow_paid_broadcast",
+          "field_name": "allow_paid_broadcast",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "message_effect_id",
+          "field_name": "message_effect_id",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "suggested_post_parameters",
+          "field_name": "suggested_post_parameters",
+          "required": false,
+          "type_raw": "SuggestedPostParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_parameters",
+          "field_name": "reply_parameters",
+          "required": false,
+          "type_raw": "ReplyParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup or ReplyKeyboardMarkup or ReplyKeyboardRemove or ForceReply",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "send_video_note",
+      "method": "sendVideoNote",
+      "return_desc": "the sent Message",
+      "params": [
+        {
+          "name": "business_connection_id",
+          "field_name": "business_connection_id",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "message_thread_id",
+          "field_name": "message_thread_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "direct_messages_topic_id",
+          "field_name": "direct_messages_topic_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "ephemeral_message_parameters",
+          "field_name": "ephemeral_message_parameters",
+          "required": false,
+          "type_raw": "EphemeralMessageParameters",
+          "type_rust": "Value"
         },
         {
           "name": "video_note",
@@ -350,7 +513,7 @@
     {
       "fn_name": "send_paid_media",
       "method": "sendPaidMedia",
-      "return_desc": "",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -476,7 +639,7 @@
     {
       "fn_name": "send_checklist",
       "method": "sendChecklist",
-      "return_desc": "",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -489,8 +652,8 @@
           "name": "chat_id",
           "field_name": "chat_id",
           "required": true,
-          "type_raw": "Integer",
-          "type_rust": "i64"
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
         },
         {
           "name": "checklist",
@@ -582,6 +745,20 @@
           "required": false,
           "type_raw": "Array of MessageEntity",
           "type_rust": "Value"
+        },
+        {
+          "name": "can_stop",
+          "field_name": "can_stop",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "keep_on_stop",
+          "field_name": "keep_on_stop",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
         }
       ]
     },
@@ -810,6 +987,48 @@
       ]
     },
     {
+      "fn_name": "answer_chat_join_request_query",
+      "method": "answerChatJoinRequestQuery",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_join_request_query_id",
+          "field_name": "chat_join_request_query_id",
+          "required": true,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "result",
+          "field_name": "result",
+          "required": true,
+          "type_raw": "String",
+          "type_rust": "String"
+        }
+      ]
+    },
+    {
+      "fn_name": "send_chat_join_request_web_app",
+      "method": "sendChatJoinRequestWebApp",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_join_request_query_id",
+          "field_name": "chat_join_request_query_id",
+          "required": true,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "web_app_url",
+          "field_name": "web_app_url",
+          "required": true,
+          "type_raw": "String",
+          "type_rust": "String"
+        }
+      ]
+    },
+    {
       "fn_name": "set_chat_photo",
       "method": "setChatPhoto",
       "return_desc": "True on success",
@@ -827,6 +1046,27 @@
           "required": true,
           "type_raw": "InputFile",
           "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "get_user_personal_chat_messages",
+      "method": "getUserPersonalChatMessages",
+      "return_desc": "an Array of Message objects",
+      "params": [
+        {
+          "name": "user_id",
+          "field_name": "user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "limit",
+          "field_name": "limit",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "i64"
         }
       ]
     },
@@ -1082,6 +1322,27 @@
       ]
     },
     {
+      "fn_name": "answer_guest_query",
+      "method": "answerGuestQuery",
+      "return_desc": "a SentGuestMessage object",
+      "params": [
+        {
+          "name": "guest_query_id",
+          "field_name": "guest_query_id",
+          "required": true,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "result",
+          "field_name": "result",
+          "required": true,
+          "type_raw": "InlineQueryResult",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
       "fn_name": "get_user_chat_boosts",
       "method": "getUserChatBoosts",
       "return_desc": "a UserChatBoosts object",
@@ -1141,6 +1402,48 @@
           "required": true,
           "type_raw": "Integer",
           "type_rust": "UserId"
+        }
+      ]
+    },
+    {
+      "fn_name": "get_managed_bot_access_settings",
+      "method": "getManagedBotAccessSettings",
+      "return_desc": "a BotAccessSettings object on success",
+      "params": [
+        {
+          "name": "user_id",
+          "field_name": "user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        }
+      ]
+    },
+    {
+      "fn_name": "set_managed_bot_access_settings",
+      "method": "setManagedBotAccessSettings",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "user_id",
+          "field_name": "user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "is_access_restricted",
+          "field_name": "is_access_restricted",
+          "required": true,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "added_user_ids",
+          "field_name": "added_user_ids",
+          "required": false,
+          "type_raw": "Array of Integer",
+          "type_rust": "Vec<i64>"
         }
       ]
     },
@@ -2174,7 +2477,7 @@
     {
       "fn_name": "answer_web_app_query",
       "method": "answerWebAppQuery",
-      "return_desc": "",
+      "return_desc": "a SentWebAppMessage object",
       "params": [
         {
           "name": "web_app_query_id",
@@ -2265,7 +2568,7 @@
     {
       "fn_name": "edit_message_media",
       "method": "editMessageMedia",
-      "return_desc": "",
+      "return_desc": "if the edited message is not an inline message, the edited Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -2314,7 +2617,7 @@
     {
       "fn_name": "edit_message_checklist",
       "method": "editMessageChecklist",
-      "return_desc": "",
+      "return_desc": "the edited Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -2327,8 +2630,8 @@
           "name": "chat_id",
           "field_name": "chat_id",
           "required": true,
-          "type_raw": "Integer",
-          "type_rust": "i64"
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
         },
         {
           "name": "message_id",
@@ -2343,6 +2646,216 @@
           "required": true,
           "type_raw": "InputChecklist",
           "type_rust": "Value"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "edit_ephemeral_message_text",
+      "method": "editEphemeralMessageText",
+      "return_desc": "True",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "receiver_user_id",
+          "field_name": "receiver_user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "ephemeral_message_id",
+          "field_name": "ephemeral_message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
+        },
+        {
+          "name": "text",
+          "field_name": "text",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "parse_mode",
+          "field_name": "parse_mode",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "entities",
+          "field_name": "entities",
+          "required": false,
+          "type_raw": "Array of MessageEntity",
+          "type_rust": "Value"
+        },
+        {
+          "name": "rich_message",
+          "field_name": "rich_message",
+          "required": false,
+          "type_raw": "InputRichMessage",
+          "type_rust": "Value"
+        },
+        {
+          "name": "link_preview_options",
+          "field_name": "link_preview_options",
+          "required": false,
+          "type_raw": "LinkPreviewOptions",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "edit_ephemeral_message_media",
+      "method": "editEphemeralMessageMedia",
+      "return_desc": "True",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "receiver_user_id",
+          "field_name": "receiver_user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "ephemeral_message_id",
+          "field_name": "ephemeral_message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
+        },
+        {
+          "name": "media",
+          "field_name": "media",
+          "required": true,
+          "type_raw": "InputMedia",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "edit_ephemeral_message_caption",
+      "method": "editEphemeralMessageCaption",
+      "return_desc": "True",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "receiver_user_id",
+          "field_name": "receiver_user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "ephemeral_message_id",
+          "field_name": "ephemeral_message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
+        },
+        {
+          "name": "caption",
+          "field_name": "caption",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "parse_mode",
+          "field_name": "parse_mode",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "caption_entities",
+          "field_name": "caption_entities",
+          "required": false,
+          "type_raw": "Array of MessageEntity",
+          "type_rust": "Value"
+        },
+        {
+          "name": "show_caption_above_media",
+          "field_name": "show_caption_above_media",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "edit_ephemeral_message_reply_markup",
+      "method": "editEphemeralMessageReplyMarkup",
+      "return_desc": "True",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "receiver_user_id",
+          "field_name": "receiver_user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "ephemeral_message_id",
+          "field_name": "ephemeral_message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
         },
         {
           "name": "reply_markup",
@@ -2410,9 +2923,100 @@
       ]
     },
     {
+      "fn_name": "delete_ephemeral_message",
+      "method": "deleteEphemeralMessage",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "receiver_user_id",
+          "field_name": "receiver_user_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "ephemeral_message_id",
+          "field_name": "ephemeral_message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
+        }
+      ]
+    },
+    {
+      "fn_name": "delete_message_reaction",
+      "method": "deleteMessageReaction",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "message_id",
+          "field_name": "message_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "MessageId"
+        },
+        {
+          "name": "user_id",
+          "field_name": "user_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "actor_chat_id",
+          "field_name": "actor_chat_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        }
+      ]
+    },
+    {
+      "fn_name": "delete_all_message_reactions",
+      "method": "deleteAllMessageReactions",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "user_id",
+          "field_name": "user_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "UserId"
+        },
+        {
+          "name": "actor_chat_id",
+          "field_name": "actor_chat_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        }
+      ]
+    },
+    {
       "fn_name": "send_sticker",
       "method": "sendSticker",
-      "return_desc": "",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -2441,6 +3045,13 @@
           "required": false,
           "type_raw": "Integer",
           "type_rust": "i64"
+        },
+        {
+          "name": "ephemeral_message_parameters",
+          "field_name": "ephemeral_message_parameters",
+          "required": false,
+          "type_raw": "EphemeralMessageParameters",
+          "type_rust": "Value"
         },
         {
           "name": "sticker",
@@ -2510,7 +3121,7 @@
     {
       "fn_name": "get_sticker_set",
       "method": "getStickerSet",
-      "return_desc": "",
+      "return_desc": "a StickerSet object",
       "params": [
         {
           "name": "name",
@@ -2865,9 +3476,156 @@
       ]
     },
     {
+      "fn_name": "send_rich_message",
+      "method": "sendRichMessage",
+      "return_desc": "the sent Message",
+      "params": [
+        {
+          "name": "business_connection_id",
+          "field_name": "business_connection_id",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
+        },
+        {
+          "name": "message_thread_id",
+          "field_name": "message_thread_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "direct_messages_topic_id",
+          "field_name": "direct_messages_topic_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "ephemeral_message_parameters",
+          "field_name": "ephemeral_message_parameters",
+          "required": false,
+          "type_raw": "EphemeralMessageParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "rich_message",
+          "field_name": "rich_message",
+          "required": true,
+          "type_raw": "InputRichMessage",
+          "type_rust": "Value"
+        },
+        {
+          "name": "disable_notification",
+          "field_name": "disable_notification",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "protect_content",
+          "field_name": "protect_content",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "allow_paid_broadcast",
+          "field_name": "allow_paid_broadcast",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "message_effect_id",
+          "field_name": "message_effect_id",
+          "required": false,
+          "type_raw": "String",
+          "type_rust": "String"
+        },
+        {
+          "name": "suggested_post_parameters",
+          "field_name": "suggested_post_parameters",
+          "required": false,
+          "type_raw": "SuggestedPostParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_parameters",
+          "field_name": "reply_parameters",
+          "required": false,
+          "type_raw": "ReplyParameters",
+          "type_rust": "Value"
+        },
+        {
+          "name": "reply_markup",
+          "field_name": "reply_markup",
+          "required": false,
+          "type_raw": "InlineKeyboardMarkup or ReplyKeyboardMarkup or ReplyKeyboardRemove or ForceReply",
+          "type_rust": "Value"
+        }
+      ]
+    },
+    {
+      "fn_name": "send_rich_message_draft",
+      "method": "sendRichMessageDraft",
+      "return_desc": "True on success",
+      "params": [
+        {
+          "name": "chat_id",
+          "field_name": "chat_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "message_thread_id",
+          "field_name": "message_thread_id",
+          "required": false,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "draft_id",
+          "field_name": "draft_id",
+          "required": true,
+          "type_raw": "Integer",
+          "type_rust": "i64"
+        },
+        {
+          "name": "rich_message",
+          "field_name": "rich_message",
+          "required": true,
+          "type_raw": "InputRichMessage",
+          "type_rust": "Value"
+        },
+        {
+          "name": "can_stop",
+          "field_name": "can_stop",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        },
+        {
+          "name": "keep_on_stop",
+          "field_name": "keep_on_stop",
+          "required": false,
+          "type_raw": "Boolean",
+          "type_rust": "bool"
+        }
+      ]
+    },
+    {
       "fn_name": "send_invoice",
       "method": "sendInvoice",
-      "return_desc": "",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "chat_id",
@@ -3252,7 +4010,7 @@
     {
       "fn_name": "answer_shipping_query",
       "method": "answerShippingQuery",
-      "return_desc": "",
+      "return_desc": "True",
       "params": [
         {
           "name": "shipping_query_id",
@@ -3287,7 +4045,7 @@
     {
       "fn_name": "answer_pre_checkout_query",
       "method": "answerPreCheckoutQuery",
-      "return_desc": "",
+      "return_desc": "True",
       "params": [
         {
           "name": "pre_checkout_query_id",
@@ -3412,7 +4170,7 @@
     {
       "fn_name": "send_game",
       "method": "sendGame",
-      "return_desc": "",
+      "return_desc": "the sent Message",
       "params": [
         {
           "name": "business_connection_id",
@@ -3425,8 +4183,8 @@
           "name": "chat_id",
           "field_name": "chat_id",
           "required": true,
-          "type_raw": "Integer",
-          "type_rust": "i64"
+          "type_raw": "Integer or String",
+          "type_rust": "ChatId"
         },
         {
           "name": "message_thread_id",

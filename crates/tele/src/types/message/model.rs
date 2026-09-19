@@ -261,6 +261,18 @@ pub struct Message {
     pub reply_markup: Option<Box<ReplyMarkup>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver_user: Option<User>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rich_message: Option<crate::types::rich::RichMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_chat_added: Option<crate::types::community::CommunityChatAdded>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_chat_joined: Option<crate::types::community::CommunityChatJoined>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_chat_removed: Option<crate::types::community::CommunityChatRemoved>,
 }
 
 fn is_unmodeled_message_content_key(key: &str) -> bool {
@@ -272,8 +284,24 @@ impl Message {
         &self.chat
     }
 
+    /// Returns the raw Telegram `from` field, including compatibility senders.
+    ///
+    /// Use [`Self::sender_user`] when identifying a user for moderation or authorization.
     pub fn from_user(&self) -> Option<&User> {
         self.from.as_ref()
+    }
+
+    /// Returns the user sender only when the message was not sent on behalf of a chat.
+    ///
+    /// When `sender_chat` is present, Telegram may also populate `from` with a
+    /// compatibility user. That user does not identify the person behind the message.
+    /// This returns `None` for such messages, including anonymous administrator posts.
+    pub fn sender_user(&self) -> Option<&User> {
+        if self.sender_chat.is_some() {
+            None
+        } else {
+            self.from.as_ref()
+        }
     }
 
     pub fn sender_chat(&self) -> Option<&Chat> {
@@ -352,6 +380,10 @@ impl Message {
             || self.contact.is_some()
             || self.dice.is_some()
             || self.document.is_some()
+            || self.rich_message.is_some()
+            || self.community_chat_added.is_some()
+            || self.community_chat_joined.is_some()
+            || self.community_chat_removed.is_some()
             || self.live_photo.is_some()
             || self.location.is_some()
             || self.photo.is_some()
@@ -483,6 +515,10 @@ impl Message {
             MessageKind::Contact => self.contact.is_some(),
             MessageKind::Dice => self.dice.is_some(),
             MessageKind::Document => self.document.is_some(),
+            MessageKind::RichMessage => self.rich_message.is_some(),
+            MessageKind::CommunityChatAdded => self.community_chat_added.is_some(),
+            MessageKind::CommunityChatJoined => self.community_chat_joined.is_some(),
+            MessageKind::CommunityChatRemoved => self.community_chat_removed.is_some(),
             MessageKind::LivePhoto => self.live_photo.is_some(),
             MessageKind::Location => self.location.is_some(),
             MessageKind::Photo => self.photo.is_some(),

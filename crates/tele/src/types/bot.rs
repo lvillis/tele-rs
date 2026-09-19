@@ -10,42 +10,44 @@ use crate::{Error, Result};
 const MAX_USER_PROFILE_PHOTOS_LIMIT: u8 = 100;
 
 /// Telegram user object.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct User {
     pub id: UserId,
     pub is_bot: bool,
     pub first_name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_code: Option<String>,
     #[serde(default)]
     pub is_premium: bool,
     #[serde(default)]
     pub added_to_attachment_menu: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_join_groups: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_read_all_group_messages: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_guest_queries: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_inline_queries: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_connect_to_business: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_main_web_app: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_topics_enabled: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allows_users_to_create_topics: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_manage_bots: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_join_request_queries: Option<bool>,
 }
 
 /// Telegram user profile photos object.
@@ -194,4 +196,18 @@ mod tests {
 
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct BotAccessSettings {
+    pub is_access_restricted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_users: Option<Vec<User>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct SentGuestMessage {
+    pub inline_message_id: String,
 }

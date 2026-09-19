@@ -9,6 +9,14 @@ fn text_send_request(
 }
 
 trait ReplyContextRequest {
+    fn apply_ephemeral_context(&mut self, context: &ReplyContext) -> Result<()> {
+        if context.ephemeral_message_parameters.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "this message type cannot be sent as an ephemeral reply".to_owned(),
+            });
+        }
+        Ok(())
+    }
     fn apply_reply_context(&mut self, context: &ReplyContext);
 }
 
@@ -33,9 +41,13 @@ macro_rules! impl_reply_context_request {
 }
 
 macro_rules! impl_direct_messages_reply_context_request {
-    ($($ty:ty),* $(,)?) => {
+    ($($ty:ty $(=> $ephemeral:ident)?),* $(,)?) => {
         $(
             impl ReplyContextRequest for $ty {
+                $(fn apply_ephemeral_context(&mut self, context: &ReplyContext) -> Result<()> {
+                    self.$ephemeral = context.ephemeral_message_parameters.clone();
+                    Ok(())
+                })?
                 fn apply_reply_context(&mut self, context: &ReplyContext) {
                     apply_basic_reply_context!(self, context);
                     self.direct_messages_topic_id = context.direct_messages_topic_id;
@@ -46,19 +58,19 @@ macro_rules! impl_direct_messages_reply_context_request {
 }
 
 impl_direct_messages_reply_context_request!(
-    SendMessageRequest,
-    SendPhotoRequest,
-    SendDocumentRequest,
-    SendVideoRequest,
-    SendAudioRequest,
-    SendAnimationRequest,
-    SendVoiceRequest,
-    SendVideoNoteRequest,
-    SendStickerRequest,
+    SendMessageRequest => ephemeral_message_parameters,
+    SendPhotoRequest => ephemeral_message_parameters,
+    SendDocumentRequest => ephemeral_message_parameters,
+    SendVideoRequest => ephemeral_message_parameters,
+    SendAudioRequest => ephemeral_message_parameters,
+    SendAnimationRequest => ephemeral_message_parameters,
+    SendVoiceRequest => ephemeral_message_parameters,
+    SendVideoNoteRequest => ephemeral_message_parameters,
+    SendStickerRequest => ephemeral_message_parameters,
     SendMediaGroupRequest,
-    SendLocationRequest,
-    SendVenueRequest,
-    SendContactRequest,
+    SendLocationRequest => ephemeral_message_parameters,
+    SendVenueRequest => ephemeral_message_parameters,
+    SendContactRequest => ephemeral_message_parameters,
     SendDiceRequest,
 );
 
@@ -70,6 +82,7 @@ where
 {
     let context = reply_context(update)?;
     let mut request = build(context.chat_id);
+    request.apply_ephemeral_context(&context)?;
     request.apply_reply_context(&context);
     Ok(request)
 }
@@ -80,6 +93,7 @@ where
 {
     let context = reply_context(update)?;
     let mut request = build(context.chat_id)?;
+    request.apply_ephemeral_context(&context)?;
     request.apply_reply_context(&context);
     Ok(request)
 }

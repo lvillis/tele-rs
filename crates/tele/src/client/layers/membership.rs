@@ -12,6 +12,7 @@ fn get_chat_member_request(
 
 fn get_chat_administrators_request(chat_id: impl Into<ChatId>) -> GetChatAdministratorsRequest {
     GetChatAdministratorsRequest {
+        return_bots: None,
         chat_id: chat_id.into(),
     }
 }

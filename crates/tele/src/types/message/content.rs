@@ -78,6 +78,10 @@ pub struct PollOption {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum PollMedia {
+    Link {
+        link: Link,
+        extra: BTreeMap<String, Value>,
+    },
     Animation {
         animation: Animation,
         extra: BTreeMap<String, Value>,
@@ -118,8 +122,15 @@ pub enum PollMedia {
 }
 
 impl PollMedia {
+    pub fn as_link(&self) -> Option<&Link> {
+        match self {
+            Self::Link { link, .. } => Some(link),
+            _ => None,
+        }
+    }
     pub fn kind(&self) -> Option<&str> {
         match self {
+            Self::Link { .. } => Some("link"),
             Self::Animation { .. } => Some("animation"),
             Self::Audio { .. } => Some("audio"),
             Self::Document { .. } => Some("document"),
@@ -202,7 +213,8 @@ impl PollMedia {
 
     pub fn extra(&self) -> Option<&BTreeMap<String, Value>> {
         match self {
-            Self::Animation { extra, .. }
+            Self::Link { extra, .. }
+            | Self::Animation { extra, .. }
             | Self::Audio { extra, .. }
             | Self::Document { extra, .. }
             | Self::LivePhoto { extra, .. }
@@ -240,6 +252,14 @@ impl<'de> Deserialize<'de> for PollMedia {
             return Ok(Self::Unknown(value));
         };
 
+        if let Some(payload) = object.get("link") {
+            return serde_json::from_value(payload.clone())
+                .map(|link| Self::Link {
+                    link,
+                    extra: poll_media_extra(object, "link"),
+                })
+                .map_err(serde::de::Error::custom);
+        }
         if let Some(payload) = object.get("animation") {
             return serde_json::from_value(payload.clone())
                 .map(|animation| Self::Animation {
@@ -424,18 +444,18 @@ pub struct Dice {
 }
 
 /// Telegram geographic location object.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Location {
     pub latitude: f64,
     pub longitude: f64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizontal_accuracy: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_period: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heading: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proximity_alert_radius: Option<u32>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -520,6 +540,11 @@ pub struct GameHighScore {
     pub score: i64,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Link {
+    pub url: String,
 }
 
 #[cfg(test)]

@@ -79,6 +79,8 @@ pub struct SendMessageRequest {
     pub reply_markup: Option<ReplyMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_preview_options: Option<LinkPreviewOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendMessageRequest {
@@ -89,6 +91,7 @@ impl SendMessageRequest {
         validate_message_text("sendMessage", &text)?;
 
         Ok(Self {
+            ephemeral_message_parameters: None,
             business_connection_id: None,
             chat_id,
             text,
@@ -124,6 +127,9 @@ impl SendMessageRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -378,11 +384,17 @@ pub struct SendPhotoRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl SendPhotoRequest {
     pub fn new(chat_id: impl Into<ChatId>, photo: impl Into<String>) -> Self {
         Self {
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             photo: Some(photo.into()),
@@ -404,6 +416,8 @@ impl SendPhotoRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             photo: None,
@@ -424,6 +438,9 @@ impl SendPhotoRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -442,6 +459,9 @@ impl SendPhotoRequest {
     }
 
     pub(crate) fn validate_upload(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("photo", self.photo.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -499,11 +519,14 @@ pub struct SendAudioRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendAudioRequest {
     pub fn new(chat_id: impl Into<ChatId>, audio: impl Into<String>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             audio: Some(audio.into()),
@@ -528,6 +551,7 @@ impl SendAudioRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             audio: None,
@@ -551,6 +575,9 @@ impl SendAudioRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -571,6 +598,9 @@ impl SendAudioRequest {
     }
 
     pub(crate) fn validate_upload_parts(&self, files: &[UploadPart]) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("audio", self.audio.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -627,11 +657,14 @@ pub struct SendDocumentRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendDocumentRequest {
     pub fn new(chat_id: impl Into<ChatId>, document: impl Into<String>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             document: Some(document.into()),
@@ -654,6 +687,7 @@ impl SendDocumentRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             document: None,
@@ -675,6 +709,9 @@ impl SendDocumentRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -694,6 +731,9 @@ impl SendDocumentRequest {
     }
 
     pub(crate) fn validate_upload_parts(&self, files: &[UploadPart]) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("document", self.document.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -757,11 +797,23 @@ pub struct SendVideoRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_timestamp: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl SendVideoRequest {
     pub fn new(chat_id: impl Into<ChatId>, video: impl Into<String>) -> Self {
         Self {
+            cover: None,
+            start_timestamp: None,
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             video: Some(video.into()),
@@ -788,6 +840,10 @@ impl SendVideoRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            cover: None,
+            start_timestamp: None,
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             video: None,
@@ -813,6 +869,9 @@ impl SendVideoRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -828,6 +887,7 @@ impl SendVideoRequest {
             self.parse_mode,
             self.caption_entities.as_deref(),
         )?;
+        validate_optional_file_reference("cover", self.cover.as_deref())?;
         validate_optional_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
@@ -835,6 +895,9 @@ impl SendVideoRequest {
     }
 
     pub(crate) fn validate_upload_parts(&self, files: &[UploadPart]) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("video", self.video.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -850,11 +913,16 @@ impl SendVideoRequest {
             self.parse_mode,
             self.caption_entities.as_deref(),
         )?;
+        validate_optional_upload_file_reference("cover", self.cover.as_deref())?;
         validate_optional_upload_file_reference("thumbnail", self.thumbnail.as_deref())?;
         validate_positive_u32("duration", self.duration)?;
         validate_positive_u32("width", self.width)?;
         validate_positive_u32("height", self.height)?;
-        validate_attach_upload_parts("sendVideo", [self.thumbnail.as_deref()], files)
+        validate_attach_upload_parts(
+            "sendVideo",
+            [self.thumbnail.as_deref(), self.cover.as_deref()],
+            files,
+        )
     }
 }
 
@@ -899,11 +967,17 @@ pub struct SendAnimationRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl SendAnimationRequest {
     pub fn new(chat_id: impl Into<ChatId>, animation: impl Into<String>) -> Self {
         Self {
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             animation: Some(animation.into()),
@@ -929,6 +1003,8 @@ impl SendAnimationRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            show_caption_above_media: None,
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             animation: None,
@@ -953,6 +1029,9 @@ impl SendAnimationRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -975,6 +1054,9 @@ impl SendAnimationRequest {
     }
 
     pub(crate) fn validate_upload_parts(&self, files: &[UploadPart]) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("animation", self.animation.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -1031,11 +1113,14 @@ pub struct SendVoiceRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendVoiceRequest {
     pub fn new(chat_id: impl Into<ChatId>, voice: impl Into<String>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             voice: Some(voice.into()),
@@ -1057,6 +1142,7 @@ impl SendVoiceRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             voice: None,
@@ -1077,6 +1163,9 @@ impl SendVoiceRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -1096,6 +1185,9 @@ impl SendVoiceRequest {
     }
 
     pub(crate) fn validate_upload(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("voice", self.voice.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -1146,11 +1238,14 @@ pub struct SendVideoNoteRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendVideoNoteRequest {
     pub fn new(chat_id: impl Into<ChatId>, video_note: impl Into<String>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             video_note: Some(video_note.into()),
@@ -1171,6 +1266,7 @@ impl SendVideoNoteRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             video_note: None,
@@ -1190,6 +1286,9 @@ impl SendVideoNoteRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -1205,6 +1304,9 @@ impl SendVideoNoteRequest {
     }
 
     pub(crate) fn validate_upload_parts(&self, files: &[UploadPart]) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_absent_upload_field("video_note", self.video_note.as_deref())?;
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
@@ -1233,11 +1335,20 @@ pub struct InputMediaPhoto {
     pub caption_entities: Option<Vec<MessageEntity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl InputMediaPhoto {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        validate_input_media_photo(self, true)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_input_media_photo(self, false)
+    }
     pub fn new(media: impl Into<String>) -> Self {
         Self {
+            show_caption_above_media: None,
             media: media.into(),
             caption: None,
             parse_mode: None,
@@ -1289,11 +1400,26 @@ pub struct InputMediaVideo {
     pub supports_streaming: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_timestamp: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl InputMediaVideo {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        validate_input_media_video(self, true)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_input_media_video(self, false)
+    }
     pub fn new(media: impl Into<String>) -> Self {
         Self {
+            cover: None,
+            start_timestamp: None,
+            show_caption_above_media: None,
             media: media.into(),
             thumbnail: None,
             caption: None,
@@ -1373,11 +1499,20 @@ pub struct InputMediaAnimation {
     pub duration: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_spoiler: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
 }
 
 impl InputMediaAnimation {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        validate_input_media_animation(self, true)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_input_media_animation(self, false)
+    }
     pub fn new(media: impl Into<String>) -> Self {
         Self {
+            show_caption_above_media: None,
             media: media.into(),
             thumbnail: None,
             caption: None,
@@ -1452,6 +1587,12 @@ pub struct InputMediaAudio {
 }
 
 impl InputMediaAudio {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        validate_input_media_audio(self, true)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_input_media_audio(self, false)
+    }
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
@@ -1518,6 +1659,12 @@ pub struct InputMediaDocument {
 }
 
 impl InputMediaDocument {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        validate_input_media_document(self, true)
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        validate_input_media_document(self, false)
+    }
     pub fn new(media: impl Into<String>) -> Self {
         Self {
             media: media.into(),
@@ -1762,6 +1909,17 @@ impl From<InputMediaLivePhoto> for InputMedia {
 }
 
 impl InputMedia {
+    pub fn validate_for_upload(&self) -> Result<(), Error> {
+        match self {
+            Self::Photo(media) => validate_input_media_photo(media, true),
+            Self::Video(media) => validate_input_media_video(media, true),
+            Self::Animation(media) => validate_input_media_animation(media, true),
+            Self::Audio(media) => validate_input_media_audio(media, true),
+            Self::Document(media) => validate_input_media_document(media, true),
+            Self::LivePhoto(media) => validate_input_media_live_photo(media, true),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         validate_media(self)
     }
@@ -1953,6 +2111,7 @@ impl From<InputMediaVideo> for InputPollMedia {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputPollOptionMedia {
+    Link(InputMediaLink),
     Animation(Box<InputMediaAnimation>),
     LivePhoto(Box<InputMediaLivePhoto>),
     Location(Box<InputMediaLocation>),
@@ -1963,6 +2122,9 @@ pub enum InputPollOptionMedia {
 }
 
 impl InputPollOptionMedia {
+    pub fn link(url: impl Into<String>) -> Self {
+        Self::Link(InputMediaLink { url: url.into() })
+    }
     pub fn animation(media: impl Into<String>) -> Self {
         InputMediaAnimation::new(media).into()
     }
@@ -2148,11 +2310,14 @@ pub struct SendLocationRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendLocationRequest {
     pub fn new(chat_id: impl Into<ChatId>, latitude: f64, longitude: f64) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             latitude,
@@ -2174,6 +2339,9 @@ impl SendLocationRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -2227,6 +2395,8 @@ pub struct SendVenueRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendVenueRequest {
@@ -2238,6 +2408,7 @@ impl SendVenueRequest {
         address: impl Into<String>,
     ) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             latitude,
@@ -2261,6 +2432,9 @@ impl SendVenueRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -2304,6 +2478,8 @@ pub struct SendContactRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendContactRequest {
@@ -2313,6 +2489,7 @@ impl SendContactRequest {
         first_name: impl Into<String>,
     ) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             business_connection_id: None,
             phone_number: phone_number.into(),
@@ -2332,6 +2509,9 @@ impl SendContactRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id(self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_message_thread_id(self.message_thread_id)?;
@@ -2714,7 +2894,10 @@ pub struct EditMessageTextRequest {
     pub message_id: Option<MessageId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_message_id: Option<String>,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rich_message: Option<crate::types::rich::InputRichMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parse_mode: Option<ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2726,6 +2909,47 @@ pub struct EditMessageTextRequest {
 }
 
 impl EditMessageTextRequest {
+    pub fn for_chat_rich_message(
+        chat_id: impl Into<ChatId>,
+        message_id: MessageId,
+        rich_message: crate::types::rich::InputRichMessage,
+    ) -> Result<Self, Error> {
+        let request = Self {
+            business_connection_id: None,
+            chat_id: Some(chat_id.into()),
+            message_id: Some(message_id),
+            inline_message_id: None,
+            text: None,
+            rich_message: Some(rich_message),
+            parse_mode: None,
+            entities: None,
+            reply_markup: None,
+            link_preview_options: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn for_inline_rich_message(
+        inline_message_id: impl Into<String>,
+        rich_message: crate::types::rich::InputRichMessage,
+    ) -> Result<Self, Error> {
+        let request = Self {
+            business_connection_id: None,
+            chat_id: None,
+            message_id: None,
+            inline_message_id: Some(inline_message_id.into()),
+            text: None,
+            rich_message: Some(rich_message),
+            parse_mode: None,
+            entities: None,
+            reply_markup: None,
+            link_preview_options: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
     pub fn for_chat_message(
         chat_id: impl Into<ChatId>,
         message_id: MessageId,
@@ -2742,7 +2966,8 @@ impl EditMessageTextRequest {
             chat_id: Some(chat_id),
             message_id: Some(message_id),
             inline_message_id: None,
-            text,
+            text: Some(text),
+            rich_message: None,
             parse_mode: None,
             entities: None,
             reply_markup: None,
@@ -2765,7 +2990,8 @@ impl EditMessageTextRequest {
             chat_id: None,
             message_id: None,
             inline_message_id: Some(inline_message_id),
-            text,
+            text: Some(text),
+            rich_message: None,
             parse_mode: None,
             entities: None,
             reply_markup: None,
@@ -2783,10 +3009,20 @@ impl EditMessageTextRequest {
 
         validate_inline_keyboard_markup(self.reply_markup.as_ref())?;
         validate_link_preview_options(self.link_preview_options.as_ref())?;
-        validate_message_text("editMessageText", &self.text)?;
-        validate_text_formatting(
+        if self.text.is_some() == self.rich_message.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "editMessageText requires exactly one of text or rich_message".to_owned(),
+            });
+        }
+        if let Some(rich) = &self.rich_message {
+            rich.validate()?;
+        }
+        if let Some(text) = &self.text {
+            validate_message_text("editMessageText", text)?;
+        }
+        validate_optional_text_formatting(
             "editMessageText text",
-            &self.text,
+            self.text.as_deref(),
             self.parse_mode,
             self.entities.as_deref(),
         )
@@ -3223,6 +3459,11 @@ fn validate_input_media_video(
         media.thumbnail.as_deref(),
         allow_multipart_attach,
     )?;
+    validate_optional_file_reference_with_attach_mode(
+        "cover",
+        media.cover.as_deref(),
+        allow_multipart_attach,
+    )?;
     validate_caption_fields(
         "input media caption",
         media.caption.as_deref(),
@@ -3381,6 +3622,9 @@ fn validate_optional_poll_media(media: Option<&InputPollMedia>) -> Result<(), Er
 
 fn validate_poll_option_media(media: &InputPollOptionMedia) -> Result<(), Error> {
     match media {
+        InputPollOptionMedia::Link(media) => {
+            crate::types::validation::http_url("poll link", &media.url)
+        }
         InputPollOptionMedia::Animation(media) => validate_input_media_animation(media, false),
         InputPollOptionMedia::LivePhoto(media) => validate_input_media_live_photo(media, false),
         InputPollOptionMedia::Location(media) => validate_input_media_location(media),
@@ -3404,11 +3648,14 @@ fn validate_media_group_item(media: &InputMediaGroupItem) -> Result<(), Error> {
 struct MediaGroupFileReferences<'a> {
     media: &'a str,
     extra_file: Option<&'a str>,
+    cover: Option<&'a str>,
 }
 
 impl<'a> MediaGroupFileReferences<'a> {
     fn iter(&self) -> impl Iterator<Item = &'a str> + '_ {
-        std::iter::once(self.media).chain(self.extra_file)
+        std::iter::once(self.media)
+            .chain(self.extra_file)
+            .chain(self.cover)
     }
 }
 
@@ -3417,22 +3664,27 @@ fn media_group_file_references(media: &InputMediaGroupItem) -> MediaGroupFileRef
         InputMediaGroupItem::Photo(media) => MediaGroupFileReferences {
             media: &media.media,
             extra_file: None,
+            cover: None,
         },
         InputMediaGroupItem::Video(media) => MediaGroupFileReferences {
             media: &media.media,
             extra_file: media.thumbnail.as_deref(),
+            cover: media.cover.as_deref(),
         },
         InputMediaGroupItem::Audio(media) => MediaGroupFileReferences {
             media: &media.media,
             extra_file: media.thumbnail.as_deref(),
+            cover: None,
         },
         InputMediaGroupItem::Document(media) => MediaGroupFileReferences {
             media: &media.media,
             extra_file: media.thumbnail.as_deref(),
+            cover: None,
         },
         InputMediaGroupItem::LivePhoto(media) => MediaGroupFileReferences {
             media: &media.media,
             extra_file: Some(&media.photo),
+            cover: None,
         },
     }
 }
@@ -4314,6 +4566,11 @@ impl_caption_entities_setter!(
 
 impl_link_preview_setter!(SendMessageRequest, EditMessageTextRequest);
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InputMediaLink {
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -4436,6 +4693,7 @@ mod tests {
         let mut invalid_mention =
             entity(crate::types::message::MessageEntityKind::TextMention, 0, 5);
         invalid_mention.user = Some(crate::types::bot::User {
+            supports_join_request_queries: None,
             id: crate::types::common::UserId(0),
             is_bot: false,
             first_name: "Alice".to_owned(),
@@ -4499,6 +4757,7 @@ mod tests {
             entity(crate::types::message::MessageEntityKind::TextLink, 0, 5);
         text_link_with_user.url = Some("https://example.com".to_owned());
         text_link_with_user.user = Some(crate::types::bot::User {
+            supports_join_request_queries: None,
             id: crate::types::common::UserId(1),
             is_bot: false,
             first_name: "Alice".to_owned(),
@@ -5099,6 +5358,7 @@ mod tests {
         ));
 
         let photo_media = InputMediaPhoto {
+            show_caption_above_media: None,
             media: "photo-file-id".to_owned(),
             caption: None,
             parse_mode: None,
@@ -5106,6 +5366,9 @@ mod tests {
             has_spoiler: None,
         };
         let video_media = InputMediaVideo {
+            cover: None,
+            start_timestamp: None,
+            show_caption_above_media: None,
             media: "video-file-id".to_owned(),
             thumbnail: None,
             caption: None,
@@ -5143,6 +5406,7 @@ mod tests {
             1_i64,
             vec![
                 InputMediaPhoto {
+                    show_caption_above_media: None,
                     media: "attach://photo0".to_owned(),
                     caption: None,
                     parse_mode: None,
@@ -5151,6 +5415,9 @@ mod tests {
                 }
                 .into(),
                 InputMediaVideo {
+                    cover: None,
+                    start_timestamp: None,
+                    show_caption_above_media: None,
                     media: "video-file-id".to_owned(),
                     thumbnail: None,
                     caption: None,
@@ -5228,6 +5495,7 @@ mod tests {
             1_i64,
             vec![
                 InputMediaPhoto {
+                    show_caption_above_media: None,
                     media: "photo-file-id".to_owned(),
                     caption: None,
                     parse_mode: None,

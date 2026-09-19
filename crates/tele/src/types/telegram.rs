@@ -2480,6 +2480,32 @@ pub enum InlineQueryResultArticleKind {
 }
 
 /// Typed inline query article result.
+/// Content supplied by an inline, guest, or Web App query result.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InputMessageContent {
+    Text(InputTextMessageContent),
+    Rich(crate::types::rich::InputRichMessageContent),
+}
+impl InputMessageContent {
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Text(text) => text.validate(),
+            Self::Rich(rich) => rich.rich_message.validate(),
+        }
+    }
+}
+impl From<InputTextMessageContent> for InputMessageContent {
+    fn from(value: InputTextMessageContent) -> Self {
+        Self::Text(value)
+    }
+}
+impl From<crate::types::rich::InputRichMessageContent> for InputMessageContent {
+    fn from(value: crate::types::rich::InputRichMessageContent) -> Self {
+        Self::Rich(value)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[non_exhaustive]
 pub struct InlineQueryResultArticle {
@@ -2487,7 +2513,7 @@ pub struct InlineQueryResultArticle {
     pub kind: InlineQueryResultArticleKind,
     pub id: String,
     pub title: String,
-    pub input_message_content: InputTextMessageContent,
+    pub input_message_content: InputMessageContent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<InlineKeyboardMarkup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2516,7 +2542,7 @@ impl InlineQueryResultArticle {
             kind: InlineQueryResultArticleKind::Article,
             id: id.into(),
             title: title.into(),
-            input_message_content: InputTextMessageContent::new(message_text),
+            input_message_content: InputTextMessageContent::new(message_text).into(),
             reply_markup: None,
             url: None,
             hide_url: None,
@@ -4173,11 +4199,14 @@ pub struct InlineKeyboardButton {
     pub web_app: Option<WebAppInfo>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<crate::types::rich::DisabledButton>,
 }
 
 impl InlineKeyboardButton {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
+            disabled: None,
             text: text.into(),
             icon_custom_emoji_id: None,
             style: None,
@@ -4309,7 +4338,8 @@ impl InlineKeyboardButton {
             style.validate("inline keyboard button style")?;
         }
 
-        let mut known_actions = usize::from(self.web_app.is_some());
+        let mut known_actions =
+            usize::from(self.web_app.is_some()) + usize::from(self.disabled.is_some());
         if let Some(web_app) = self.web_app.as_ref() {
             web_app.validate()?;
         }
@@ -4374,12 +4404,20 @@ impl Serialize for InlineKeyboardButton {
     where
         S: serde::Serializer,
     {
-        let reserved = ["text", "icon_custom_emoji_id", "style", "web_app"];
+        let reserved = [
+            "disabled",
+            "text",
+            "icon_custom_emoji_id",
+            "style",
+            "web_app",
+        ];
         let extra_len = extra_field_len(&self.extra, &reserved);
         let optional_len = usize::from(self.icon_custom_emoji_id.is_some())
             + usize::from(self.style.is_some())
             + usize::from(self.web_app.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        let mut object = serializer.serialize_map(Some(
+            usize::from(self.disabled.is_some()) + extra_len + optional_len + 1,
+        ))?;
         object.serialize_entry("text", &self.text)?;
         if let Some(icon_custom_emoji_id) = self.icon_custom_emoji_id.as_ref() {
             object.serialize_entry("icon_custom_emoji_id", icon_custom_emoji_id)?;
@@ -4389,6 +4427,9 @@ impl Serialize for InlineKeyboardButton {
         }
         if let Some(web_app) = self.web_app.as_ref() {
             object.serialize_entry("web_app", web_app)?;
+        }
+        if let Some(value) = &self.disabled {
+            object.serialize_entry("disabled", value)?;
         }
         serialize_extra_fields(&mut object, &self.extra, &reserved)?;
         object.end()
@@ -4402,11 +4443,14 @@ pub struct InlineKeyboardMarkup {
     pub inline_keyboard: Vec<Vec<InlineKeyboardButton>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_reply: Option<bool>,
 }
 
 impl InlineKeyboardMarkup {
     pub fn new(inline_keyboard: Vec<Vec<InlineKeyboardButton>>) -> Self {
         Self {
+            force_reply: None,
             inline_keyboard,
             extra: BTreeMap::new(),
         }
@@ -4443,10 +4487,15 @@ impl Serialize for InlineKeyboardMarkup {
     where
         S: serde::Serializer,
     {
-        let reserved = ["inline_keyboard"];
+        let reserved = ["force_reply", "inline_keyboard"];
         let extra_len = extra_field_len(&self.extra, &reserved);
-        let mut object = serializer.serialize_map(Some(extra_len + 1))?;
+        let mut object = serializer.serialize_map(Some(
+            usize::from(self.force_reply.is_some()) + extra_len + 1,
+        ))?;
         object.serialize_entry("inline_keyboard", &self.inline_keyboard)?;
+        if let Some(value) = &self.force_reply {
+            object.serialize_entry("force_reply", value)?;
+        }
         serialize_extra_fields(&mut object, &self.extra, &reserved)?;
         object.end()
     }
@@ -4694,11 +4743,14 @@ pub struct ReplyKeyboardMarkup {
     pub selective: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_reply: Option<bool>,
 }
 
 impl ReplyKeyboardMarkup {
     pub fn new(keyboard: Vec<Vec<KeyboardButton>>) -> Self {
         Self {
+            force_reply: None,
             keyboard,
             is_persistent: None,
             resize_keyboard: None,
@@ -4735,6 +4787,7 @@ impl Serialize for ReplyKeyboardMarkup {
         S: serde::Serializer,
     {
         let reserved = [
+            "force_reply",
             "keyboard",
             "is_persistent",
             "resize_keyboard",
@@ -4748,7 +4801,9 @@ impl Serialize for ReplyKeyboardMarkup {
             + usize::from(self.one_time_keyboard.is_some())
             + usize::from(self.input_field_placeholder.is_some())
             + usize::from(self.selective.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
+        let mut object = serializer.serialize_map(Some(
+            usize::from(self.force_reply.is_some()) + extra_len + optional_len + 1,
+        ))?;
         object.serialize_entry("keyboard", &self.keyboard)?;
         if let Some(is_persistent) = self.is_persistent {
             object.serialize_entry("is_persistent", &is_persistent)?;
@@ -4764,6 +4819,9 @@ impl Serialize for ReplyKeyboardMarkup {
         }
         if let Some(selective) = self.selective {
             object.serialize_entry("selective", &selective)?;
+        }
+        if let Some(value) = &self.force_reply {
+            object.serialize_entry("force_reply", value)?;
         }
         serialize_extra_fields(&mut object, &self.extra, &reserved)?;
         object.end()
@@ -4924,10 +4982,13 @@ impl ReplyMarkup {
 }
 
 /// Reply-to reference parameters.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[non_exhaustive]
 pub struct ReplyParameters {
-    pub message_id: MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<MessageId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<ChatId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4951,16 +5012,15 @@ pub struct ReplyParameters {
 impl ReplyParameters {
     pub fn new(message_id: MessageId) -> Self {
         Self {
-            message_id,
-            chat_id: None,
-            allow_sending_without_reply: None,
-            quote: None,
-            quote_parse_mode: None,
-            quote_entities: None,
-            quote_position: None,
-            checklist_task_id: None,
-            poll_option_id: None,
-            extra: BTreeMap::new(),
+            message_id: Some(message_id),
+            ..Self::default()
+        }
+    }
+
+    pub fn ephemeral(ephemeral_message_id: i64) -> Self {
+        Self {
+            ephemeral_message_id: Some(ephemeral_message_id),
+            ..Self::default()
         }
     }
 
@@ -4975,7 +5035,20 @@ impl ReplyParameters {
     }
 
     pub fn validate(&self) -> Result<()> {
-        self.message_id.validate()?;
+        match (self.message_id, self.ephemeral_message_id) {
+            (Some(id), None) => id.validate()?,
+            (None, Some(id)) if id > 0 => {}
+            _ => {
+                return Err(invalid_request(
+                    "reply parameters require exactly one valid message_id or ephemeral_message_id",
+                ));
+            }
+        }
+        if self.ephemeral_message_id.is_some() && self.chat_id.is_some() {
+            return Err(invalid_request(
+                "ephemeral replies cannot target a different chat",
+            ));
+        }
         if let Some(chat_id) = self.chat_id.as_ref() {
             chat_id.validate()?;
         }
@@ -5020,6 +5093,7 @@ impl Serialize for ReplyParameters {
     {
         let reserved = [
             "message_id",
+            "ephemeral_message_id",
             "chat_id",
             "allow_sending_without_reply",
             "quote",
@@ -5030,7 +5104,9 @@ impl Serialize for ReplyParameters {
             "poll_option_id",
         ];
         let extra_len = extra_field_len(&self.extra, &reserved);
-        let optional_len = usize::from(self.chat_id.is_some())
+        let optional_len = usize::from(self.message_id.is_some())
+            + usize::from(self.ephemeral_message_id.is_some())
+            + usize::from(self.chat_id.is_some())
             + usize::from(self.allow_sending_without_reply.is_some())
             + usize::from(self.quote.is_some())
             + usize::from(self.quote_parse_mode.is_some())
@@ -5038,8 +5114,13 @@ impl Serialize for ReplyParameters {
             + usize::from(self.quote_position.is_some())
             + usize::from(self.checklist_task_id.is_some())
             + usize::from(self.poll_option_id.is_some());
-        let mut object = serializer.serialize_map(Some(extra_len + optional_len + 1))?;
-        object.serialize_entry("message_id", &self.message_id)?;
+        let mut object = serializer.serialize_map(Some(extra_len + optional_len))?;
+        if let Some(id) = self.message_id {
+            object.serialize_entry("message_id", &id)?;
+        }
+        if let Some(id) = self.ephemeral_message_id {
+            object.serialize_entry("ephemeral_message_id", &id)?;
+        }
         if let Some(chat_id) = self.chat_id.as_ref() {
             object.serialize_entry("chat_id", chat_id)?;
         }
@@ -5211,7 +5292,10 @@ mod tests {
         reserved_extra
             .extra
             .insert("id".to_owned(), serde_json::json!("overridden-id"));
-        reserved_extra.input_message_content.extra.insert(
+        let InputMessageContent::Text(text) = &mut reserved_extra.input_message_content else {
+            return Err("expected text content".into());
+        };
+        text.extra.insert(
             "message_text".to_owned(),
             serde_json::json!("overridden text"),
         );
@@ -5235,12 +5319,12 @@ mod tests {
 
         let mut conflicting_link_preview =
             InlineQueryResultArticle::new("article-id", "Title", "hello");
-        conflicting_link_preview
-            .input_message_content
-            .disable_web_page_preview = Some(true);
-        conflicting_link_preview
-            .input_message_content
-            .link_preview_options = Some(LinkPreviewOptions::disabled());
+        let InputMessageContent::Text(text) = &mut conflicting_link_preview.input_message_content
+        else {
+            return Err("expected text content".into());
+        };
+        text.disable_web_page_preview = Some(true);
+        text.link_preview_options = Some(LinkPreviewOptions::disabled());
         assert!(matches!(
             InlineQueryResult::try_from(conflicting_link_preview),
             Err(Error::InvalidRequest { .. })

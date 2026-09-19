@@ -132,9 +132,7 @@ where
     _state: std::marker::PhantomData<S>,
 }
 
-struct JsonFileSessionLocks {
-    persist: Mutex<()>,
-}
+type JsonFileSessionLocks = Mutex<()>;
 
 impl<S> Clone for JsonFileSessionStore<S>
 where
@@ -167,6 +165,22 @@ where
     pub fn path(&self) -> &Path {
         self.path.as_path()
     }
+
+    async fn run_locked_io<T, F>(&self, task: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Path) -> Result<T> + Send + 'static,
+    {
+        let guard = Arc::clone(&self.locks).lock_owned().await;
+        let path = self.path.clone();
+        run_blocking_io(move || {
+            // Blocking I/O continues after caller cancellation. Keep both the lock and
+            // its registry identity alive until the entire operation has finished.
+            let _guard = guard;
+            task(&path)
+        })
+        .await
+    }
 }
 
 impl<S> SessionStore<S> for JsonFileSessionStore<S>
@@ -178,31 +192,26 @@ where
     }
 
     fn load<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, Option<S>> {
-        Box::pin(async move {
-            let _persist_guard = self.locks.persist.lock().await;
-            let snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
-            Ok(snapshot.get(&chat_id).cloned())
-        })
+        Box::pin(self.run_locked_io(move |path| {
+            let mut snapshot = load_session_snapshot::<S>(path)?;
+            Ok(snapshot.remove(&chat_id))
+        }))
     }
 
     fn save<'a>(&'a self, chat_id: i64, state: S) -> SessionFuture<'a, ()> {
-        Box::pin(async move {
-            let _persist_guard = self.locks.persist.lock().await;
-            let mut snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
+        Box::pin(self.run_locked_io(move |path| {
+            let mut snapshot = load_session_snapshot::<S>(path)?;
             snapshot.insert(chat_id, state);
-            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
-            Ok(())
-        })
+            persist_session_snapshot(path, &snapshot)
+        }))
     }
 
     fn clear<'a>(&'a self, chat_id: i64) -> SessionFuture<'a, ()> {
-        Box::pin(async move {
-            let _persist_guard = self.locks.persist.lock().await;
-            let mut snapshot = load_session_snapshot_async::<S>(self.path.clone()).await?;
+        Box::pin(self.run_locked_io(move |path| {
+            let mut snapshot = load_session_snapshot::<S>(path)?;
             snapshot.remove(&chat_id);
-            persist_session_snapshot_async(self.path.clone(), snapshot).await?;
-            Ok(())
-        })
+            persist_session_snapshot(path, &snapshot)
+        }))
     }
 }
 
@@ -225,9 +234,7 @@ fn json_file_session_locks(path: &Path) -> Result<Arc<JsonFileSessionLocks>> {
     }
 
     registry.retain(|_, locks| locks.strong_count() > 0);
-    let locks = Arc::new(JsonFileSessionLocks {
-        persist: Mutex::new(()),
-    });
+    let locks = Arc::new(Mutex::new(()));
     registry.insert(key, Arc::downgrade(&locks));
     Ok(locks)
 }
@@ -281,13 +288,6 @@ where
     })
 }
 
-async fn load_session_snapshot_async<S>(path: PathBuf) -> Result<HashMap<i64, S>>
-where
-    S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
-{
-    run_blocking_io(move || load_session_snapshot(path.as_path())).await
-}
-
 fn persist_session_snapshot<S>(path: &Path, snapshot: &HashMap<i64, S>) -> Result<()>
 where
     S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
@@ -296,13 +296,6 @@ where
         .map_err(|source| storage_encode_error("json session encode", "session store", source))?;
     write_file_atomic(path, encoded.as_slice(), "session store")?;
     Ok(())
-}
-
-async fn persist_session_snapshot_async<S>(path: PathBuf, snapshot: HashMap<i64, S>) -> Result<()>
-where
-    S: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
-{
-    run_blocking_io(move || persist_session_snapshot(path.as_path(), &snapshot)).await
 }
 
 #[cfg(feature = "redis-session")]
@@ -1053,6 +1046,51 @@ mod chat_session_tests {
             .duration_since(UNIX_EPOCH)
             .map_or(0_u128, |duration| duration.as_nanos());
         std::env::temp_dir().join(format!("{prefix}-{}-{timestamp}", std::process::id()))
+    }
+
+    #[tokio::test]
+    async fn cancelled_file_operation_keeps_lock_until_write_finishes()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let path = unique_session_path("tele-session-cancelled-write");
+        let store = JsonFileSessionStore::<String>::open(&path)?;
+        let identity = Arc::downgrade(&store.locks);
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = oneshot::channel();
+        let writer = tokio::spawn(async move {
+            store
+                .run_locked_io(move |path| {
+                    let mut snapshot = load_session_snapshot::<String>(path)?;
+                    snapshot.insert(1, "first".to_owned());
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv()
+                        .map_err(|error| runtime_error(error.to_string()))?;
+                    let result = persist_session_snapshot(path, &snapshot);
+                    let _ = finished_tx.send(());
+                    result
+                })
+                .await
+        });
+        started_rx.await?;
+        writer.abort();
+        assert!(writer.await.is_err());
+
+        // Reopening must find the same lock even after every original store handle
+        // was dropped. Capture observations before releasing the worker on failure.
+        let reopened = JsonFileSessionStore::<String>::open(&path)?;
+        let same_lock = std::sync::Weak::ptr_eq(&identity, &Arc::downgrade(&reopened.locks));
+        let lock_held = reopened.locks.try_lock().is_err();
+        release_tx.send(())?;
+        finished_rx.await?;
+        assert!(same_lock);
+        assert!(lock_held);
+
+        reopened.save(2, "second".to_owned()).await?;
+        assert_eq!(reopened.load(1).await?.as_deref(), Some("first"));
+        assert_eq!(reopened.load(2).await?.as_deref(), Some("second"));
+        fs::remove_file(path)?;
+        Ok(())
     }
 
     #[derive(Clone)]

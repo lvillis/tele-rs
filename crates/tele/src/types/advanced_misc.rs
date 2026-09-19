@@ -220,6 +220,121 @@ impl AdvancedRequest for AdvancedForwardMessagesRequest {
     }
 }
 
+/// Auto-generated request for `sendLivePhoto`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedSendLivePhotoRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection_id: Option<String>,
+    pub chat_id: crate::types::common::ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
+    pub live_photo: String,
+    pub photo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_mode: Option<crate::types::common::ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<crate::types::message::MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_spoiler: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_notification: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protect_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<crate::types::telegram::SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_parameters: Option<crate::types::telegram::ReplyParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::ReplyMarkup>,
+}
+
+impl AdvancedSendLivePhotoRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        live_photo: impl Into<String>,
+        photo: impl Into<String>,
+    ) -> Self {
+        Self {
+            business_connection_id: None,
+            chat_id: chat_id.into(),
+            message_thread_id: None,
+            direct_messages_topic_id: None,
+            ephemeral_message_parameters: None,
+            live_photo: live_photo.into(),
+            photo: photo.into(),
+            caption: None,
+            parse_mode: None,
+            caption_entities: None,
+            show_caption_above_media: None,
+            has_spoiler: None,
+            disable_notification: None,
+            protect_content: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
+            reply_parameters: None,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedSendLivePhotoRequest {
+    type Response = crate::types::message::Message;
+    const METHOD: &'static str = "sendLivePhoto";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        if let Some(value) = self.ephemeral_message_parameters.as_ref() {
+            value.validate()?;
+        }
+        validate_required_string("live_photo", &self.live_photo)?;
+        validate_required_string("photo", &self.photo)?;
+        validate_optional_display_text("caption", self.caption.as_deref(), 1024)?;
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        validate_optional_text_formatting(
+            "caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
+        crate::types::validation::reject_http_file_url("live_photo", &self.live_photo)?;
+        crate::types::validation::reject_http_file_url("photo", &self.photo)?;
+        Ok(())
+    }
+}
+
 /// Auto-generated request for `sendVideoNote`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSendVideoNoteRequest {
@@ -230,6 +345,8 @@ pub struct AdvancedSendVideoNoteRequest {
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
     pub video_note: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<i64>,
@@ -263,6 +380,7 @@ impl AdvancedSendVideoNoteRequest {
             chat_id: chat_id.into(),
             message_thread_id: None,
             direct_messages_topic_id: None,
+            ephemeral_message_parameters: None,
             video_note: video_note.into(),
             duration: None,
             length: None,
@@ -292,6 +410,9 @@ impl AdvancedRequest for AdvancedSendVideoNoteRequest {
         }
         if let Some(value) = self.direct_messages_topic_id {
             validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        if let Some(value) = self.ephemeral_message_parameters.as_ref() {
+            value.validate()?;
         }
         validate_required_string("video_note", &self.video_note)?;
         if let Some(value) = self.duration {
@@ -432,7 +553,7 @@ impl AdvancedRequest for AdvancedSendPaidMediaRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSendChecklistRequest {
     pub business_connection_id: String,
-    pub chat_id: crate::types::common::NumericChatId,
+    pub chat_id: crate::types::common::ChatId,
     pub checklist: crate::types::telegram::InputChecklist,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
@@ -449,7 +570,7 @@ pub struct AdvancedSendChecklistRequest {
 impl AdvancedSendChecklistRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        chat_id: impl Into<crate::types::common::NumericChatId>,
+        chat_id: impl Into<crate::types::common::ChatId>,
         checklist: crate::types::telegram::InputChecklist,
     ) -> Self {
         Self {
@@ -499,6 +620,10 @@ pub struct AdvancedSendMessageDraftRequest {
     pub parse_mode: Option<crate::types::common::ParseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<crate::types::message::MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_stop: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_on_stop: Option<bool>,
 }
 
 impl AdvancedSendMessageDraftRequest {
@@ -510,6 +635,8 @@ impl AdvancedSendMessageDraftRequest {
             text: None,
             parse_mode: None,
             entities: None,
+            can_stop: None,
+            keep_on_stop: None,
         }
     }
 }
@@ -523,7 +650,6 @@ impl AdvancedRequest for AdvancedSendMessageDraftRequest {
         if let Some(value) = self.message_thread_id {
             validate_positive_i64("message_thread_id", value)?;
         }
-        validate_positive_i64("draft_id", self.draft_id)?;
         validate_optional_message_text("sendMessageDraft", self.text.as_deref())?;
         validate_optional_text_formatting(
             "text",
@@ -531,6 +657,11 @@ impl AdvancedRequest for AdvancedSendMessageDraftRequest {
             self.parse_mode,
             self.entities.as_deref(),
         )?;
+        if self.draft_id == 0 {
+            return Err(Error::InvalidRequest {
+                reason: "draft_id must be non-zero".to_owned(),
+            });
+        }
         Ok(())
     }
 }
@@ -776,6 +907,124 @@ impl AdvancedRequest for AdvancedDeclineChatJoinRequest {
     }
 }
 
+/// Auto-generated request for `answerChatJoinRequestQuery`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedAnswerChatJoinRequestQueryRequest {
+    pub chat_join_request_query_id: String,
+    pub result: String,
+}
+
+impl AdvancedAnswerChatJoinRequestQueryRequest {
+    pub fn new(chat_join_request_query_id: impl Into<String>, result: impl Into<String>) -> Self {
+        Self {
+            chat_join_request_query_id: chat_join_request_query_id.into(),
+            result: result.into(),
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedAnswerChatJoinRequestQueryRequest {
+    type Response = bool;
+    const METHOD: &'static str = "answerChatJoinRequestQuery";
+
+    fn validate(&self) -> Result<()> {
+        validate_string_id(
+            "chat_join_request_query_id",
+            &self.chat_join_request_query_id,
+        )?;
+        validate_required_string("result", &self.result)?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `sendChatJoinRequestWebApp`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedSendChatJoinRequestWebAppRequest {
+    pub chat_join_request_query_id: String,
+    pub web_app_url: String,
+}
+
+impl AdvancedSendChatJoinRequestWebAppRequest {
+    pub fn new(
+        chat_join_request_query_id: impl Into<String>,
+        web_app_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            chat_join_request_query_id: chat_join_request_query_id.into(),
+            web_app_url: web_app_url.into(),
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedSendChatJoinRequestWebAppRequest {
+    type Response = bool;
+    const METHOD: &'static str = "sendChatJoinRequestWebApp";
+
+    fn validate(&self) -> Result<()> {
+        validate_string_id(
+            "chat_join_request_query_id",
+            &self.chat_join_request_query_id,
+        )?;
+        validate_required_string("web_app_url", &self.web_app_url)?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `getUserPersonalChatMessages`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedGetUserPersonalChatMessagesRequest {
+    pub user_id: crate::types::common::UserId,
+    pub limit: i64,
+}
+
+impl AdvancedGetUserPersonalChatMessagesRequest {
+    pub fn new(user_id: crate::types::common::UserId, limit: i64) -> Self {
+        Self { user_id, limit }
+    }
+}
+
+impl AdvancedRequest for AdvancedGetUserPersonalChatMessagesRequest {
+    type Response = Vec<crate::types::message::Message>;
+    const METHOD: &'static str = "getUserPersonalChatMessages";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        validate_positive_i64("limit", self.limit)?;
+        crate::types::validation::i64_range("limit", self.limit, 1, 20)?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `answerGuestQuery`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedAnswerGuestQueryRequest {
+    pub guest_query_id: String,
+    pub result: crate::types::telegram::InlineQueryResult,
+}
+
+impl AdvancedAnswerGuestQueryRequest {
+    pub fn new(
+        guest_query_id: impl Into<String>,
+        result: crate::types::telegram::InlineQueryResult,
+    ) -> Self {
+        Self {
+            guest_query_id: guest_query_id.into(),
+            result,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedAnswerGuestQueryRequest {
+    type Response = crate::types::bot::SentGuestMessage;
+    const METHOD: &'static str = "answerGuestQuery";
+
+    fn validate(&self) -> Result<()> {
+        validate_string_id("guest_query_id", &self.guest_query_id)?;
+        self.result.validate()?;
+        Ok(())
+    }
+}
+
 /// Auto-generated request for `getUserChatBoosts`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedGetUserChatBoostsRequest {
@@ -846,6 +1095,64 @@ impl AdvancedRequest for AdvancedReplaceManagedBotTokenRequest {
 
     fn validate(&self) -> Result<()> {
         self.user_id.validate()?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `getManagedBotAccessSettings`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedGetManagedBotAccessSettingsRequest {
+    pub user_id: crate::types::common::UserId,
+}
+
+impl AdvancedGetManagedBotAccessSettingsRequest {
+    pub fn new(user_id: crate::types::common::UserId) -> Self {
+        Self { user_id }
+    }
+}
+
+impl AdvancedRequest for AdvancedGetManagedBotAccessSettingsRequest {
+    type Response = crate::types::bot::BotAccessSettings;
+    const METHOD: &'static str = "getManagedBotAccessSettings";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `setManagedBotAccessSettings`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedSetManagedBotAccessSettingsRequest {
+    pub user_id: crate::types::common::UserId,
+    pub is_access_restricted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_user_ids: Option<Vec<i64>>,
+}
+
+impl AdvancedSetManagedBotAccessSettingsRequest {
+    pub fn new(user_id: crate::types::common::UserId, is_access_restricted: bool) -> Self {
+        Self {
+            user_id,
+            is_access_restricted,
+            added_user_ids: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedSetManagedBotAccessSettingsRequest {
+    type Response = bool;
+    const METHOD: &'static str = "setManagedBotAccessSettings";
+
+    fn validate(&self) -> Result<()> {
+        self.user_id.validate()?;
+        if let Some(ids) = &self.added_user_ids
+            && (ids.len() > 10 || ids.iter().any(|id| *id <= 0))
+        {
+            return Err(Error::InvalidRequest {
+                reason: "added_user_ids must contain at most 10 positive identifiers".to_owned(),
+            });
+        }
         Ok(())
     }
 }
@@ -1243,13 +1550,38 @@ impl AdvancedRequest for AdvancedEditMessageMediaRequest {
         )?;
         Ok(())
     }
+    fn validate_for_upload(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        if let Some(value) = self.chat_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.message_id.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.inline_message_id.as_deref() {
+            validate_string_id("inline_message_id", value)?;
+        }
+        self.media.validate_for_upload()?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        validate_chat_or_inline_message_target(
+            "editMessageMedia",
+            self.chat_id.as_ref(),
+            self.message_id.as_ref(),
+            self.inline_message_id.as_deref(),
+        )?;
+        Ok(())
+    }
 }
 
 /// Auto-generated request for `editMessageChecklist`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedEditMessageChecklistRequest {
     pub business_connection_id: String,
-    pub chat_id: crate::types::common::NumericChatId,
+    pub chat_id: crate::types::common::ChatId,
     pub message_id: crate::types::common::MessageId,
     pub checklist: crate::types::telegram::InputChecklist,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1259,7 +1591,7 @@ pub struct AdvancedEditMessageChecklistRequest {
 impl AdvancedEditMessageChecklistRequest {
     pub fn new(
         business_connection_id: impl Into<String>,
-        chat_id: impl Into<crate::types::common::NumericChatId>,
+        chat_id: impl Into<crate::types::common::ChatId>,
         message_id: crate::types::common::MessageId,
         checklist: crate::types::telegram::InputChecklist,
     ) -> Self {
@@ -1282,6 +1614,231 @@ impl AdvancedRequest for AdvancedEditMessageChecklistRequest {
         self.chat_id.validate()?;
         self.message_id.validate()?;
         self.checklist.validate()?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `editEphemeralMessageText`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedEditEphemeralMessageTextRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub receiver_user_id: crate::types::common::UserId,
+    pub ephemeral_message_id: crate::types::common::MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_mode: Option<crate::types::common::ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entities: Option<Vec<crate::types::message::MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rich_message: Option<crate::types::rich::InputRichMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_preview_options: Option<crate::types::telegram::LinkPreviewOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::InlineKeyboardMarkup>,
+}
+
+impl AdvancedEditEphemeralMessageTextRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        receiver_user_id: crate::types::common::UserId,
+        ephemeral_message_id: crate::types::common::MessageId,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            receiver_user_id,
+            ephemeral_message_id,
+            text: None,
+            parse_mode: None,
+            entities: None,
+            rich_message: None,
+            link_preview_options: None,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedEditEphemeralMessageTextRequest {
+    type Response = bool;
+    const METHOD: &'static str = "editEphemeralMessageText";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
+        if let Some(value) = self.rich_message.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        validate_optional_text_formatting(
+            "text",
+            self.text.as_deref(),
+            self.parse_mode,
+            self.entities.as_deref(),
+        )?;
+        if self.text.is_some() == self.rich_message.is_some() {
+            return Err(Error::InvalidRequest {
+                reason: "exactly one of text or rich_message is required".to_owned(),
+            });
+        }
+        if let Some(text) = &self.text {
+            crate::types::validation::message_text("editEphemeralMessageText", text)?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `editEphemeralMessageMedia`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedEditEphemeralMessageMediaRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub receiver_user_id: crate::types::common::UserId,
+    pub ephemeral_message_id: crate::types::common::MessageId,
+    pub media: crate::types::message::InputMedia,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::InlineKeyboardMarkup>,
+}
+
+impl AdvancedEditEphemeralMessageMediaRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        receiver_user_id: crate::types::common::UserId,
+        ephemeral_message_id: crate::types::common::MessageId,
+        media: crate::types::message::InputMedia,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            receiver_user_id,
+            ephemeral_message_id,
+            media,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedEditEphemeralMessageMediaRequest {
+    type Response = bool;
+    const METHOD: &'static str = "editEphemeralMessageMedia";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
+        self.media.validate()?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+    fn validate_for_upload(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
+        self.media.validate_for_upload()?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `editEphemeralMessageCaption`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedEditEphemeralMessageCaptionRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub receiver_user_id: crate::types::common::UserId,
+    pub ephemeral_message_id: crate::types::common::MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_mode: Option<crate::types::common::ParseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_entities: Option<Vec<crate::types::message::MessageEntity>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_caption_above_media: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::InlineKeyboardMarkup>,
+}
+
+impl AdvancedEditEphemeralMessageCaptionRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        receiver_user_id: crate::types::common::UserId,
+        ephemeral_message_id: crate::types::common::MessageId,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            receiver_user_id,
+            ephemeral_message_id,
+            caption: None,
+            parse_mode: None,
+            caption_entities: None,
+            show_caption_above_media: None,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedEditEphemeralMessageCaptionRequest {
+    type Response = bool;
+    const METHOD: &'static str = "editEphemeralMessageCaption";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
+        validate_optional_display_text("caption", self.caption.as_deref(), 1024)?;
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        validate_optional_text_formatting(
+            "caption",
+            self.caption.as_deref(),
+            self.parse_mode,
+            self.caption_entities.as_deref(),
+        )?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `editEphemeralMessageReplyMarkup`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedEditEphemeralMessageReplyMarkupRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub receiver_user_id: crate::types::common::UserId,
+    pub ephemeral_message_id: crate::types::common::MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::InlineKeyboardMarkup>,
+}
+
+impl AdvancedEditEphemeralMessageReplyMarkupRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        receiver_user_id: crate::types::common::UserId,
+        ephemeral_message_id: crate::types::common::MessageId,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            receiver_user_id,
+            ephemeral_message_id,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedEditEphemeralMessageReplyMarkupRequest {
+    type Response = bool;
+    const METHOD: &'static str = "editEphemeralMessageReplyMarkup";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
         if let Some(value) = self.reply_markup.as_ref() {
             value.validate()?;
         }
@@ -1361,12 +1918,284 @@ impl AdvancedRequest for AdvancedDeclineSuggestedPostRequest {
     }
 }
 
+/// Auto-generated request for `deleteEphemeralMessage`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedDeleteEphemeralMessageRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub receiver_user_id: crate::types::common::UserId,
+    pub ephemeral_message_id: crate::types::common::MessageId,
+}
+
+impl AdvancedDeleteEphemeralMessageRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        receiver_user_id: crate::types::common::UserId,
+        ephemeral_message_id: crate::types::common::MessageId,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            receiver_user_id,
+            ephemeral_message_id,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedDeleteEphemeralMessageRequest {
+    type Response = bool;
+    const METHOD: &'static str = "deleteEphemeralMessage";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.receiver_user_id.validate()?;
+        self.ephemeral_message_id.validate()?;
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `deleteMessageReaction`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedDeleteMessageReactionRequest {
+    pub chat_id: crate::types::common::ChatId,
+    pub message_id: crate::types::common::MessageId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<crate::types::common::UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_chat_id: Option<i64>,
+}
+
+impl AdvancedDeleteMessageReactionRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        message_id: crate::types::common::MessageId,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            message_id,
+            user_id: None,
+            actor_chat_id: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedDeleteMessageReactionRequest {
+    type Response = bool;
+    const METHOD: &'static str = "deleteMessageReaction";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        self.message_id.validate()?;
+        if let Some(value) = self.user_id.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `deleteAllMessageReactions`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedDeleteAllMessageReactionsRequest {
+    pub chat_id: crate::types::common::ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<crate::types::common::UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_chat_id: Option<i64>,
+}
+
+impl AdvancedDeleteAllMessageReactionsRequest {
+    pub fn new(chat_id: impl Into<crate::types::common::ChatId>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            user_id: None,
+            actor_chat_id: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedDeleteAllMessageReactionsRequest {
+    type Response = bool;
+    const METHOD: &'static str = "deleteAllMessageReactions";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(value) = self.user_id.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `sendRichMessage`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedSendRichMessageRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection_id: Option<String>,
+    pub chat_id: crate::types::common::ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_thread_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
+    pub rich_message: crate::types::rich::InputRichMessage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_notification: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protect_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_paid_broadcast: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effect_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_post_parameters: Option<crate::types::telegram::SuggestedPostParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_parameters: Option<crate::types::telegram::ReplyParameters>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_markup: Option<crate::types::telegram::ReplyMarkup>,
+}
+
+impl AdvancedSendRichMessageRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::ChatId>,
+        rich_message: crate::types::rich::InputRichMessage,
+    ) -> Self {
+        Self {
+            business_connection_id: None,
+            chat_id: chat_id.into(),
+            message_thread_id: None,
+            direct_messages_topic_id: None,
+            ephemeral_message_parameters: None,
+            rich_message,
+            disable_notification: None,
+            protect_content: None,
+            allow_paid_broadcast: None,
+            message_effect_id: None,
+            suggested_post_parameters: None,
+            reply_parameters: None,
+            reply_markup: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedSendRichMessageRequest {
+    type Response = crate::types::message::Message;
+    const METHOD: &'static str = "sendRichMessage";
+
+    fn validate(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        if let Some(value) = self.ephemeral_message_parameters.as_ref() {
+            value.validate()?;
+        }
+        self.rich_message.validate()?;
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+    fn validate_for_upload(&self) -> Result<()> {
+        if let Some(value) = self.business_connection_id.as_deref() {
+            validate_string_id("business_connection_id", value)?;
+        }
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        if let Some(value) = self.direct_messages_topic_id {
+            validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        if let Some(value) = self.ephemeral_message_parameters.as_ref() {
+            value.validate()?;
+        }
+        self.rich_message.validate_for_upload()?;
+        if let Some(value) = self.message_effect_id.as_deref() {
+            validate_string_id("message_effect_id", value)?;
+        }
+        if let Some(value) = self.suggested_post_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_parameters.as_ref() {
+            value.validate()?;
+        }
+        if let Some(value) = self.reply_markup.as_ref() {
+            value.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Auto-generated request for `sendRichMessageDraft`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AdvancedSendRichMessageDraftRequest {
+    pub chat_id: crate::types::common::NumericChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_thread_id: Option<i64>,
+    pub draft_id: i64,
+    pub rich_message: crate::types::rich::InputRichMessage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_stop: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_on_stop: Option<bool>,
+}
+
+impl AdvancedSendRichMessageDraftRequest {
+    pub fn new(
+        chat_id: impl Into<crate::types::common::NumericChatId>,
+        draft_id: i64,
+        rich_message: crate::types::rich::InputRichMessage,
+    ) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            message_thread_id: None,
+            draft_id,
+            rich_message,
+            can_stop: None,
+            keep_on_stop: None,
+        }
+    }
+}
+
+impl AdvancedRequest for AdvancedSendRichMessageDraftRequest {
+    type Response = bool;
+    const METHOD: &'static str = "sendRichMessageDraft";
+
+    fn validate(&self) -> Result<()> {
+        self.chat_id.validate()?;
+        if let Some(value) = self.message_thread_id {
+            validate_positive_i64("message_thread_id", value)?;
+        }
+        self.rich_message.validate_for_draft()?;
+        if self.draft_id == 0 {
+            return Err(Error::InvalidRequest {
+                reason: "draft_id must be non-zero".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Auto-generated request for `sendGame`.
 #[derive(Clone, Debug, Serialize)]
 pub struct AdvancedSendGameRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_connection_id: Option<String>,
-    pub chat_id: crate::types::common::NumericChatId,
+    pub chat_id: crate::types::common::ChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_thread_id: Option<i64>,
     pub game_short_name: String,
@@ -1386,7 +2215,7 @@ pub struct AdvancedSendGameRequest {
 
 impl AdvancedSendGameRequest {
     pub fn new(
-        chat_id: impl Into<crate::types::common::NumericChatId>,
+        chat_id: impl Into<crate::types::common::ChatId>,
         game_short_name: impl Into<String>,
     ) -> Self {
         Self {

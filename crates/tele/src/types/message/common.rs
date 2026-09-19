@@ -66,6 +66,12 @@ pub struct Chat {
     pub is_forum: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community: Option<crate::types::community::Community>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_bot: Option<Box<User>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_direct_messages: Option<bool>,
 }
 
 impl Chat {

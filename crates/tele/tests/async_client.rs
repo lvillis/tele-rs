@@ -2156,7 +2156,7 @@ fn app_reply_text_preserves_source_message_thread() -> Result<(), DynError> {
         request
             .reply_parameters
             .as_ref()
-            .map(|parameters| parameters.message_id),
+            .and_then(|parameters| parameters.message_id),
         Some(MessageId(55))
     );
     Ok(())
@@ -2189,7 +2189,7 @@ fn app_reply_text_preserves_source_direct_messages_topic() -> Result<(), DynErro
         request
             .reply_parameters
             .as_ref()
-            .map(|parameters| parameters.message_id),
+            .and_then(|parameters| parameters.message_id),
         Some(MessageId(56))
     );
     Ok(())
@@ -2227,7 +2227,7 @@ fn app_reply_text_preserves_accessible_callback_direct_messages_topic() -> Resul
         request
             .reply_parameters
             .as_ref()
-            .map(|parameters| parameters.message_id),
+            .and_then(|parameters| parameters.message_id),
         Some(MessageId(57))
     );
     Ok(())
@@ -3209,7 +3209,7 @@ fn moderation_notice_for_message_preserves_delivery_context() -> Result<(), DynE
         request
             .reply_parameters
             .as_ref()
-            .map(|parameters| parameters.message_id),
+            .and_then(|parameters| parameters.message_id),
         Some(MessageId(56))
     );
     Ok(())
@@ -4031,5 +4031,153 @@ async fn upload_sticker_file_upload_multipart_success() -> Result<(), DynError> 
     assert_eq!(uploaded.file_id, "sticker_file");
 
     join_server(handle)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn rich_messages_upload_named_files_with_typed_responses() -> Result<(), DynError> {
+    use tele::types::advanced::AdvancedSendRichMessageRequest;
+    use tele::types::{InputRichBlock, InputRichMessage};
+    let (base_url, server) = spawn_server_with_checks(
+        "/bot123:abc/sendRichMessage",
+        200,
+        r#"{"ok":true,"result":{"message_id":9,"date":0,"chat":{"id":1,"type":"private"},"rich_message":{"blocks":[{"type":"paragraph","text":"sent"}]}}}"#,
+        &[
+            "multipart/form-data",
+            "attach://image",
+            "name=\"image\"",
+            "image-bytes",
+        ],
+    )?;
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedSendRichMessageRequest::new(
+        1_i64,
+        InputRichMessage::blocks(vec![InputRichBlock::Photo {
+            photo: InputMediaPhoto::new("attach://image"),
+            caption: None,
+        }]),
+    );
+    let files = vec![UploadPart::from_bytes(
+        "image",
+        "image.jpg",
+        b"image-bytes".to_vec(),
+    )?];
+    let message = client
+        .advanced()
+        .call_typed_with_files(&request, &files)
+        .await?;
+    assert_eq!(message.message_id, MessageId(9));
+    assert_eq!(message.kind(), tele::types::MessageKind::RichMessage);
+    server.finish()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_replies_preserve_ephemeral_recipient_and_reply_identifier() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let update: Update = serde_json::from_value(serde_json::json!({"update_id":1,"message":{
+        "message_id":0,"ephemeral_message_id":5,"date":0,"chat":{"id":-100,"type":"supergroup"},
+        "from":{"id":42,"is_bot":false,"first_name":"user"},"text":"/private"
+    }}))?;
+    let request = client
+        .app()
+        .reply(&update, "private response")?
+        .into_request();
+    request.validate()?;
+    let value = serde_json::to_value(request)?;
+    assert_eq!(
+        value["ephemeral_message_parameters"]["receiver_user_id"],
+        42
+    );
+    assert_eq!(value["reply_parameters"]["ephemeral_message_id"], 5);
+    assert!(value["reply_parameters"].get("message_id").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_photo_upload_can_use_the_top_level_parameter_names() -> Result<(), DynError> {
+    use tele::types::advanced::AdvancedSendLivePhotoRequest;
+    let (base_url, server) = spawn_server_with_checks(
+        "/bot123:abc/sendLivePhoto",
+        200,
+        r#"{"ok":true,"result":{"message_id":10,"date":1,"chat":{"id":1,"type":"private"}}}"#,
+        &[
+            "multipart/form-data",
+            "name=\"live_photo\"",
+            "name=\"photo\"",
+            "live-bytes",
+            "photo-bytes",
+        ],
+    )?;
+    let client = Client::builder(base_url)?.bot_token("123:abc")?.build()?;
+    let request = AdvancedSendLivePhotoRequest::new(1_i64, "attach://live_photo", "attach://photo");
+    let files = vec![
+        UploadPart::from_bytes("live_photo", "video.mp4", b"live-bytes".to_vec())?,
+        UploadPart::from_bytes("photo", "photo.jpg", b"photo-bytes".to_vec())?,
+    ];
+    let message = client
+        .advanced()
+        .call_typed_with_files(&request, &files)
+        .await?;
+    assert_eq!(message.message_id, MessageId(10));
+    server.finish()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn advanced_upload_preserves_text_that_looks_like_an_attachment() -> Result<(), DynError> {
+    use tele::types::advanced::AdvancedSendLivePhotoRequest;
+
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let mut request = AdvancedSendLivePhotoRequest::new(1_i64, "file-id", "attach://caption");
+    request.caption = Some("attach://caption".to_owned());
+    let files = [UploadPart::from_bytes("caption", "photo.jpg", vec![1])?];
+    let error = client
+        .advanced()
+        .call_typed_with_files(&request, &files)
+        .await;
+    assert!(matches!(error, Err(Error::InvalidRequest { reason })
+        if reason == "duplicate multipart field `caption`"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn moderation_rejects_unknown_and_chat_senders() -> Result<(), DynError> {
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let moderation = client.app().moderation();
+    for sender_chat in [
+        serde_json::json!({"id": -200, "type": "channel"}),
+        serde_json::json!({"id": -100, "type": "supergroup"}),
+        serde_json::Value::Null,
+    ] {
+        let mut message: tele::types::Message = serde_json::from_value(serde_json::json!({
+            "message_id": 1, "date": 1,
+            "chat": {"id": -100, "type": "supergroup"},
+            "from": {"id": 1087968824, "is_bot": true, "first_name": "compatibility"},
+            "sender_chat": sender_chat
+        }))?;
+        if message.sender_chat.is_none() {
+            message.from = None;
+        }
+        for result in [
+            moderation.ban_author(&message).await,
+            moderation
+                .ban_author_with(&message, BanMemberOptions::new())
+                .await,
+            moderation.mute_author(&message).await,
+            moderation
+                .mute_author_with(&message, RestrictMemberOptions::new())
+                .await,
+        ] {
+            assert!(matches!(result, Err(tele::Error::InvalidRequest { reason })
+                if reason.contains("requires a user sender")));
+        }
+    }
     Ok(())
 }

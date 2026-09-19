@@ -11,6 +11,7 @@ forwardMessages
 copyMessage
 copyMessages
 sendPhoto
+sendLivePhoto
 sendAudio
 sendDocument
 sendVideo
@@ -49,6 +50,8 @@ editChatSubscriptionInviteLink
 revokeChatInviteLink
 approveChatJoinRequest
 declineChatJoinRequest
+answerChatJoinRequestQuery
+sendChatJoinRequestWebApp
 setChatPhoto
 deleteChatPhoto
 setChatTitle
@@ -61,6 +64,7 @@ getChat
 getChatAdministrators
 getChatMemberCount
 getChatMember
+getUserPersonalChatMessages
 setChatStickerSet
 deleteChatStickerSet
 getForumTopicIconStickers
@@ -77,10 +81,13 @@ hideGeneralForumTopic
 unhideGeneralForumTopic
 unpinAllGeneralForumTopicMessages
 answerCallbackQuery
+answerGuestQuery
 getUserChatBoosts
 getBusinessConnection
 getManagedBotToken
 replaceManagedBotToken
+getManagedBotAccessSettings
+setManagedBotAccessSettings
 setMyCommands
 deleteMyCommands
 getMyCommands
@@ -134,10 +141,17 @@ stopMessageLiveLocation
 editMessageChecklist
 editMessageReplyMarkup
 stopPoll
+editEphemeralMessageText
+editEphemeralMessageMedia
+editEphemeralMessageCaption
+editEphemeralMessageReplyMarkup
 approveSuggestedPost
 declineSuggestedPost
 deleteMessage
 deleteMessages
+deleteEphemeralMessage
+deleteMessageReaction
+deleteAllMessageReactions
 sendSticker
 getStickerSet
 getCustomEmojiStickers
@@ -154,6 +168,8 @@ setStickerSetTitle
 setStickerSetThumbnail
 setCustomEmojiStickerSetThumbnail
 deleteStickerSet
+sendRichMessage
+sendRichMessageDraft
 answerInlineQuery
 sendInvoice
 createInvoiceLink

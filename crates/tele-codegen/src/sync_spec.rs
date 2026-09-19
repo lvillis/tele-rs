@@ -288,6 +288,13 @@ fn extract_return_desc(summary: &str) -> String {
             return tail[..end].trim().to_owned();
         }
     }
+    if let Some((_, tail)) = summary.split_once("On success, ") {
+        for suffix in [" is returned", " are returned"] {
+            if let Some((description, _)) = tail.split_once(suffix) {
+                return description.trim().to_owned();
+            }
+        }
+    }
     String::new()
 }
 
@@ -428,6 +435,21 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn extracts_passive_return_descriptions_used_by_new_methods() {
+        assert_eq!(
+            extract_return_desc(
+                "Use this method to send live photos. On success, the sent Message is returned."
+            ),
+            "the sent Message"
+        );
+        assert_eq!(
+            extract_return_desc("On success, an Array of Message objects is returned."),
+            "an Array of Message objects"
+        );
+        assert_eq!(extract_return_desc("On success, True is returned."), "True");
+    }
 
     #[test]
     fn extracts_methods_from_official_like_fragment() -> TestResult {

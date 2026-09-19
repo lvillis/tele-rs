@@ -39,10 +39,11 @@ impl Default for OutboxConfig {
 
 impl OutboxConfig {
     pub fn validate(&self) -> Result<()> {
-        if self.queue_capacity == 0 {
-            return Err(outbox_config_error(
-                "outbox queue_capacity must be greater than 0",
-            ));
+        if !(1..=Semaphore::MAX_PERMITS).contains(&self.queue_capacity) {
+            return Err(outbox_config_error(format!(
+                "outbox queue_capacity must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            )));
         }
         if self.max_attempts == 0 {
             return Err(outbox_config_error(

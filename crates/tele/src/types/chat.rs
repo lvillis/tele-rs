@@ -48,6 +48,10 @@ pub struct ChatPermissions {
     pub can_pin_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_manage_topics: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_react_to_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_edit_tag: Option<bool>,
 }
 
 macro_rules! impl_chat_permissions_builders {
@@ -82,6 +86,8 @@ impl ChatPermissions {
             can_invite_users: Some(true),
             can_pin_messages: Some(true),
             can_manage_topics: Some(true),
+            can_react_to_messages: Some(true),
+            can_edit_tag: Some(true),
         }
     }
 
@@ -101,6 +107,8 @@ impl ChatPermissions {
             can_invite_users: Some(false),
             can_pin_messages: Some(false),
             can_manage_topics: Some(false),
+            can_react_to_messages: Some(false),
+            can_edit_tag: Some(false),
         }
     }
 
@@ -123,6 +131,8 @@ impl ChatPermissions {
         with_invite_users => can_invite_users,
         with_pin_messages => can_pin_messages,
         with_manage_topics => can_manage_topics,
+        with_react_to_messages => can_react_to_messages,
+        with_edit_tag => can_edit_tag,
     }
 }
 
@@ -160,6 +170,12 @@ pub struct ChatAdministratorRights {
     pub can_pin_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_manage_topics: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_tags: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_direct_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_send_welcome_messages: Option<bool>,
 }
 
 impl ChatAdministratorRights {
@@ -186,6 +202,13 @@ impl ChatAdministratorRights {
             ChatAdministratorCapability::PostMessages => self.can_post_messages.unwrap_or(false),
             ChatAdministratorCapability::EditMessages => self.can_edit_messages.unwrap_or(false),
             ChatAdministratorCapability::PinMessages => self.can_pin_messages.unwrap_or(false),
+            ChatAdministratorCapability::ManageDirectMessages => {
+                self.can_manage_direct_messages.unwrap_or(false)
+            }
+            ChatAdministratorCapability::ManageTags => self.can_manage_tags.unwrap_or(false),
+            ChatAdministratorCapability::SendWelcomeMessages => {
+                self.can_send_welcome_messages.unwrap_or(false)
+            }
             ChatAdministratorCapability::ManageTopics => self.can_manage_topics.unwrap_or(false),
         }
     }
@@ -376,6 +399,9 @@ pub enum ChatAdministratorCapability {
     PostMessages,
     EditMessages,
     PinMessages,
+    ManageDirectMessages,
+    ManageTags,
+    SendWelcomeMessages,
     ManageTopics,
 }
 
@@ -395,6 +421,9 @@ impl ChatAdministratorCapability {
             Self::PostMessages => "post_messages",
             Self::EditMessages => "edit_messages",
             Self::PinMessages => "pin_messages",
+            Self::ManageDirectMessages => "manage_direct_messages",
+            Self::ManageTags => "manage_tags",
+            Self::SendWelcomeMessages => "send_welcome_messages",
             Self::ManageTopics => "manage_topics",
         }
     }
@@ -691,6 +720,8 @@ pub struct GetChatRequest {
 #[derive(Clone, Debug, Serialize)]
 pub struct GetChatAdministratorsRequest {
     pub chat_id: ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_bots: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -868,6 +899,12 @@ pub struct PromoteChatMemberRequest {
     pub can_pin_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_manage_topics: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_send_welcome_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_tags: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_manage_direct_messages: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1042,6 +1079,8 @@ pub struct PinChatMessageRequest {
     pub message_id: MessageId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_notification: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1049,6 +1088,8 @@ pub struct UnpinChatMessageRequest {
     pub chat_id: ChatId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_id: Option<MessageId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_connection_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1451,6 +1492,7 @@ mod tests {
         ));
 
         let pin = PinChatMessageRequest {
+            business_connection_id: None,
             chat_id: ChatId::from("@channel"),
             message_id: MessageId::from(1),
             disable_notification: None,
@@ -1458,6 +1500,7 @@ mod tests {
         assert!(pin.validate().is_ok());
 
         let invalid_pin = PinChatMessageRequest {
+            business_connection_id: None,
             chat_id: ChatId::from("@channel"),
             message_id: MessageId::from(0),
             disable_notification: None,

@@ -380,11 +380,14 @@ pub struct SendStickerRequest {
     pub reply_parameters: Option<ReplyParameters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_markup: Option<ReplyMarkup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
 }
 
 impl SendStickerRequest {
     pub fn new(chat_id: impl Into<ChatId>, sticker: impl Into<String>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             sticker: Some(sticker.into()),
             business_connection_id: None,
@@ -403,6 +406,7 @@ impl SendStickerRequest {
 
     pub fn for_upload(chat_id: impl Into<ChatId>) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id: chat_id.into(),
             sticker: None,
             business_connection_id: None,
@@ -420,6 +424,9 @@ impl SendStickerRequest {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id("sendSticker", self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_optional_positive_i64("sendSticker", "message_thread_id", self.message_thread_id)?;
@@ -442,6 +449,9 @@ impl SendStickerRequest {
     }
 
     pub(crate) fn validate_upload(&self) -> Result<(), Error> {
+        if let Some(parameters) = &self.ephemeral_message_parameters {
+            parameters.validate()?;
+        }
         validate_business_connection_id("sendSticker", self.business_connection_id.as_deref())?;
         self.chat_id.validate()?;
         validate_optional_positive_i64("sendSticker", "message_thread_id", self.message_thread_id)?;

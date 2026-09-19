@@ -169,6 +169,48 @@ pub(crate) fn validate_upload_part_name(label: &str, value: &str) -> Result<()> 
     Ok(())
 }
 
+pub(crate) fn is_file_reference_field(key: &str) -> bool {
+    matches!(
+        key,
+        "media"
+            | "photo"
+            | "live_photo"
+            | "thumbnail"
+            | "cover"
+            | "video"
+            | "audio"
+            | "document"
+            | "animation"
+            | "voice_note"
+            | "voice"
+            | "video_note"
+            | "sticker"
+    )
+}
+
+/// Visits file-reference fields in a serialized Telegram request, including nested media.
+/// Text, captions, and URLs used as links are deliberately excluded.
+pub(crate) fn visit_file_references(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                if is_file_reference_field(key)
+                    && let Some(reference) = value.as_str()
+                {
+                    visit(reference);
+                }
+                visit_file_references(value, visit);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                visit_file_references(value, visit);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

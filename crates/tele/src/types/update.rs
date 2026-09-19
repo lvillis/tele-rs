@@ -52,10 +52,12 @@ pub enum UpdateKind {
     ChatBoost,
     RemovedChatBoost,
     ManagedBot,
+    Subscription,
+    StoppedMessageGeneration,
     Unknown,
 }
 
-const KNOWN_UPDATE_KINDS: [UpdateKind; 25] = [
+const KNOWN_UPDATE_KINDS: [UpdateKind; 27] = [
     UpdateKind::Message,
     UpdateKind::EditedMessage,
     UpdateKind::ChannelPost,
@@ -81,6 +83,8 @@ const KNOWN_UPDATE_KINDS: [UpdateKind; 25] = [
     UpdateKind::ChatBoost,
     UpdateKind::RemovedChatBoost,
     UpdateKind::ManagedBot,
+    UpdateKind::Subscription,
+    UpdateKind::StoppedMessageGeneration,
 ];
 
 impl UpdateKind {
@@ -117,6 +121,8 @@ impl UpdateKind {
             Self::ChatBoost => "chat_boost",
             Self::RemovedChatBoost => "removed_chat_boost",
             Self::ManagedBot => "managed_bot",
+            Self::Subscription => "subscription",
+            Self::StoppedMessageGeneration => "stopped_message_generation",
             Self::Unknown => "unknown",
         }
     }
@@ -157,6 +163,8 @@ impl UpdateKind {
             "chat_boost" => Some(Self::ChatBoost),
             "removed_chat_boost" => Some(Self::RemovedChatBoost),
             "managed_bot" => Some(Self::ManagedBot),
+            "subscription" => Some(Self::Subscription),
+            "stopped_message_generation" => Some(Self::StoppedMessageGeneration),
             "unknown" => Some(Self::Unknown),
             _ => None,
         }
@@ -561,6 +569,8 @@ pub struct ChatJoinRequest {
     pub invite_link: Option<ChatInviteLink>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_id: Option<String>,
 }
 
 impl ChatJoinRequest {
@@ -700,6 +710,10 @@ pub struct Update {
     pub managed_bot: Option<ManagedBotUpdated>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription: Option<BotSubscriptionUpdated>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_message_generation: Option<MessageGenerationStopped>,
 }
 
 impl Update {
@@ -728,6 +742,8 @@ impl Update {
             || self.chat_join_request.is_some()
             || self.chat_boost.is_some()
             || self.removed_chat_boost.is_some()
+            || self.subscription.is_some()
+            || self.stopped_message_generation.is_some()
             || self.managed_bot.is_some()
     }
 
@@ -789,6 +805,8 @@ impl Update {
             UpdateKind::ChatJoinRequest => self.chat_join_request.is_some(),
             UpdateKind::ChatBoost => self.chat_boost.is_some(),
             UpdateKind::RemovedChatBoost => self.removed_chat_boost.is_some(),
+            UpdateKind::Subscription => self.subscription.is_some(),
+            UpdateKind::StoppedMessageGeneration => self.stopped_message_generation.is_some(),
             UpdateKind::ManagedBot => self.managed_bot.is_some(),
             UpdateKind::Unknown => self.has_unmodeled_kind() || !self.has_modeled_kind(),
         }
@@ -1132,6 +1150,23 @@ pub(crate) fn validate_allowed_updates(allowed_updates: &[AllowedUpdate]) -> Res
     }
 
     Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct BotSubscriptionUpdated {
+    pub user: User,
+    pub invoice_payload: String,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[non_exhaustive]
+pub struct MessageGenerationStopped {
+    pub chat: Chat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_thread_id: Option<i64>,
+    pub draft_id: i64,
 }
 
 #[cfg(test)]
@@ -1534,6 +1569,12 @@ mod tests {
                     "bot": {"id": 2, "is_bot": true, "first_name": "managed"}
                 }
             }),
+            UpdateKind::Subscription => {
+                json!({"update_id":126,"subscription":{"user":{"id":1,"is_bot":false,"first_name":"user"},"invoice_payload":"invoice","state":"active"}})
+            }
+            UpdateKind::StoppedMessageGeneration => {
+                json!({"update_id":127,"stopped_message_generation":{"chat":{"id":1,"type":"private"},"draft_id":1}})
+            }
             UpdateKind::Unknown => json!({
                 "update_id": 112,
                 "new_kind_payload": {"foo": "bar"}

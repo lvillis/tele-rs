@@ -113,6 +113,8 @@ pub struct AdvancedSendStickerRequest {
     pub message_thread_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_messages_topic_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_message_parameters: Option<crate::types::ephemeral::EphemeralMessageParameters>,
     pub sticker: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emoji: Option<String>,
@@ -142,6 +144,7 @@ impl AdvancedSendStickerRequest {
             chat_id: chat_id.into(),
             message_thread_id: None,
             direct_messages_topic_id: None,
+            ephemeral_message_parameters: None,
             sticker: sticker.into(),
             emoji: None,
             disable_notification: None,
@@ -169,6 +172,9 @@ impl AdvancedRequest for AdvancedSendStickerRequest {
         }
         if let Some(value) = self.direct_messages_topic_id {
             validate_positive_i64("direct_messages_topic_id", value)?;
+        }
+        if let Some(value) = self.ephemeral_message_parameters.as_ref() {
+            value.validate()?;
         }
         validate_required_string("sticker", &self.sticker)?;
         validate_control_free_string("sticker", &self.sticker)?;

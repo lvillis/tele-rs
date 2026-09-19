@@ -63,3 +63,6 @@ pub use service::{
     PollOptionDeleted, ProximityAlertTriggered, SharedUser, UsersShared, VideoChatEnded,
     VideoChatParticipantsInvited, VideoChatScheduled, VideoChatStarted, WriteAccessAllowed,
 };
+
+pub use content::Link;
+pub use requests::InputMediaLink;

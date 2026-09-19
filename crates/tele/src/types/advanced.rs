@@ -8,6 +8,10 @@ use crate::Result;
 pub trait AdvancedRequest: Serialize {
     type Response: DeserializeOwned;
     const METHOD: &'static str;
+    /// Validates a request whose attach:// references will be supplied as files.
+    fn validate_for_upload(&self) -> Result<()> {
+        self.validate()
+    }
 
     fn validate(&self) -> Result<()> {
         Ok(())

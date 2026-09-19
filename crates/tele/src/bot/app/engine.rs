@@ -420,12 +420,9 @@ where
                 .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
             #[cfg(not(feature = "tracing"))]
             let dispatch_future = self.router.dispatch(context, update);
+            let result = dispatch_future.await;
             let record = self
-                .record_dispatch_result(
-                    update_id,
-                    dispatch_started_at.elapsed(),
-                    dispatch_future.await,
-                )
+                .record_dispatch_result(update_id, dispatch_started_at.elapsed(), result)
                 .await;
             if let Some(error) = record.error
                 && !self.config.continue_on_handler_error
@@ -443,43 +440,43 @@ where
         updates: Vec<Update>,
     ) -> std::result::Result<Vec<DispatchOutcome>, DispatchFailure> {
         let max_concurrency = self.config.max_handler_concurrency;
-        let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
         let update_count = updates.len();
         let mut outcomes = vec![None; update_count];
 
-        for (index, update) in updates.into_iter().enumerate() {
-            let update_id = update.update_id;
-            self.notify_unknown_kinds(&update).await;
-            self.notify_event(EngineEvent::DispatchStarted { update_id })
-                .await;
+        let mut updates = updates.into_iter().enumerate();
+        let mut first_error = None;
 
-            let permit = semaphore.clone().acquire_owned().await.map_err(|_| {
-                DispatchFailure::new(
-                    runtime_error("handler semaphore closed unexpectedly"),
-                    successful_source_order_prefix(&outcomes),
-                )
-            })?;
+        loop {
+            // Reap completed tasks before admitting more work. JoinSet bounds both
+            // running tasks and completed results awaiting their hooks.
+            while join_set.len() < max_concurrency {
+                let Some((index, update)) = updates.next() else {
+                    break;
+                };
+                let update_id = update.update_id;
+                self.notify_unknown_kinds(&update).await;
+                self.notify_event(EngineEvent::DispatchStarted { update_id })
+                    .await;
 
-            let router = self.router.clone();
-            let context = BotContext::new(self.client.clone());
-            join_set.spawn(async move {
-                let _permit = permit;
-                let dispatch_started_at = Instant::now();
-                #[cfg(feature = "tracing")]
-                let dispatch_future = router
-                    .dispatch(context, update)
-                    .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
-                #[cfg(not(feature = "tracing"))]
-                let dispatch_future = router.dispatch(context, update);
-                let result = dispatch_future.await;
-                (index, update_id, dispatch_started_at.elapsed(), result)
-            });
-        }
+                let router = self.router.clone();
+                let context = BotContext::new(self.client.clone());
+                join_set.spawn(async move {
+                    let dispatch_started_at = Instant::now();
+                    #[cfg(feature = "tracing")]
+                    let dispatch_future = router
+                        .dispatch(context, update)
+                        .instrument(tracing::debug_span!("tele.bot.dispatch", update_id));
+                    #[cfg(not(feature = "tracing"))]
+                    let dispatch_future = router.dispatch(context, update);
+                    let result = dispatch_future.await;
+                    (index, update_id, dispatch_started_at.elapsed(), result)
+                });
+            }
 
-        let mut first_error: Option<Error> = None;
-
-        while let Some(join_result) = join_set.join_next().await {
+            let Some(join_result) = join_set.join_next().await else {
+                break;
+            };
             match join_result {
                 Ok((index, update_id, latency, result)) => {
                     let record = self

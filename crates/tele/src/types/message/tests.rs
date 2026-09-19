@@ -140,6 +140,28 @@ fn unique_gift_payload() -> Value {
 fn message_for_kind(kind: MessageKind) -> std::result::Result<Message, Box<dyn StdError>> {
     let mut object = base_message_payload();
     match kind {
+        MessageKind::RichMessage => {
+            object.insert(
+                "rich_message".to_owned(),
+                json!({"blocks":[{"type":"paragraph","text":"hello"}]}),
+            );
+        }
+        MessageKind::CommunityChatAdded => {
+            object.insert(
+                "community_chat_added".to_owned(),
+                json!({"community":{"id":1,"name":"community"}}),
+            );
+        }
+        MessageKind::CommunityChatJoined => {
+            object.insert(
+                "community_chat_joined".to_owned(),
+                json!({"community":{"id":1,"name":"community"}}),
+            );
+        }
+        MessageKind::CommunityChatRemoved => {
+            object.insert("community_chat_removed".to_owned(), json!({}));
+        }
+
         MessageKind::WriteAccessAllowed => {
             object.insert(
                 "write_access_allowed".to_owned(),
@@ -1489,6 +1511,7 @@ fn preserves_unknown_paid_media_payload() -> std::result::Result<(), Box<dyn Std
 #[test]
 fn input_media_round_trips_with_boxed_variants() -> std::result::Result<(), Box<dyn StdError>> {
     let media = InputMedia::from(InputMediaPhoto {
+        show_caption_above_media: None,
         media: "attach://photo".to_owned(),
         caption: Some("preview".to_owned()),
         parse_mode: Some(ParseMode::Html),
@@ -1539,5 +1562,29 @@ fn edit_message_result_helpers_cover_both_variants() -> std::result::Result<(), 
     assert!(success.message().is_none());
     assert_eq!(success.success(), Some(true));
 
+    Ok(())
+}
+
+#[test]
+fn sender_user_distinguishes_users_from_chat_compatibility_senders()
+-> std::result::Result<(), Box<dyn StdError>> {
+    let mut message: Message = serde_json::from_value(json!({
+        "message_id": 1, "date": 1,
+        "chat": {"id": -100, "type": "supergroup"},
+        "from": {"id": 42, "is_bot": false, "first_name": "sender"}
+    }))?;
+    assert_eq!(message.sender_user().map(|user| user.id), Some(UserId(42)));
+    for sender in [
+        json!({"id": -200, "type": "channel"}),
+        json!({"id": -100, "type": "supergroup"}),
+    ] {
+        message.sender_chat = Some(serde_json::from_value(sender)?);
+        assert!(message.sender_user().is_none());
+        assert_eq!(message.from_user().map(|user| user.id), Some(UserId(42)));
+    }
+    message.from = None;
+    assert!(message.sender_user().is_none());
+    message.sender_chat = None;
+    assert!(message.sender_user().is_none());
     Ok(())
 }

@@ -10,6 +10,7 @@ pub mod file;
 pub mod gift;
 pub mod message;
 pub mod payment;
+pub mod rich;
 pub mod sticker;
 pub(crate) mod tagged;
 pub mod telegram;
@@ -124,3 +125,16 @@ pub use update::{
 };
 pub use upload::{UploadFile, UploadPart};
 pub use webhook::{DeleteWebhookRequest, SetWebhookRequest, WebhookInfo, WebhookSecretToken};
+
+pub use rich::*;
+
+pub mod community;
+pub mod ephemeral;
+pub use bot::{BotAccessSettings, SentGuestMessage};
+pub use community::*;
+pub use ephemeral::*;
+pub use update::{BotSubscriptionUpdated, MessageGenerationStopped};
+
+pub use telegram::InputMessageContent;
+
+pub use message::{InputMediaLink, Link};

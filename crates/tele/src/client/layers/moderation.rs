@@ -15,9 +15,9 @@ use crate::types::message::{DeleteMessageRequest, Message};
 use crate::types::update::Update;
 
 fn author_user_id(message: &Message, method: &str) -> Result<UserId> {
-    message.from_user().map(|user| user.id).ok_or_else(|| {
+    message.sender_user().map(|user| user.id).ok_or_else(|| {
         invalid_request(format!(
-            "message does not contain a user sender for {method}"
+            "{method} requires a user sender: from must be present and sender_chat must be absent"
         ))
     })
 }
@@ -257,11 +257,19 @@ impl ModerationApi {
         self.client.chats().ban_chat_member(&request).await
     }
 
+    /// Bans the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub async fn ban_author(&self, message: &Message) -> Result<bool> {
         self.ban_author_with(message, BanMemberOptions::default())
             .await
     }
 
+    /// Bans the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub async fn ban_author_with(
         &self,
         message: &Message,
@@ -319,11 +327,19 @@ impl ModerationApi {
             .await
     }
 
+    /// Mutes the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub async fn mute_author(&self, message: &Message) -> Result<bool> {
         self.mute_author_with(message, RestrictMemberOptions::default())
             .await
     }
 
+    /// Mutes the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub async fn mute_author_with(
         &self,
         message: &Message,
@@ -468,10 +484,18 @@ impl BlockingModerationApi {
         self.client.chats().ban_chat_member(&request)
     }
 
+    /// Bans the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub fn ban_author(&self, message: &Message) -> Result<bool> {
         self.ban_author_with(message, BanMemberOptions::default())
     }
 
+    /// Bans the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub fn ban_author_with(&self, message: &Message, options: BanMemberOptions) -> Result<bool> {
         let user_id = author_user_id(message, "banChatMember")?;
         self.ban_member_with(message.chat.id, user_id, options)
@@ -521,10 +545,18 @@ impl BlockingModerationApi {
         self.restrict_member_with(chat_id, user_id, ChatPermissions::deny_all(), options)
     }
 
+    /// Mutes the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub fn mute_author(&self, message: &Message) -> Result<bool> {
         self.mute_author_with(message, RestrictMemberOptions::default())
     }
 
+    /// Mutes the user who sent the message.
+    ///
+    /// Returns an error before sending a request if the sender is unknown or
+    /// `sender_chat` is present. Never substitutes a compatibility user or bans a chat.
     pub fn mute_author_with(
         &self,
         message: &Message,

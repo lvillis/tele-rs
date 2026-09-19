@@ -1,0 +1,468 @@
+{
+  "text": [
+    {
+      "type": "bold",
+      "text": "text"
+    },
+    {
+      "type": "italic",
+      "text": "text"
+    },
+    {
+      "type": "underline",
+      "text": "text"
+    },
+    {
+      "type": "strikethrough",
+      "text": "text"
+    },
+    {
+      "type": "spoiler",
+      "text": "text"
+    },
+    {
+      "type": "date_time",
+      "text": "text",
+      "unix_time": 1,
+      "date_time_format": "value"
+    },
+    {
+      "type": "text_mention",
+      "text": "text",
+      "user": {
+        "id": 1,
+        "is_bot": true,
+        "first_name": "value"
+      }
+    },
+    {
+      "type": "subscript",
+      "text": "text"
+    },
+    {
+      "type": "superscript",
+      "text": "text"
+    },
+    {
+      "type": "marked",
+      "text": "text"
+    },
+    {
+      "type": "code",
+      "text": "text"
+    },
+    {
+      "type": "custom_emoji",
+      "custom_emoji_id": "value",
+      "alternative_text": "value"
+    },
+    {
+      "type": "mathematical_expression",
+      "expression": "value"
+    },
+    {
+      "type": "url",
+      "text": "text",
+      "url": "value"
+    },
+    {
+      "type": "email_address",
+      "text": "text",
+      "email_address": "value"
+    },
+    {
+      "type": "phone_number",
+      "text": "text",
+      "phone_number": "value"
+    },
+    {
+      "type": "bank_card_number",
+      "text": "text",
+      "bank_card_number": "value"
+    },
+    {
+      "type": "mention",
+      "text": "text",
+      "username": "value"
+    },
+    {
+      "type": "hashtag",
+      "text": "text",
+      "hashtag": "value"
+    },
+    {
+      "type": "cashtag",
+      "text": "text",
+      "cashtag": "value"
+    },
+    {
+      "type": "bot_command",
+      "text": "text",
+      "bot_command": "value"
+    },
+    {
+      "type": "button",
+      "button": {
+        "text": "text",
+        "disabled": {}
+      }
+    },
+    {
+      "type": "anchor",
+      "name": "value"
+    },
+    {
+      "type": "anchor_link",
+      "text": "text",
+      "anchor_name": "value"
+    },
+    {
+      "type": "reference",
+      "text": "text",
+      "name": "value"
+    },
+    {
+      "type": "reference_link",
+      "text": "text",
+      "reference_name": "value"
+    }
+  ],
+  "input_blocks": [
+    {
+      "type": "paragraph",
+      "text": "text"
+    },
+    {
+      "type": "heading",
+      "text": "text",
+      "size": 1
+    },
+    {
+      "type": "pre",
+      "text": "text"
+    },
+    {
+      "type": "footer",
+      "text": "text"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "mathematical_expression",
+      "expression": "value"
+    },
+    {
+      "type": "anchor",
+      "name": "value"
+    },
+    {
+      "type": "list",
+      "items": [
+        {
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "paragraph"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "blockquote",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "expandable_blockquote",
+      "text": "text"
+    },
+    {
+      "type": "pullquote",
+      "text": "text"
+    },
+    {
+      "type": "collage",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "slideshow",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "cells": [
+        [
+          {
+            "align": "left",
+            "valign": "top"
+          }
+        ]
+      ]
+    },
+    {
+      "type": "details",
+      "summary": "text",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "map",
+      "location": {
+        "latitude": 1.0,
+        "longitude": 1.0
+      }
+    },
+    {
+      "type": "buttons",
+      "buttons": [
+        {
+          "text": "text",
+          "disabled": {}
+        }
+      ]
+    },
+    {
+      "type": "animation",
+      "animation": {
+        "type": "animation",
+        "media": "value"
+      }
+    },
+    {
+      "type": "audio",
+      "audio": {
+        "type": "audio",
+        "media": "value"
+      }
+    },
+    {
+      "type": "document",
+      "document": {
+        "type": "document",
+        "media": "value"
+      }
+    },
+    {
+      "type": "photo",
+      "photo": {
+        "type": "photo",
+        "media": "value"
+      }
+    },
+    {
+      "type": "video",
+      "video": {
+        "type": "video",
+        "media": "value"
+      }
+    },
+    {
+      "type": "voice_note",
+      "voice_note": {
+        "type": "voice_note",
+        "media": "value"
+      }
+    },
+    {
+      "type": "thinking",
+      "text": "text"
+    }
+  ],
+  "blocks": [
+    {
+      "type": "paragraph",
+      "text": "text"
+    },
+    {
+      "type": "heading",
+      "text": "text",
+      "size": 1
+    },
+    {
+      "type": "pre",
+      "text": "text"
+    },
+    {
+      "type": "footer",
+      "text": "text"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "mathematical_expression",
+      "expression": "value"
+    },
+    {
+      "type": "anchor",
+      "name": "value"
+    },
+    {
+      "type": "list",
+      "items": [
+        {
+          "label": "value",
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "paragraph"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "blockquote",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "expandable_blockquote",
+      "text": "text"
+    },
+    {
+      "type": "pullquote",
+      "text": "text"
+    },
+    {
+      "type": "collage",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "slideshow",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "cells": [
+        [
+          {
+            "align": "left",
+            "valign": "top"
+          }
+        ]
+      ]
+    },
+    {
+      "type": "details",
+      "summary": "text",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "paragraph"
+        }
+      ]
+    },
+    {
+      "type": "map",
+      "location": {
+        "latitude": 1.0,
+        "longitude": 1.0
+      },
+      "zoom": 1,
+      "width": 1,
+      "height": 1
+    },
+    {
+      "type": "buttons",
+      "buttons": [
+        {
+          "text": "text",
+          "disabled": {}
+        }
+      ]
+    },
+    {
+      "type": "animation",
+      "animation": {
+        "file_id": "value",
+        "file_unique_id": "value",
+        "width": 1,
+        "height": 1,
+        "duration": 1
+      }
+    },
+    {
+      "type": "audio",
+      "audio": {
+        "file_id": "value",
+        "file_unique_id": "value",
+        "duration": 1
+      }
+    },
+    {
+      "type": "document",
+      "document": {
+        "file_id": "value",
+        "file_unique_id": "value"
+      }
+    },
+    {
+      "type": "photo",
+      "photo": [
+        {
+          "file_id": "value",
+          "file_unique_id": "value",
+          "width": 1,
+          "height": 1
+        }
+      ]
+    },
+    {
+      "type": "video",
+      "video": {
+        "file_id": "value",
+        "file_unique_id": "value",
+        "width": 1,
+        "height": 1,
+        "duration": 1
+      }
+    },
+    {
+      "type": "voice_note",
+      "voice_note": {
+        "file_id": "value",
+        "file_unique_id": "value",
+        "duration": 1
+      }
+    },
+    {
+      "type": "thinking",
+      "text": "text"
+    }
+  ]
+}

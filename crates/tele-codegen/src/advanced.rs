@@ -329,6 +329,15 @@ fn ctor_assign(field_name: &str, field_ty: &str) -> String {
 
 fn map_raw_type(type_raw: &str) -> Option<String> {
     let base_map = [
+        ("InputRichMessage", "crate::types::rich::InputRichMessage"),
+        (
+            "EphemeralMessageParameters",
+            "crate::types::ephemeral::EphemeralMessageParameters",
+        ),
+        (
+            "LinkPreviewOptions",
+            "crate::types::telegram::LinkPreviewOptions",
+        ),
         ("InputSticker", "crate::types::sticker::InputSticker"),
         ("InputMedia", "crate::types::message::InputMedia"),
         ("LabeledPrice", "crate::types::payment::LabeledPrice"),
@@ -428,6 +437,10 @@ fn resolve_param_type(param: &ParamSpec) -> String {
 
 fn response_type(method: &str, return_desc: &str) -> &'static str {
     match method {
+        "getManagedBotAccessSettings" => "crate::types::bot::BotAccessSettings",
+        "answerGuestQuery" => "crate::types::bot::SentGuestMessage",
+        "getUserPersonalChatMessages" => "Vec<crate::types::message::Message>",
+        "sendLivePhoto" | "sendRichMessage" => "crate::types::message::Message",
         "getUpdates" => "Vec<crate::types::update::Update>",
         "getWebhookInfo" => "crate::types::webhook::WebhookInfo",
         "getMe" => "crate::types::bot::User",
@@ -522,6 +535,8 @@ fn response_type(method: &str, return_desc: &str) -> &'static str {
 }
 
 const TYPES_WITH_VALIDATE: &[&str] = &[
+    "crate::types::rich::InputRichMessage",
+    "crate::types::ephemeral::EphemeralMessageParameters",
     "crate::types::common::ChatId",
     "crate::types::common::NumericChatId",
     "crate::types::common::UserId",
@@ -571,7 +586,6 @@ fn positive_i64_field(field_name: &str) -> bool {
         field_name,
         "active_period"
             | "direct_messages_topic_id"
-            | "draft_id"
             | "duration"
             | "emoji_status_expiration_date"
             | "from_story_id"
@@ -718,7 +732,9 @@ fn optional_message_text_field(method: &MethodSpec, param: &ParamSpec) -> bool {
 
 fn optional_display_text_limit(method: &MethodSpec, param: &ParamSpec) -> Option<usize> {
     match (method.method.as_str(), param.field_name.as_str()) {
-        ("sendPaidMedia", "caption") => Some(1024),
+        ("sendPaidMedia" | "sendLivePhoto" | "editEphemeralMessageCaption", "caption") => {
+            Some(1024)
+        }
         ("postStory" | "editStory", "caption") => Some(2048),
         _ => None,
     }
@@ -754,15 +770,36 @@ fn string_items_limit(method: &MethodSpec, param: &ParamSpec) -> Option<&'static
     }
 }
 
-fn validation_rule(method: &MethodSpec, param: &ParamSpec) -> Option<String> {
+#[derive(Clone, Copy)]
+enum ValidationMode {
+    Standard,
+    Upload,
+    Draft,
+}
+
+impl ValidationMode {
+    fn nested_validator(self, field_ty: &str) -> &'static str {
+        match (self, field_ty) {
+            (
+                Self::Upload,
+                "crate::types::rich::InputRichMessage" | "crate::types::message::InputMedia",
+            ) => "validate_for_upload",
+            (Self::Draft, "crate::types::rich::InputRichMessage") => "validate_for_draft",
+            _ => "validate",
+        }
+    }
+}
+
+fn validation_rule(method: &MethodSpec, param: &ParamSpec, mode: ValidationMode) -> Option<String> {
     let field_ty = resolve_param_type(param);
     if type_has_validate(&field_ty) {
+        let validator = mode.nested_validator(&field_ty);
         if param.required {
-            return Some(format!("        self.{}.validate()?;", param.field_name));
+            return Some(format!("        self.{}.{validator}()?;", param.field_name));
         }
 
         return Some(format!(
-            "        if let Some(value) = self.{}.as_ref() {{\n            value.validate()?;\n        }}",
+            "        if let Some(value) = self.{}.as_ref() {{\n            value.{validator}()?;\n        }}",
             param.field_name
         ));
     }
@@ -1089,6 +1126,22 @@ fn method_specific_validation_owns_param(method: &MethodSpec, param: &ParamSpec)
 
 fn method_specific_validation_rules(method: &MethodSpec) -> Vec<String> {
     match method.method.as_str() {
+        "sendLivePhoto" => vec![r#"        crate::types::validation::reject_http_file_url("live_photo", &self.live_photo)?;
+        crate::types::validation::reject_http_file_url("photo", &self.photo)?;"#.to_owned()],
+        "sendMessageDraft" | "sendRichMessageDraft" => vec![r#"        if self.draft_id == 0 {
+            return Err(Error::InvalidRequest { reason: "draft_id must be non-zero".to_owned() });
+        }"#.to_owned()],
+        "editEphemeralMessageText" => vec![r#"        if self.text.is_some() == self.rich_message.is_some() {
+            return Err(Error::InvalidRequest { reason: "exactly one of text or rich_message is required".to_owned() });
+        }
+        if let Some(text) = &self.text {
+            crate::types::validation::message_text("editEphemeralMessageText", text)?;
+        }"#.to_owned()],
+        "getUserPersonalChatMessages" => vec![r#"        crate::types::validation::i64_range("limit", self.limit, 1, 20)?;"#.to_owned()],
+        "setManagedBotAccessSettings" => vec![r#"        if let Some(ids) = &self.added_user_ids
+            && (ids.len() > 10 || ids.iter().any(|id| *id <= 0)) {
+            return Err(Error::InvalidRequest { reason: "added_user_ids must contain at most 10 positive identifiers".to_owned() });
+        }"#.to_owned()],
         "sendInvoice" => vec![
             r#"        validate_invoice_prices("sendInvoice", &self.currency, &self.prices)?;"#
                 .to_owned(),
@@ -1404,6 +1457,18 @@ fn domain_for_method(fn_name: &str) -> &'static str {
     "misc"
 }
 
+fn request_validation_rules(method: &MethodSpec, mode: ValidationMode) -> Vec<String> {
+    method
+        .params
+        .iter()
+        .filter(|param| !method_specific_validation_owns_param(method, param))
+        .filter_map(|param| validation_rule(method, param, mode))
+        .chain(formatting_validation_rules(method))
+        .chain(chat_or_inline_message_target_validation_rules(method))
+        .chain(method_specific_validation_rules(method))
+        .collect()
+}
+
 fn render_request(method: &MethodSpec) -> String {
     let req_name = request_type_name(&method.fn_name);
     let required_params: Vec<&ParamSpec> = method
@@ -1411,15 +1476,12 @@ fn render_request(method: &MethodSpec) -> String {
         .iter()
         .filter(|param| param.required)
         .collect();
-    let validation_rules = method
-        .params
-        .iter()
-        .filter(|param| !method_specific_validation_owns_param(method, param))
-        .filter_map(|param| validation_rule(method, param))
-        .chain(formatting_validation_rules(method))
-        .chain(chat_or_inline_message_target_validation_rules(method))
-        .chain(method_specific_validation_rules(method))
-        .collect::<Vec<_>>();
+    let mode = if method.method == "sendRichMessageDraft" {
+        ValidationMode::Draft
+    } else {
+        ValidationMode::Standard
+    };
+    let validation_rules = request_validation_rules(method, mode);
     let derive = if required_params.is_empty() {
         "#[derive(Clone, Debug, Default, Serialize)]"
     } else {
@@ -1511,11 +1573,24 @@ fn render_request(method: &MethodSpec) -> String {
     if !validation_rules.is_empty() {
         let _ = writeln!(&mut out);
         let _ = writeln!(&mut out, "    fn validate(&self) -> Result<()> {{");
-        for rule in validation_rules {
+        for rule in &validation_rules {
             let _ = writeln!(&mut out, "{rule}");
         }
         let _ = writeln!(&mut out, "        Ok(())");
         let _ = writeln!(&mut out, "    }}");
+    }
+    if matches!(
+        method.method.as_str(),
+        "sendRichMessage" | "editEphemeralMessageMedia" | "editMessageMedia"
+    ) {
+        let _ = writeln!(
+            &mut out,
+            "    fn validate_for_upload(&self) -> Result<()> {{"
+        );
+        for rule in request_validation_rules(method, ValidationMode::Upload) {
+            let _ = writeln!(&mut out, "{rule}");
+        }
+        let _ = writeln!(&mut out, "        Ok(())\n    }}");
     }
     let _ = writeln!(&mut out, "}}");
     let _ = writeln!(&mut out);
@@ -1540,6 +1615,14 @@ fn generate_types_root(grouped: &HashMap<&'static str, Vec<&MethodSpec>>) -> Str
     let _ = writeln!(&mut out, "pub trait AdvancedRequest: Serialize {{");
     let _ = writeln!(&mut out, "    type Response: DeserializeOwned;");
     let _ = writeln!(&mut out, "    const METHOD: &'static str;");
+    let _ = writeln!(
+        &mut out,
+        "    /// Validates a request whose attach:// references will be supplied as files."
+    );
+    let _ = writeln!(
+        &mut out,
+        "    fn validate_for_upload(&self) -> Result<()> {{ self.validate() }}"
+    );
     let _ = writeln!(&mut out);
     let _ = writeln!(&mut out, "    fn validate(&self) -> Result<()> {{");
     let _ = writeln!(&mut out, "        Ok(())");

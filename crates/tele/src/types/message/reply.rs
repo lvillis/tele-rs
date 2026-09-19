@@ -101,7 +101,7 @@ pub struct InaccessibleMessage {
 #[non_exhaustive]
 pub enum MaybeInaccessibleMessage {
     Accessible(Box<Message>),
-    Inaccessible(InaccessibleMessage),
+    Inaccessible(Box<InaccessibleMessage>),
 }
 
 impl<'de> Deserialize<'de> for MaybeInaccessibleMessage {
@@ -116,7 +116,7 @@ impl<'de> Deserialize<'de> for MaybeInaccessibleMessage {
             .unwrap_or_default();
         if date == 0 {
             InaccessibleMessage::deserialize(value)
-                .map(Self::Inaccessible)
+                .map(|message| Self::Inaccessible(Box::new(message)))
                 .map_err(serde::de::Error::custom)
         } else {
             Message::deserialize(value)
@@ -159,7 +159,7 @@ impl MaybeInaccessibleMessage {
     pub fn into_inaccessible(self) -> Option<InaccessibleMessage> {
         match self {
             Self::Accessible(_) => None,
-            Self::Inaccessible(message) => Some(message),
+            Self::Inaccessible(message) => Some(*message),
         }
     }
 

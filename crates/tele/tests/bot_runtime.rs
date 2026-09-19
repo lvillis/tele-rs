@@ -1915,6 +1915,43 @@ fn channel_source_rejects_zero_capacity_values() -> Result<(), DynError> {
     Ok(())
 }
 
+#[test]
+fn runtime_capacity_limits_are_validated_before_constructing_semaphores() {
+    let max = tokio::sync::Semaphore::MAX_PERMITS;
+    for capacity in [max + 1, usize::MAX] {
+        assert!(matches!(
+            channel_source(capacity),
+            Err(Error::Configuration { .. })
+        ));
+        let engine = EngineConfig {
+            max_handler_concurrency: capacity,
+            ..EngineConfig::default()
+        };
+        assert!(matches!(
+            engine.validate(),
+            Err(Error::Configuration { .. })
+        ));
+        let mut outbox = OutboxConfig::default();
+        outbox.queue_capacity = capacity;
+        assert!(matches!(
+            outbox.validate(),
+            Err(Error::Configuration { .. })
+        ));
+    }
+    assert!(channel_source(max).is_ok());
+    assert!(
+        EngineConfig {
+            max_handler_concurrency: max,
+            ..EngineConfig::default()
+        }
+        .validate()
+        .is_ok()
+    );
+    let mut outbox = OutboxConfig::default();
+    outbox.queue_capacity = max;
+    assert!(outbox.validate().is_ok());
+}
+
 #[tokio::test]
 async fn channel_source_replays_in_flight_batch_until_ordered_commit() -> Result<(), DynError> {
     let (sink, mut source) = channel_source(4)?;
@@ -1965,6 +2002,41 @@ async fn channel_source_replays_in_flight_batch_until_ordered_commit() -> Result
         .commit(&[DispatchOutcome::Ignored { update_id: 1902 }])
         .await?;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_source_rejects_invalid_commit_without_losing_updates() -> Result<(), DynError> {
+    let (sink, mut source) = channel_source(2)?;
+    sink.send(tele::bot::testing::message_update(1, 1, "first")?)
+        .await?;
+    sink.send(tele::bot::testing::message_update(2, 1, "second")?)
+        .await?;
+    source.poll().await?;
+
+    for ids in [vec![1, 3], vec![1, 2, 3]] {
+        let outcomes = ids
+            .into_iter()
+            .map(|update_id| DispatchOutcome::Handled { update_id })
+            .collect::<Vec<_>>();
+        assert!(source.commit(&outcomes).await.is_err());
+        let replay = source.poll().await?;
+        assert_eq!(
+            replay
+                .iter()
+                .map(|update| update.update_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+    source
+        .commit(&[
+            DispatchOutcome::Handled { update_id: 1 },
+            DispatchOutcome::Ignored { update_id: 2 },
+        ])
+        .await?;
+    drop(sink);
+    assert!(source.poll().await.is_err());
     Ok(())
 }
 
@@ -2993,7 +3065,10 @@ async fn bot_engine_metric_hook_emits_poll_and_dispatch_latency() -> Result<(), 
     let mut router = Router::new();
     router
         .command_route("start")?
-        .handle(|_context: BotContext, _update: Update| async move { Ok(()) });
+        .handle(|_context: BotContext, _update: Update| async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            Ok(())
+        });
 
     let (sink, source) = channel_source(1)?;
     let Some(update) = parse_update(message_update(7001, 10, "/start")) else {
@@ -3026,8 +3101,8 @@ async fn bot_engine_metric_hook_emits_poll_and_dispatch_latency() -> Result<(), 
         EngineMetric::DispatchLatency {
             update_id: 7001,
             outcome: DispatchMetricOutcome::Handled,
-            ..
-        }
+            latency,
+        } if *latency >= Duration::from_millis(20)
     )));
 
     Ok(())
@@ -3543,6 +3618,52 @@ async fn bot_engine_dispatches_concurrently_when_enabled() -> Result<(), DynErro
     assert!(max_in_flight.load(Ordering::SeqCst) >= 2);
 
     join_server(handle).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_dispatch_reports_completions_before_the_batch_finishes() -> Result<(), DynError>
+{
+    let client = Client::builder("http://127.0.0.1:9")?
+        .bot_token("123:abc")?
+        .build()?;
+    let completed = Arc::new(tokio::sync::Notify::new());
+    let mut router = Router::new();
+    let wait_for_completion = Arc::clone(&completed);
+    router
+        .message_route()
+        .handle(move |_context: BotContext, update: Update| {
+            let completed = Arc::clone(&wait_for_completion);
+            async move {
+                if update.update_id != 1 {
+                    completed.notified().await;
+                }
+                Ok(())
+            }
+        });
+    let (sink, source) = channel_source(4)?;
+    for id in 1..=4 {
+        sink.send(tele::bot::testing::message_update(id, 1, "work")?)
+            .await?;
+    }
+    let mut engine = BotEngine::new(client, source, router)
+        .with_config(EngineConfig {
+            max_handler_concurrency: 2,
+            continue_on_handler_error: true,
+            ..EngineConfig::default()
+        })?
+        .on_event(move |event| {
+            if matches!(event, EngineEvent::DispatchCompleted { .. }) {
+                completed.notify_one();
+            }
+        });
+    let outcomes = tokio::time::timeout(Duration::from_secs(2), engine.poll_once()).await??;
+    assert_eq!(
+        outcomes,
+        (1..=4)
+            .map(|update_id| DispatchOutcome::Handled { update_id })
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }
 
@@ -5477,5 +5598,39 @@ async fn long_polling_source_offset_never_moves_backward() -> Result<(), DynErro
     assert_eq!(engine.source_mut().next_offset(), Some(5002));
 
     join_server(handle).await?;
+    Ok(())
+}
+
+#[test]
+fn actor_extraction_ignores_chat_compatibility_senders_but_preserves_callback_actor()
+-> Result<(), DynError> {
+    let message = json!({
+        "message_id": 1, "date": 1,
+        "chat": {"id": -100, "type": "supergroup"},
+        "from": {"id": 1087968824, "is_bot": true, "first_name": "compatibility"},
+        "sender_chat": {"id": -200, "type": "channel"}
+    });
+    for field in [
+        "message",
+        "edited_message",
+        "channel_post",
+        "edited_channel_post",
+        "business_message",
+        "edited_business_message",
+        "guest_message",
+    ] {
+        let update: Update = serde_json::from_value(json!({"update_id": 1, field: message}))?;
+        assert!(update.actor().is_none(), "{field}");
+        assert!(update.subject().is_none(), "{field}");
+    }
+    let update: Update = serde_json::from_value(json!({
+        "update_id": 2,
+        "callback_query": {
+            "id": "callback", "chat_instance": "chat",
+            "from": {"id": 42, "is_bot": false, "first_name": "clicker"},
+            "message": message, "data": "action"
+        }
+    }))?;
+    assert_eq!(update.actor_id(), Some(42));
     Ok(())
 }

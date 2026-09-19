@@ -249,9 +249,12 @@ impl Default for EngineConfig {
 
 impl EngineConfig {
     pub fn validate(&self) -> Result<()> {
-        if self.max_handler_concurrency == 0 {
+        if !(1..=Semaphore::MAX_PERMITS).contains(&self.max_handler_concurrency) {
             return Err(Error::Configuration {
-                reason: "max_handler_concurrency must be at least 1".to_owned(),
+                reason: format!(
+                    "max_handler_concurrency must be between 1 and {}",
+                    Semaphore::MAX_PERMITS
+                ),
             });
         }
         if self.idle_delay.is_zero() {
@@ -759,19 +762,22 @@ impl UpdateSource for ChannelUpdateSource {
 
     fn commit<'a>(&'a mut self, outcomes: &'a [DispatchOutcome]) -> SourceCommitFuture<'a> {
         Box::pin(async move {
-            for outcome in outcomes {
-                let Some(front) = self.in_flight.front() else {
-                    return Err(runtime_error(
-                        "channel update source commit received more outcomes than in-flight updates",
-                    ));
-                };
-                if front.update_id != outcome.update_id() {
-                    return Err(runtime_error(
-                        "channel update source commit must acknowledge an ordered update prefix",
-                    ));
-                }
-                let _ = self.in_flight.pop_front();
+            if outcomes.len() > self.in_flight.len() {
+                return Err(runtime_error(
+                    "channel update source commit received more outcomes than in-flight updates",
+                ));
             }
+            if !self
+                .in_flight
+                .iter()
+                .zip(outcomes)
+                .all(|(update, outcome)| update.update_id == outcome.update_id())
+            {
+                return Err(runtime_error(
+                    "channel update source commit must acknowledge an ordered update prefix",
+                ));
+            }
+            self.in_flight.drain(..outcomes.len());
             Ok(())
         })
     }
@@ -779,9 +785,12 @@ impl UpdateSource for ChannelUpdateSource {
 
 /// Creates a webhook-friendly channel source pair.
 pub fn channel_source(buffer: usize) -> Result<(UpdateSink, ChannelUpdateSource)> {
-    if buffer == 0 {
+    if !(1..=Semaphore::MAX_PERMITS).contains(&buffer) {
         return Err(Error::Configuration {
-            reason: "channel source buffer must be at least 1".to_owned(),
+            reason: format!(
+                "channel source buffer must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            ),
         });
     }
     let (sender, receiver) = mpsc::channel(buffer);

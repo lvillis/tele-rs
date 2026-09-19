@@ -88,6 +88,7 @@ pub(crate) fn update_message(update: &Update) -> Option<&Message> {
 }
 
 pub(crate) struct ReplyContext {
+    pub(crate) ephemeral_message_parameters: Option<crate::types::EphemeralMessageParameters>,
     pub(crate) chat_id: i64,
     pub(crate) message_thread_id: Option<i64>,
     pub(crate) direct_messages_topic_id: Option<i64>,
@@ -98,6 +99,7 @@ pub(crate) struct ReplyContext {
 impl ReplyContext {
     fn chat(chat_id: i64) -> Self {
         Self {
+            ephemeral_message_parameters: None,
             chat_id,
             message_thread_id: None,
             direct_messages_topic_id: None,
@@ -124,7 +126,16 @@ impl ReplyContext {
             .direct_messages_topic
             .as_ref()
             .map(|topic| topic.topic_id);
-        self.reply_parameters = Some(ReplyParameters::new(message.message_id));
+        if let Some(id) = message.ephemeral_message_id {
+            self.reply_parameters = Some(ReplyParameters::ephemeral(id));
+            self.ephemeral_message_parameters = message
+                .receiver_user
+                .as_ref()
+                .or_else(|| message.from.as_ref().filter(|user| !user.is_bot))
+                .map(|user| crate::types::EphemeralMessageParameters::new(user.id));
+        } else {
+            self.reply_parameters = Some(ReplyParameters::new(message.message_id));
+        }
         self.business_connection_id = message.business_connection_id.clone();
         self
     }
@@ -150,7 +161,14 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
     }
 
     if let Some(message) = update_message(update) {
-        return Ok(ReplyContext::from_message(message));
+        let context = ReplyContext::from_message(message);
+        if message.ephemeral_message_id.is_some() && context.ephemeral_message_parameters.is_none()
+        {
+            return Err(invalid_request(
+                "ephemeral reply requires the receiving user's identity",
+            ));
+        }
+        return Ok(context);
     }
 
     if let Some(message) = update
