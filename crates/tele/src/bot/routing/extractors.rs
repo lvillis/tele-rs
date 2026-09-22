@@ -732,7 +732,10 @@ pub(super) fn extract_message_update_text(update: &Update) -> Option<&str> {
     extract_message_update(update)?.text.as_deref()
 }
 
-/// Returns canonical chat extracted from the update.
+/// Returns the conversation associated with the update, when available.
+///
+/// Poll answers do not identify the conversation containing the poll. Their
+/// `voter_chat` identifies the voter and is not used as a conversation context.
 pub fn extract_chat(update: &Update) -> Option<&Chat> {
     if let Some(message) = extract_message(update) {
         return Some(message.chat());
@@ -758,13 +761,6 @@ pub fn extract_chat(update: &Update) -> Option<&Chat> {
     }
     if let Some(deleted) = update.deleted_business_messages.as_ref() {
         return Some(&deleted.chat);
-    }
-    if let Some(voter_chat) = update
-        .poll_answer
-        .as_ref()
-        .and_then(|answer| answer.voter_chat.as_ref())
-    {
-        return Some(voter_chat);
     }
     if let Some(boost) = update.chat_boost.as_ref() {
         return Some(&boost.chat);

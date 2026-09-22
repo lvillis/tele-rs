@@ -108,16 +108,51 @@ impl ReplyContext {
         }
     }
 
-    fn from_message(message: &Message) -> Self {
-        Self::chat(message.chat.id).with_message_context(message)
+    pub(crate) fn from_message(message: &Message) -> Result<Self> {
+        Self::from_message_with_callback(message, None)
     }
 
-    fn from_maybe_inaccessible_message(message: &MaybeInaccessibleMessage) -> Self {
+    fn from_message_with_callback(
+        message: &Message,
+        callback: Option<&crate::types::update::CallbackQuery>,
+    ) -> Result<Self> {
+        if message.guest_query_id.is_some() {
+            return Err(invalid_request(UNSUPPORTED_GUEST_REPLY_REASON));
+        }
+        if message.ephemeral_message_id.is_some()
+            && callback.is_none()
+            && message.from_user().is_some_and(|user| user.is_bot)
+        {
+            return Err(invalid_request(
+                "an outgoing ephemeral message cannot be a reply target; use the callback update or original incoming message",
+            ));
+        }
+        let mut context = Self::chat(message.chat.id).with_message_context(message);
+        if message.ephemeral_message_id.is_some()
+            && let Some(callback) = callback
+        {
+            let mut parameters = crate::types::EphemeralMessageParameters::new(callback.from.id);
+            parameters.callback_query_id = Some(callback.id.clone());
+            context.ephemeral_message_parameters = Some(parameters);
+            // A callback identifies a new eligible action. Its source is an outgoing
+            // ephemeral message, not an incoming command that can be replied to by id.
+            context.reply_parameters = None;
+        }
+        if message.ephemeral_message_id.is_some() && context.ephemeral_message_parameters.is_none()
+        {
+            return Err(invalid_request(
+                "ephemeral reply requires the receiving user's identity",
+            ));
+        }
+        Ok(context)
+    }
+
+    fn from_maybe_inaccessible_message(message: &MaybeInaccessibleMessage) -> Result<Self> {
         if let Some(message) = message.accessible() {
             return Self::from_message(message);
         }
 
-        Self::chat(message.chat().id).replying_to(message.message_id())
+        Ok(Self::chat(message.chat().id).replying_to(message.message_id()))
     }
 
     fn with_message_context(mut self, message: &Message) -> Self {
@@ -131,7 +166,7 @@ impl ReplyContext {
             self.ephemeral_message_parameters = message
                 .receiver_user
                 .as_ref()
-                .or_else(|| message.from.as_ref().filter(|user| !user.is_bot))
+                .or_else(|| message.sender_user().filter(|user| !user.is_bot))
                 .map(|user| crate::types::EphemeralMessageParameters::new(user.id));
         } else {
             self.reply_parameters = Some(ReplyParameters::new(message.message_id));
@@ -161,14 +196,7 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
     }
 
     if let Some(message) = update_message(update) {
-        let context = ReplyContext::from_message(message);
-        if message.ephemeral_message_id.is_some() && context.ephemeral_message_parameters.is_none()
-        {
-            return Err(invalid_request(
-                "ephemeral reply requires the receiving user's identity",
-            ));
-        }
-        return Ok(context);
+        return ReplyContext::from_message_with_callback(message, update.callback_query.as_ref());
     }
 
     if let Some(message) = update
@@ -176,7 +204,7 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         .as_ref()
         .and_then(|query| query.message.as_deref())
     {
-        return Ok(ReplyContext::from_maybe_inaccessible_message(message));
+        return ReplyContext::from_maybe_inaccessible_message(message);
     }
 
     if let Some(deleted) = update.deleted_business_messages.as_ref() {
@@ -197,12 +225,6 @@ pub(crate) fn reply_context(update: &Update) -> Result<ReplyContext> {
         return Ok(
             ReplyContext::chat(reaction_count.chat.id).replying_to(reaction_count.message_id)
         );
-    }
-
-    if let Some(answer) = update.poll_answer.as_ref()
-        && let Some(voter_chat) = answer.voter_chat.as_ref()
-    {
-        return Ok(ReplyContext::chat(voter_chat.id));
     }
 
     if let Some(boost) = update.chat_boost.as_ref() {

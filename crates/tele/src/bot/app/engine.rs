@@ -1,5 +1,5 @@
 use super::*;
-use crate::util::{exponential_backoff, jittered_duration};
+use crate::util::{exponential_backoff, jittered_duration, retry_after_or_backoff};
 #[cfg(feature = "tracing")]
 use tracing::Instrument;
 
@@ -605,22 +605,23 @@ where
                     return Err(failure.error);
                 }
                 self.source_error_streak = streak;
-                if let Some(backoff) = self.config.source_error_backoff.as_ref() {
+                let delay = retry_after_or_backoff(&failure.error, || {
+                    let Some(backoff) = self.config.source_error_backoff.as_ref() else {
+                        return self.config.error_delay;
+                    };
                     let delay = exponential_backoff(
                         backoff.base_delay,
                         backoff.max_delay,
                         self.source_error_streak,
                     );
-                    let applied_delay =
-                        jittered_duration(delay, backoff.jitter_ratio, backoff.max_delay);
-                    self.notify_metric(EngineMetric::SourceBackoff {
-                        streak: self.source_error_streak,
-                        delay: applied_delay,
-                    })
-                    .await;
-                    return Ok(applied_delay);
-                }
-                Ok(self.config.error_delay)
+                    jittered_duration(delay, backoff.jitter_ratio, backoff.max_delay)
+                });
+                self.notify_metric(EngineMetric::SourceBackoff {
+                    streak: self.source_error_streak,
+                    delay,
+                })
+                .await;
+                Ok(delay)
             }
             Err(failure) => Err(failure.error),
         }

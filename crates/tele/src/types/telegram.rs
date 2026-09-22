@@ -2491,7 +2491,7 @@ impl InputMessageContent {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Text(text) => text.validate(),
-            Self::Rich(rich) => rich.rich_message.validate(),
+            Self::Rich(rich) => rich.validate(),
         }
     }
 }

@@ -1002,9 +1002,14 @@ async fn command_and_update_extractors_work() -> Result<(), DynError> {
         return Ok(());
     };
     assert_eq!(anonymous_poll_answer.update_kind(), UpdateKind::PollAnswer);
-    assert_eq!(anonymous_poll_answer.chat_id(), Some(-10055));
+    assert_eq!(anonymous_poll_answer.chat_id(), None);
+    assert!(anonymous_poll_answer.chat().is_none());
     assert_eq!(
-        anonymous_poll_answer.chat().map(|chat| chat.id),
+        anonymous_poll_answer
+            .poll_answer
+            .as_ref()
+            .and_then(|answer| answer.voter_chat.as_ref())
+            .map(|chat| chat.id),
         Some(-10055)
     );
     assert_eq!(anonymous_poll_answer.user_id(), None);

@@ -208,15 +208,24 @@ impl RequestDefaults {
         if let Some(rate_limit) = self.per_host_rate_limit.as_ref() {
             rate_limit.validate()?;
         }
-        if self.max_in_flight.is_some_and(|max| max == 0) {
-            return Err(Error::Configuration {
-                reason: "max_in_flight must be at least 1 when set".to_owned(),
-            });
-        }
-        if self.max_in_flight_per_host.is_some_and(|max| max == 0) {
-            return Err(Error::Configuration {
-                reason: "max_in_flight_per_host must be at least 1 when set".to_owned(),
-            });
+        for (name, limit) in [
+            ("max_in_flight", self.max_in_flight),
+            ("max_in_flight_per_host", self.max_in_flight_per_host),
+        ] {
+            if limit == Some(0) {
+                return Err(Error::Configuration {
+                    reason: format!("{name} must be at least 1 when set"),
+                });
+            }
+            #[cfg(feature = "_async")]
+            if limit.is_some_and(|limit| limit > tokio::sync::Semaphore::MAX_PERMITS) {
+                return Err(Error::Configuration {
+                    reason: format!(
+                        "{name} must not exceed {} when async transport is enabled",
+                        tokio::sync::Semaphore::MAX_PERMITS
+                    ),
+                });
+            }
         }
         if self.proxy_authorization.is_some() && self.http_proxy.is_none() {
             return Err(Error::Configuration {
@@ -968,6 +977,28 @@ mod tests {
             Err(Error::Configuration { .. })
         ));
 
+        Ok(())
+    }
+
+    #[cfg(feature = "_async")]
+    #[test]
+    fn rejects_concurrency_limits_that_would_panic_in_async_transport() -> Result<(), Error> {
+        let maximum = tokio::sync::Semaphore::MAX_PERMITS;
+        ClientBuilder::new("https://api.telegram.org")?
+            .max_in_flight(Some(maximum))?
+            .max_in_flight_per_host(Some(maximum))?
+            .build()?;
+
+        for limit in [maximum + 1, usize::MAX] {
+            assert!(matches!(
+                ClientBuilder::new("https://api.telegram.org")?.max_in_flight(Some(limit)),
+                Err(Error::Configuration { .. })
+            ));
+            assert!(matches!(
+                ClientBuilder::new("https://api.telegram.org")?.max_in_flight_per_host(Some(limit)),
+                Err(Error::Configuration { .. })
+            ));
+        }
         Ok(())
     }
 

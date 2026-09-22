@@ -68,6 +68,15 @@ impl ContextAppApi {
         self.client.app().reply(update, text)
     }
 
+    /// Replies directly to a message while preserving its delivery context.
+    pub fn reply_to(
+        &self,
+        message: &Message,
+        text: impl Into<String>,
+    ) -> Result<crate::client::TextSendBuilder> {
+        self.client.app().reply_to(message, text)
+    }
+
     /// Starts a location-send builder for a target chat.
     pub fn location(
         &self,

@@ -1928,7 +1928,8 @@ impl InputMedia {
 /// Media item accepted by `sendMediaGroup`.
 ///
 /// Telegram media groups do not accept animations. Use [`InputMedia`] for APIs that support
-/// animations, such as editing a message's media.
+/// animations, such as editing a message's media. Audio and document albums must
+/// contain only their own type; photos, videos, and live photos may be mixed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputMediaGroupItem {
@@ -3781,8 +3782,22 @@ fn validate_media_group_items(media: &[InputMediaGroupItem]) -> Result<(), Error
             ),
         });
     }
+    // Audio and document albums must each be homogeneous. Photos, videos,
+    // and live photos can share the same album.
+    let album_kind = |item: &InputMediaGroupItem| match item {
+        InputMediaGroupItem::Audio(_) => "audio",
+        InputMediaGroupItem::Document(_) => "document",
+        InputMediaGroupItem::Photo(_)
+        | InputMediaGroupItem::Video(_)
+        | InputMediaGroupItem::LivePhoto(_) => "visual",
+    };
     for item in media {
         validate_media_group_item(item)?;
+        if album_kind(item) != album_kind(&media[0]) {
+            return Err(Error::InvalidRequest {
+                reason: "sendMediaGroup audio and document albums require every item to have the same type".to_owned(),
+            });
+        }
     }
 
     Ok(())

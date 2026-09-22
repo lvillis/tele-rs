@@ -102,6 +102,17 @@ fn reply_text_request(update: &Update, text: impl Into<String>) -> Result<SendMe
     try_build_reply_request(update, |chat_id| text_send_request(chat_id, text))
 }
 
+fn reply_message_text_request(
+    message: &Message,
+    text: impl Into<String>,
+) -> Result<SendMessageRequest> {
+    let context = ReplyContext::from_message(message)?;
+    let mut request = text_send_request(context.chat_id, text)?;
+    request.apply_ephemeral_context(&context)?;
+    request.apply_reply_context(&context);
+    Ok(request)
+}
+
 fn location_send_request(
     chat_id: impl Into<ChatId>,
     latitude: f64,
@@ -2005,6 +2016,13 @@ impl AppApi {
         Ok(TextSendBuilder::new(self.client.clone(), request))
     }
 
+    /// Replies directly to a message, preserving its topic, business connection,
+    /// and ephemeral recipient. Guest messages require `answerGuestQuery` instead.
+    pub fn reply_to(&self, message: &Message, text: impl Into<String>) -> Result<TextSendBuilder> {
+        let request = reply_message_text_request(message, text)?;
+        Ok(TextSendBuilder::new(self.client.clone(), request))
+    }
+
     /// Starts a location-send builder for a target chat.
     pub fn location(
         &self,
@@ -3795,6 +3813,17 @@ impl BlockingAppApi {
         text: impl Into<String>,
     ) -> Result<BlockingTextSendBuilder> {
         let request = reply_text_request(update, text)?;
+        Ok(BlockingTextSendBuilder::new(self.client.clone(), request))
+    }
+
+    /// Replies directly to a message, preserving its topic, business connection,
+    /// and ephemeral recipient. Guest messages require `answerGuestQuery` instead.
+    pub fn reply_to(
+        &self,
+        message: &Message,
+        text: impl Into<String>,
+    ) -> Result<BlockingTextSendBuilder> {
+        let request = reply_message_text_request(message, text)?;
         Ok(BlockingTextSendBuilder::new(self.client.clone(), request))
     }
 

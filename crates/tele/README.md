@@ -15,6 +15,14 @@ Migration notes:
 - `MaybeInaccessibleMessage::Inaccessible` now stores a boxed value, matching the accessible variant. Its accessor methods retain their return types.
 - Request structs have new optional fields. Existing constructor calls continue to supply defaults; update direct struct literals as needed.
 
+## Replies
+
+Use `client.app().reply_to(&message, "reply")?` when a handler already has a `Message`, or `reply(&update, "reply")?` when it has an `Update`. Both return the same text builder and preserve topic, business connection, and ephemeral delivery context. The blocking client and `context.app()` expose the same entry points.
+
+Moderation notices use the same reply handling. For callbacks on ephemeral messages, pass the `Update` so the reply can use the clicking user's identity and callback token. A sent ephemeral message cannot itself be used as a reply target; retain the original incoming message or callback update. Guest messages require `answerGuestQuery` and are rejected by ordinary reply helpers.
+
+A `PollAnswer` identifies the voter, not the chat containing the poll. Its `voter_chat` remains available on the payload, but does not supply `UpdateExt::chat()` or an implicit reply destination. Keep a `poll_id` to chat/message mapping when sending polls, then use that destination explicitly for follow-up messages.
+
 ## Moderation
 
 Use `client.app().moderation()` (or `context.moderation()` inside a handler) for deletion, bans, and mutes. `ban_author` and `mute_author`, including their `_with` variants, require an identifiable user sender. They reject messages with `sender_chat` locally, including anonymous administrator posts and messages sent on behalf of a channel.
@@ -22,6 +30,8 @@ Use `client.app().moderation()` (or `context.moderation()` inside a handler) for
 Use `message.sender_user()` for user identity and `message.sender_chat()` for chat identity. `message.from_user()` exposes the raw Telegram field, which can contain a compatibility user. Bot routing's `actor()` and `subject()` likewise return no user for chat-authored messages; a callback still identifies the user who clicked the button. This changes actor-based filtering and throttling for chat-authored messages: use a chat-scoped rule where appropriate.
 
 Channel bans remain explicit through `client.chats().ban_chat_sender_chat(&request)`. User moderation helpers never choose that action automatically. Administrator exemptions, spam detection, and whether to ban a channel belong to the caller's policy.
+
+Prefer `moderation.delete(&message)` or `delete_from_update(&update)` when the source object is available: deletion preserves Business and ephemeral message identity. Guest messages and ephemeral messages without a known recipient are rejected locally. `delete_message(chat_id, message_id)` explicitly targets an ordinary bot chat and cannot carry those contexts.
 
 Deletion and banning are independent requests. If your policy requires attempting both even when one fails, keep both results instead of using `?` between them:
 

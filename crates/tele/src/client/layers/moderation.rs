@@ -8,7 +8,10 @@ use crate::BlockingClient;
 #[cfg(feature = "_async")]
 use crate::Client;
 use crate::Result;
-use crate::types::advanced::{AdvancedApproveChatJoinRequest, AdvancedDeclineChatJoinRequest};
+use crate::types::advanced::{
+    AdvancedApproveChatJoinRequest, AdvancedDeclineChatJoinRequest,
+    AdvancedDeleteBusinessMessagesRequest, AdvancedDeleteEphemeralMessageRequest,
+};
 use crate::types::chat::{BanChatMemberRequest, ChatPermissions, RestrictChatMemberRequest};
 use crate::types::common::{ChatId, MessageId, UserId};
 use crate::types::message::{DeleteMessageRequest, Message};
@@ -31,66 +34,86 @@ fn join_request_ids(update: &Update, method: &str) -> Result<(i64, UserId)> {
     Ok((request.chat_id(), request.user_id().into()))
 }
 
-trait NoticeMessageContextBuilder: Sized {
-    fn reply_to_message(self, message_id: MessageId) -> Self;
-    fn business_connection_id(self, business_connection_id: String) -> Self;
-    fn message_thread_id(self, message_thread_id: i64) -> Self;
-    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self;
+enum DeleteTarget {
+    Chat(DeleteMessageRequest),
+    Business(AdvancedDeleteBusinessMessagesRequest),
+    Ephemeral(AdvancedDeleteEphemeralMessageRequest),
 }
 
-#[cfg(feature = "_async")]
-impl NoticeMessageContextBuilder for TextSendBuilder {
-    fn reply_to_message(self, message_id: MessageId) -> Self {
-        TextSendBuilder::reply_to_message(self, message_id)
+impl DeleteTarget {
+    fn from_message(message: &Message) -> Result<Self> {
+        Self::from_message_with_receiver(message, None)
     }
 
-    fn business_connection_id(self, business_connection_id: String) -> Self {
-        TextSendBuilder::business_connection_id(self, business_connection_id)
+    fn from_message_with_receiver(
+        message: &Message,
+        callback_receiver: Option<UserId>,
+    ) -> Result<Self> {
+        if message.guest_query_id.is_some() {
+            return Err(invalid_request(
+                "guest messages cannot be deleted by this bot",
+            ));
+        }
+        if let Some(ephemeral_message_id) = message.ephemeral_message_id {
+            if message.business_connection_id.is_some() {
+                return Err(invalid_request(
+                    "ephemeral deletion cannot target a business connection",
+                ));
+            }
+            let receiver = message
+                .receiver_user
+                .as_ref()
+                .map(|user| user.id)
+                .or(callback_receiver)
+                .ok_or_else(|| {
+                    invalid_request(
+                        "ephemeral deletion requires receiver_user to identify the recipient",
+                    )
+                })?;
+            return Ok(Self::Ephemeral(AdvancedDeleteEphemeralMessageRequest::new(
+                message.chat.id,
+                receiver,
+                ephemeral_message_id.into(),
+            )));
+        }
+        if let Some(business_connection_id) = message.business_connection_id.as_deref() {
+            return Ok(Self::Business(AdvancedDeleteBusinessMessagesRequest::new(
+                business_connection_id,
+                vec![message.message_id],
+            )));
+        }
+        Ok(Self::Chat(DeleteMessageRequest::new(
+            message.chat.id,
+            message.message_id,
+        )))
     }
 
-    fn message_thread_id(self, message_thread_id: i64) -> Self {
-        TextSendBuilder::message_thread_id(self, message_thread_id)
+    fn from_update(update: &Update) -> Result<Self> {
+        if update.guest_message.is_some() {
+            return Err(invalid_request(
+                "guest messages cannot be deleted by this bot",
+            ));
+        }
+        let message = update_message(update).ok_or_else(|| {
+            invalid_request("update does not contain an accessible message to delete")
+        })?;
+        if (update.business_message.is_some() || update.edited_business_message.is_some())
+            && message.business_connection_id.is_none()
+        {
+            return Err(invalid_request(
+                "business deletion requires business_connection_id",
+            ));
+        }
+        let callback_receiver = update.callback_query.as_ref().and_then(|query| {
+            query
+                .message
+                .as_deref()
+                .and_then(|value| value.accessible())
+                .filter(|value| std::ptr::eq(*value, message))
+                .map(|_| query.from.id)
+        });
+        Self::from_message_with_receiver(message, callback_receiver)
     }
-
-    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self {
-        TextSendBuilder::direct_messages_topic_id(self, direct_messages_topic_id)
-    }
-}
-
-#[cfg(feature = "_blocking")]
-impl NoticeMessageContextBuilder for BlockingTextSendBuilder {
-    fn reply_to_message(self, message_id: MessageId) -> Self {
-        BlockingTextSendBuilder::reply_to_message(self, message_id)
-    }
-
-    fn business_connection_id(self, business_connection_id: String) -> Self {
-        BlockingTextSendBuilder::business_connection_id(self, business_connection_id)
-    }
-
-    fn message_thread_id(self, message_thread_id: i64) -> Self {
-        BlockingTextSendBuilder::message_thread_id(self, message_thread_id)
-    }
-
-    fn direct_messages_topic_id(self, direct_messages_topic_id: i64) -> Self {
-        BlockingTextSendBuilder::direct_messages_topic_id(self, direct_messages_topic_id)
-    }
-}
-
-fn apply_notice_message_context<B>(builder: B, message: &Message) -> B
-where
-    B: NoticeMessageContextBuilder,
-{
-    let mut builder = builder.reply_to_message(message.message_id);
-    if let Some(message_thread_id) = message.message_thread_id {
-        builder = builder.message_thread_id(message_thread_id);
-    }
-    if let Some(topic) = message.direct_messages_topic.as_ref() {
-        builder = builder.direct_messages_topic_id(topic.topic_id);
-    }
-    if let Some(business_connection_id) = message.business_connection_id.as_ref() {
-        builder = builder.business_connection_id(business_connection_id.clone());
-    }
-    builder
 }
 
 /// Optional fields for high-level `banChatMember` helpers.
@@ -177,10 +200,7 @@ impl ModerationNoticeApi {
         message: &Message,
         text: impl Into<String>,
     ) -> Result<TextSendBuilder> {
-        Ok(apply_notice_message_context(
-            self.text(message.chat.id, text)?,
-            message,
-        ))
+        AppApi::new(self.client.clone()).reply_to(message, text)
     }
 }
 
@@ -350,6 +370,8 @@ impl ModerationApi {
             .await
     }
 
+    /// Deletes a regular bot-chat message by its identifiers.
+    /// Use [`Self::delete`] to preserve a message's Business or ephemeral context.
     pub async fn delete_message(
         &self,
         chat_id: impl Into<ChatId>,
@@ -359,18 +381,35 @@ impl ModerationApi {
         self.client.messages().delete_message(&request).await
     }
 
+    /// Deletes a message using its regular, Business, or ephemeral context.
+    /// Guest messages and ephemeral messages without `receiver_user` are rejected locally.
     pub async fn delete(&self, message: &Message) -> Result<bool> {
-        self.delete_message(message.chat.id, message.message_id)
+        self.delete_target(DeleteTarget::from_message(message)?)
             .await
     }
 
+    /// Deletes the accessible message in an update, preserving its deletion context.
+    /// An ephemeral callback's sender identifies the recipient when `receiver_user` is absent.
     pub async fn delete_from_update(&self, update: &Update) -> Result<bool> {
-        let Some(message) = update_message(update) else {
-            return Err(invalid_request(
-                "update does not contain a message for deleteMessage",
-            ));
-        };
-        self.delete(message).await
+        self.delete_target(DeleteTarget::from_update(update)?).await
+    }
+
+    async fn delete_target(&self, target: DeleteTarget) -> Result<bool> {
+        match target {
+            DeleteTarget::Chat(request) => self.client.messages().delete_message(&request).await,
+            DeleteTarget::Business(request) => {
+                self.client
+                    .advanced()
+                    .delete_business_messages_typed(&request)
+                    .await
+            }
+            DeleteTarget::Ephemeral(request) => {
+                self.client
+                    .advanced()
+                    .delete_ephemeral_message_typed(&request)
+                    .await
+            }
+        }
     }
 }
 
@@ -408,10 +447,7 @@ impl BlockingModerationNoticeApi {
         message: &Message,
         text: impl Into<String>,
     ) -> Result<BlockingTextSendBuilder> {
-        Ok(apply_notice_message_context(
-            self.text(message.chat.id, text)?,
-            message,
-        ))
+        BlockingAppApi::new(self.client.clone()).reply_to(message, text)
     }
 }
 
@@ -566,6 +602,8 @@ impl BlockingModerationApi {
         self.mute_member_with(message.chat.id, user_id, options)
     }
 
+    /// Deletes a regular bot-chat message by its identifiers.
+    /// Use [`Self::delete`] to preserve a message's Business or ephemeral context.
     pub fn delete_message(
         &self,
         chat_id: impl Into<ChatId>,
@@ -575,16 +613,29 @@ impl BlockingModerationApi {
         self.client.messages().delete_message(&request)
     }
 
+    /// Deletes a message using its regular, Business, or ephemeral context.
+    /// Guest messages and ephemeral messages without `receiver_user` are rejected locally.
     pub fn delete(&self, message: &Message) -> Result<bool> {
-        self.delete_message(message.chat.id, message.message_id)
+        self.delete_target(DeleteTarget::from_message(message)?)
     }
 
+    /// Deletes the accessible message in an update, preserving its deletion context.
+    /// An ephemeral callback's sender identifies the recipient when `receiver_user` is absent.
     pub fn delete_from_update(&self, update: &Update) -> Result<bool> {
-        let Some(message) = update_message(update) else {
-            return Err(invalid_request(
-                "update does not contain a message for deleteMessage",
-            ));
-        };
-        self.delete(message)
+        self.delete_target(DeleteTarget::from_update(update)?)
+    }
+
+    fn delete_target(&self, target: DeleteTarget) -> Result<bool> {
+        match target {
+            DeleteTarget::Chat(request) => self.client.messages().delete_message(&request),
+            DeleteTarget::Business(request) => self
+                .client
+                .advanced()
+                .delete_business_messages_typed(&request),
+            DeleteTarget::Ephemeral(request) => self
+                .client
+                .advanced()
+                .delete_ephemeral_message_typed(&request),
+        }
     }
 }

@@ -1672,6 +1672,9 @@ impl AdvancedRequest for AdvancedEditEphemeralMessageTextRequest {
         if let Some(value) = self.rich_message.as_ref() {
             value.validate()?;
         }
+        if let Some(value) = self.link_preview_options.as_ref() {
+            value.validate()?;
+        }
         if let Some(value) = self.reply_markup.as_ref() {
             value.validate()?;
         }

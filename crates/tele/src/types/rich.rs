@@ -150,6 +150,14 @@ pub struct InputRichMessageContent {
     pub rich_message: InputRichMessage,
 }
 
+impl InputRichMessageContent {
+    /// Validates query result content, whose media must already be uploaded.
+    pub fn validate(&self) -> crate::Result<()> {
+        self.rich_message
+            .validate_with_existing_media("rich query result content")
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InputMediaVoiceNote {
     pub media: String,
@@ -647,6 +655,10 @@ impl InputRichMessage {
     }
 
     pub fn validate_for_draft(&self) -> crate::Result<()> {
+        self.validate_with_existing_media("rich message drafts")
+    }
+
+    fn validate_with_existing_media(&self, context: &str) -> crate::Result<()> {
         self.validate()?;
         let value = serde_json::to_value(self)
             .map_err(|source| crate::Error::SerializeRequest { source })?;
@@ -661,9 +673,9 @@ impl InputRichMessage {
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"));
         });
         if contains_new_media {
-            return Err(invalid(
-                "rich message drafts require previously uploaded media",
-            ));
+            return Err(invalid(&format!(
+                "media in {context} must already be uploaded"
+            )));
         }
         Ok(())
     }

@@ -16,6 +16,7 @@ pub struct OutboxConfig {
     pub max_backoff: Duration,
     pub dedupe_ttl: Duration,
     pub persistence_path: Option<PathBuf>,
+    /// Dead-letter snapshot location, which must differ from `persistence_path`.
     pub dead_letter_path: Option<PathBuf>,
     pub max_dead_letters: usize,
     pub max_message_age: Option<Duration>,
@@ -753,6 +754,11 @@ fn normalize_outbox_paths(config: &mut OutboxConfig) -> Result<()> {
     }
     if let Some(path) = config.dead_letter_path.as_deref() {
         let path = normalize_file_storage_target(path, "dead-letter snapshot")?;
+        if config.persistence_path.as_deref() == Some(path.as_path()) {
+            return Err(outbox_config_error(
+                "outbox persistence_path and dead_letter_path must refer to different files",
+            ));
+        }
         let snapshot = load_dead_letter_snapshot(&path)?;
         validate_dead_letter_snapshot(&snapshot)?;
         config.dead_letter_path = Some(path);

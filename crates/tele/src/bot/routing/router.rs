@@ -550,7 +550,7 @@ fn run_extracted_guards<E>(
 
 fn missing_prepared_route_input() -> HandlerError {
     HandlerError::internal(runtime_error(
-        "prepared route input is missing or already consumed",
+        "update no longer provides the input required by the selected route",
     ))
 }
 
@@ -1006,19 +1006,26 @@ impl Router {
         let handler = Arc::new(handler);
 
         self.route_handler_with_state(
-            move |update, state| {
-                let Some(input) = prepare(update, state) else {
-                    return false;
-                };
-                state.insert_prepared(route_id, input);
-                true
+            {
+                let prepare = Arc::clone(&prepare);
+                move |update, state| {
+                    let Some(input) = prepare(update, state) else {
+                        return false;
+                    };
+                    state.insert_prepared(route_id, input);
+                    true
+                }
             },
             resolution,
             move |context, update, state| {
                 let handler = Arc::clone(&handler);
+                let prepare = Arc::clone(&prepare);
                 async move {
                     let input = state
                         .take_prepared::<T>(route_id)
+                        // Middleware may retry `next`; only its first invocation
+                        // can consume the value prepared during route selection.
+                        .or_else(|| prepare(&update, &state))
                         .ok_or_else(missing_prepared_route_input)?;
                     handler(context, update, state, input).await
                 }
@@ -1114,6 +1121,8 @@ impl Router {
         self
     }
 
+    /// Wraps the selected handler. Calling `next` again retries that same route;
+    /// extractor inputs are prepared again after their first use.
     pub fn middleware<M, Fut>(&mut self, middleware: M) -> &mut Self
     where
         M: Fn(BotContext, Update, HandlerFn) -> Fut + Send + Sync + 'static,

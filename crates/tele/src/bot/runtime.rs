@@ -167,6 +167,7 @@ pub trait UpdateSource: Send + 'static {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceErrorBackoffConfig {
     pub base_delay: Duration,
+    /// Maximum locally computed delay; provider-supplied `Retry-After` is not clamped.
     pub max_delay: Duration,
     pub jitter_ratio: f64,
 }
@@ -213,10 +214,12 @@ impl SourceErrorBackoffConfig {
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub idle_delay: Duration,
+    /// Delay after retryable source errors without `Retry-After` or exponential backoff.
     pub error_delay: Duration,
     /// Optional exponential backoff for repeated source errors.
     ///
     /// When enabled, this takes precedence over `error_delay`.
+    /// Provider-supplied `Retry-After` takes precedence over both delay policies.
     pub source_error_backoff: Option<SourceErrorBackoffConfig>,
     /// Keep the engine running after retryable source-side polling errors.
     ///

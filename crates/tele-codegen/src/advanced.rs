@@ -554,6 +554,7 @@ const TYPES_WITH_VALIDATE: &[&str] = &[
     "crate::types::telegram::InputProfilePhoto",
     "crate::types::telegram::InputStoryContent",
     "crate::types::telegram::KeyboardButton",
+    "crate::types::telegram::LinkPreviewOptions",
     "crate::types::telegram::MenuButton",
     "crate::types::telegram::PassportElementError",
     "crate::types::telegram::ReactionType",
